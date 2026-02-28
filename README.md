@@ -1,3 +1,13 @@
+---
+title: HireOps AI
+emoji: 🤖
+colorFrom: blue
+colorTo: indigo
+sdk: docker
+pinned: false
+app_port: 7860
+---
+
 # HireOps AI
 
 Production-grade agentic HR automation platform powered by Mistral AI and ElevenLabs.
