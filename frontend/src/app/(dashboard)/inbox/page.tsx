@@ -11,6 +11,8 @@ interface GmailStatus {
   connected: boolean;
   email: string | null;
   polling: boolean;
+  listener_mode: "off" | "idle" | "polling";
+  idle_active: boolean;
   poll_interval: number | null;
   last_sync_at: string | null;
   total_processed: number;
@@ -95,13 +97,14 @@ export default function InboxPage() {
     fetchGmailStatus();
   }, [fetchEmails, fetchGmailStatus]);
 
-  // Poll Gmail status every 10s when auto-workflow is active
+  // Poll Gmail status every 5s when listener is active (to pick up new emails in UI)
+  const listenerActive = gmailStatus?.idle_active || gmailStatus?.polling;
   useEffect(() => {
-    if (gmailStatus?.polling) {
+    if (listenerActive) {
       statusPollRef.current = setInterval(() => {
         fetchGmailStatus();
         fetchEmails();
-      }, 10000);
+      }, 5000);
     }
     return () => {
       if (statusPollRef.current) {
@@ -109,7 +112,7 @@ export default function InboxPage() {
         statusPollRef.current = null;
       }
     };
-  }, [gmailStatus?.polling, fetchGmailStatus, fetchEmails]);
+  }, [listenerActive, fetchGmailStatus, fetchEmails]);
 
   // ─── Gmail Handlers ───
 
@@ -154,25 +157,41 @@ export default function InboxPage() {
     }
   };
 
-  const handleStartAutoWorkflow = async () => {
+  const [disconnecting, setDisconnecting] = useState(false);
+
+  const handleGmailDisconnect = async () => {
+    setDisconnecting(true);
     try {
-      await apiPost("/inbox/gmail/watch", { interval: 30 });
-      showToast("Auto-workflow started! Checking every 30 seconds.");
-      fetchGmailStatus();
+      await apiPost("/inbox/gmail/disconnect");
+      showToast("Gmail disconnected");
+      await fetchGmailStatus();
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to start auto-workflow";
+      const message = err instanceof Error ? err.message : "Disconnect failed";
       showToast(message, "error");
+    } finally {
+      setDisconnecting(false);
     }
   };
 
-  const handleStopAutoWorkflow = async () => {
+  const [listenerToggling, setListenerToggling] = useState(false);
+
+  const handleToggleListener = async () => {
+    setListenerToggling(true);
     try {
-      await apiPost("/inbox/gmail/stop");
-      showToast("Auto-workflow stopped.");
-      fetchGmailStatus();
+      const isActive = gmailStatus?.idle_active || gmailStatus?.polling;
+      if (isActive) {
+        await apiPost("/inbox/gmail/stop");
+        showToast("Email listener stopped.");
+      } else {
+        await apiPost("/inbox/gmail/idle/start");
+        showToast("Real-time email listener started! New emails will be processed instantly.");
+      }
+      await fetchGmailStatus();
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to stop";
+      const message = err instanceof Error ? err.message : "Failed to toggle listener";
       showToast(message, "error");
+    } finally {
+      setListenerToggling(false);
     }
   };
 
@@ -281,13 +300,13 @@ export default function InboxPage() {
                   {gmailStatus?.connected ? (
                     <>
                       Connected to <span className="font-medium text-slate-700">{gmailStatus.email}</span>
-                      {gmailStatus.polling && (
+                      {(gmailStatus.idle_active || gmailStatus.polling) && (
                         <span className="ml-2 inline-flex items-center gap-1 text-green-600">
                           <span className="relative flex h-2 w-2">
                             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
                             <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
                           </span>
-                          Auto-workflow active
+                          {gmailStatus.idle_active ? "Real-time listener active" : "Polling active"}
                         </span>
                       )}
                     </>
@@ -323,28 +342,51 @@ export default function InboxPage() {
                       </>
                     )}
                   </button>
-                  {gmailStatus.polling ? (
+
+                  {/* Real-time Listener Toggle Switch */}
+                  <div className="flex items-center gap-2.5 pl-2 border-l border-slate-200">
+                    <span className="text-sm font-medium text-slate-600">
+                      {(gmailStatus.idle_active || gmailStatus.polling) ? "Listening" : "Listener Off"}
+                    </span>
                     <button
-                      onClick={handleStopAutoWorkflow}
-                      className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg text-red-700 bg-red-50 hover:bg-red-100 transition-colors"
+                      onClick={handleToggleListener}
+                      disabled={listenerToggling}
+                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 ${
+                        (gmailStatus.idle_active || gmailStatus.polling)
+                          ? "bg-green-500 focus:ring-green-500"
+                          : "bg-slate-300 focus:ring-slate-400"
+                      } ${listenerToggling ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
+                      role="switch"
+                      aria-checked={gmailStatus.idle_active || gmailStatus.polling}
                     >
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
-                      </svg>
-                      Stop Auto-Workflow
+                      <span
+                        className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform duration-200 ${
+                          (gmailStatus.idle_active || gmailStatus.polling) ? "translate-x-6" : "translate-x-1"
+                        }`}
+                      />
                     </button>
-                  ) : (
-                    <button
-                      onClick={handleStartAutoWorkflow}
-                      className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg text-white bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 transition-all shadow-sm"
-                    >
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                      </svg>
-                      Start Auto-Workflow
-                    </button>
-                  )}
+                    {(gmailStatus.idle_active || gmailStatus.polling) && (
+                      <span className="inline-flex items-center gap-1 text-xs text-green-600 font-medium">
+                        <span className="relative flex h-1.5 w-1.5">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                          <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-green-500"></span>
+                        </span>
+                        Real-time
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Disconnect button */}
+                  <button
+                    onClick={handleGmailDisconnect}
+                    disabled={disconnecting}
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium rounded-md text-slate-500 hover:text-red-600 hover:bg-red-50 disabled:opacity-50 transition-colors ml-1"
+                    title="Disconnect Gmail"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                    </svg>
+                  </button>
                 </>
               ) : (
                 <button
@@ -421,10 +463,10 @@ export default function InboxPage() {
           )}
 
           {/* Auto-Workflow Status */}
-          {gmailStatus?.connected && gmailStatus.polling && (
+          {gmailStatus?.connected && (gmailStatus.idle_active || gmailStatus.polling) && (
             <div className="border-t border-slate-200 pt-4 mt-2">
               <div className="flex items-center justify-between mb-3">
-                <h3 className="text-sm font-medium text-slate-700">Auto-Workflow Activity</h3>
+                <h3 className="text-sm font-medium text-slate-700">Listener Activity</h3>
                 <span className="text-xs text-slate-500">
                   {gmailStatus.total_processed} emails processed
                   {gmailStatus.last_sync_at && (

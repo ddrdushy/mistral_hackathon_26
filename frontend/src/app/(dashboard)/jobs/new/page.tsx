@@ -15,6 +15,8 @@ export default function CreateJobPage() {
     location: "",
     seniority: "mid",
     skills: [],
+    responsibilities: [],
+    qualifications: [],
     description: "",
   });
 
@@ -57,6 +59,20 @@ export default function CreateJobPage() {
     }));
   };
 
+  const removeResponsibility = (index: number) => {
+    setForm((prev) => ({
+      ...prev,
+      responsibilities: prev.responsibilities.filter((_, i) => i !== index),
+    }));
+  };
+
+  const removeQualification = (index: number) => {
+    setForm((prev) => ({
+      ...prev,
+      qualifications: prev.qualifications.filter((_, i) => i !== index),
+    }));
+  };
+
   const handleGenerate = async () => {
     if (!form.title.trim()) {
       setTitleError(true);
@@ -73,6 +89,8 @@ export default function CreateJobPage() {
         location: result.location || "",
         seniority: result.seniority || "mid",
         skills: result.skills || [],
+        responsibilities: result.responsibilities || [],
+        qualifications: result.qualifications || [],
         description: result.description || "",
       });
       setAiGenerated(true);
@@ -270,6 +288,58 @@ export default function CreateJobPage() {
               </div>
             )}
           </div>
+
+          {/* Responsibilities (AI-generated, editable) */}
+          {form.responsibilities.length > 0 && (
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">
+                Responsibilities
+              </label>
+              <ul className="space-y-1.5">
+                {form.responsibilities.map((item, idx) => (
+                  <li key={idx} className="flex items-start gap-2 group">
+                    <span className="text-indigo-400 mt-0.5 text-sm">•</span>
+                    <span className="flex-1 text-sm text-slate-700">{item}</span>
+                    <button
+                      type="button"
+                      onClick={() => removeResponsibility(idx)}
+                      className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-red-500 transition-all"
+                    >
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* Qualifications (AI-generated, editable) */}
+          {form.qualifications.length > 0 && (
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">
+                Qualifications
+              </label>
+              <ul className="space-y-1.5">
+                {form.qualifications.map((item, idx) => (
+                  <li key={idx} className="flex items-start gap-2 group">
+                    <span className="text-emerald-400 mt-0.5 text-sm">✓</span>
+                    <span className="flex-1 text-sm text-slate-700">{item}</span>
+                    <button
+                      type="button"
+                      onClick={() => removeQualification(idx)}
+                      className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-red-500 transition-all"
+                    >
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           {/* Description */}
           <div>

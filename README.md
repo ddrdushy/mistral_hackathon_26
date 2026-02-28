@@ -7,27 +7,31 @@ Production-grade agentic HR automation platform powered by Mistral AI and Eleven
 HireOps AI automates the hiring pipeline end-to-end:
 
 1. **Email Inbox** — Connect Gmail (IMAP + App Password), auto-classify inbound emails as candidate applications
-2. **Candidate Extraction** — Parse resumes (PDF/DOCX), extract contact info, create candidate records
+2. **Resume Extraction** — Extract text from PDF/DOCX/TXT/LaTeX email attachments, parse contact info, create candidate records
 3. **Job Management** — Create job postings with AI auto-fill (type a title, LLM generates the full JD)
 4. **Resume Scoring** — Match candidates to jobs with AI-powered scoring, evidence, gaps, and recommendations
 5. **Web Interview Room** — Generate unique interview links, candidates join via browser with webcam + ElevenLabs voice AI
 6. **Face Tracking** — Real-time webcam face detection during interviews (attention scoring, face presence %)
 7. **Interview Evaluation** — Mistral agent evaluates transcripts, scores communication/technical/cultural fit
-8. **Pipeline Tracker** — Excel-like candidate tracker with filters, inline stage changes, bulk actions, CSV export
-9. **Reports & Analytics** — Funnel charts, top candidates, score distributions, pipeline metrics
+8. **Threshold-Based Decisions** — Auto-advance, hold, or reject based on configurable score thresholds (Resume ≥ 80%, Interview ≥ 75%, Reject < 50%)
+9. **HR Decision Flow** — HOLD candidates require HR approval; HR can approve & schedule interview or reject with one click
+10. **Interview Scheduling** — Auto-extract candidate's preferred slot from transcript, HR books slot + auto-sends scheduling email via SMTP
+11. **Pipeline Tracker** — Excel-like candidate tracker with filters, inline stage changes, bulk actions, CSV export
+12. **Reports & Analytics** — Funnel charts, top candidates, score distributions, pipeline metrics
 
 ## Tech Stack
 
 | Layer | Technology |
 |-------|-----------|
-| Frontend | Next.js 14 (App Router) + TypeScript + Tailwind CSS |
-| Backend | FastAPI (Python) + SQLAlchemy + SQLite |
+| Frontend | Next.js 15 (App Router) + TypeScript + Tailwind CSS |
+| Backend | FastAPI (Python) + SQLAlchemy + PostgreSQL |
 | AI/LLM | Mistral AI SDK (agents + chat completion) |
 | Voice | ElevenLabs Conversational AI (browser-based via React SDK) |
 | Face Detection | MediaPipe Tasks Vision (client-side) |
+| Email | SMTP (Gmail App Password) for scheduling emails |
 | Icons | Heroicons |
 | Charts | Recharts |
-| Deployment | Docker Compose |
+| Deployment | Docker Compose (PostgreSQL + Backend + Frontend) |
 
 ## Architecture
 
@@ -82,9 +86,10 @@ backend/
 │   ├── interview_evaluator.py # Mistral agent — interview evaluation
 │   └── job_generator.py       # Mistral chat — job description generation
 └── services/
-    ├── gmail_service.py     # Gmail IMAP polling
+    ├── gmail_service.py     # Gmail IMAP polling + attachment extraction
     ├── workflow_service.py  # Auto-pipeline orchestration
-    ├── resume_service.py    # PDF/DOCX text extraction
+    ├── resume_service.py    # PDF/DOCX/TXT/LaTeX text extraction
+    ├── smtp_service.py      # SMTP email sender (scheduling emails)
     ├── csv_service.py       # CSV export
     └── llm_tracker.py       # LLM usage/cost tracking
 
@@ -138,6 +143,13 @@ ELEVENLABS_API_KEY=your_elevenlabs_api_key
 ELEVENLABS_AGENT_ID=your_elevenlabs_agent_id
 ELEVENLABS_WEBHOOK_SECRET=your_webhook_secret
 
+# SMTP (for scheduling emails)
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=your_email@gmail.com
+SMTP_PASS=your_gmail_app_password
+SMTP_FROM=your_email@gmail.com
+
 # App
 FRONTEND_URL=http://localhost:3000
 COMPANY_NAME=HireOps AI
@@ -185,7 +197,7 @@ npm run dev
 | `interview_links` | Unique interview tokens with status, face tracking, conversation IDs |
 | `events` | Audit log of all pipeline actions |
 
-**Pipeline stages:** `new → classified → matched → interview_link_sent → screened → shortlisted → rejected`
+**Pipeline stages:** `new → classified → matched → screening_scheduled → screened → shortlisted → rejected`
 
 ## Interview Flow
 
@@ -197,13 +209,33 @@ npm run dev
 6. On completion, transcript is submitted and auto-evaluated by Mistral interview_evaluator agent
 7. Recruiter sees score, strengths, concerns, face tracking data, and can play back the audio recording
 
+## Decision & Scheduling Flow
+
+After interview evaluation, the system auto-calculates a weighted final score (40% resume + 60% interview) and applies threshold-based decisions:
+
+| Decision | Criteria | What Happens |
+|----------|----------|-------------|
+| **Advance** | Resume ≥ 80% AND Interview ≥ 75% | Auto-books candidate's preferred slot, sends scheduling email |
+| **Hold** | Thresholds not fully met | HR sees "Decision Required" card with approve/reject options |
+| **Reject** | Final score < 50% | Marked rejected, HR can override |
+
+**HR Decision Required (Hold):**
+- Shows candidate's preferred interview slot extracted from the voice transcript
+- HR clicks "Approve & Schedule Interview" to book the slot + send email in one action
+- Or picks a different slot from AI-generated scheduling options
+- Or rejects the candidate
+
 ## Key Features
 
 - **AI Auto-Fill Jobs**: Type a title, Mistral generates department, location, seniority, skills, description
 - **Gmail Auto-Workflow**: Connect Gmail, new emails auto-trigger: classify → extract candidate → match to jobs → score resume
+- **PDF Resume Extraction**: Extracts actual text from PDF/DOCX/TXT/LaTeX email attachments (not just email body)
 - **Browser Interview Room**: Candidates join via link, no phone calls needed — webcam + voice AI in the browser
 - **Face Tracking**: Real-time attention scoring using MediaPipe face detection (face presence %, attention score)
 - **Interview Audio Playback**: Audio recordings proxied from ElevenLabs API for recruiter review
+- **Threshold-Based Auto-Decisions**: Configurable thresholds auto-advance/hold/reject candidates
+- **HR Decision Flow**: Decision-aware UI — different actions shown for Advance vs Hold vs Reject candidates
+- **Interview Scheduling**: One-click "Approve & Schedule" books candidate's preferred slot + sends SMTP email
 - **LLM Usage Tracking**: Monitor API calls, tokens, cost, latency per agent/model
 - **Agent Configuration**: Toggle mock/live mode via env vars, set agent IDs per agent
 - **CSV Export**: Download filtered candidate data as CSV
@@ -225,6 +257,10 @@ npm run dev
 | `POST` | `/api/v1/screening/link/{token}/face-tracking` | Submit face tracking data (public) |
 | `POST` | `/api/v1/screening/link/{token}/transcript` | Submit transcript + auto-evaluate (public) |
 | `GET` | `/api/v1/screening/{app_id}/audio` | Proxy interview audio from ElevenLabs |
+| `POST` | `/api/v1/screening/evaluate` | Evaluate interview + auto-decision |
+| `POST` | `/api/v1/screening/{id}/book-slot` | Book interview slot + send scheduling email |
+| `POST` | `/api/v1/screening/{id}/calculate-final-score` | Calculate weighted final score |
+| `POST` | `/api/v1/screening/send-link` | Send interview link email to candidate |
 | `POST` | `/api/v1/screening/webhook/elevenlabs` | ElevenLabs webhook |
 | `GET` | `/api/v1/reports/summary` | Pipeline analytics |
 | `GET` | `/api/v1/settings/llm/usage` | LLM usage report |

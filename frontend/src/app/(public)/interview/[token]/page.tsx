@@ -20,8 +20,10 @@ interface InterviewData {
   status: string;
   candidate_first_name: string;
   job_title: string;
+  job_code: string;
   company_name: string;
   elevenlabs_agent_id: string;
+  screening_questions: string[];
   is_valid: boolean;
   error: string | null;
 }
@@ -276,9 +278,26 @@ export default function InterviewPage({
     }
 
     try {
+      // Format screening questions as numbered list for the agent
+      const questionsText = (interviewData.screening_questions || [])
+        .map((q, i) => `${i + 1}. ${q}`)
+        .join("\n");
+
+      // Detect candidate timezone
+      const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Singapore";
+
       const conversationId = await conversation.startSession({
         agentId: interviewData.elevenlabs_agent_id,
         connectionType: "websocket",
+        dynamicVariables: {
+          candidate_name: interviewData.candidate_first_name,
+          job_title: interviewData.job_title,
+          job_id: interviewData.job_code,
+          company_name: interviewData.company_name,
+          screening_questions: questionsText,
+          language: "English",
+          timezone: timezone,
+        },
       });
 
       // Notify backend of conversation ID so it can fetch audio later

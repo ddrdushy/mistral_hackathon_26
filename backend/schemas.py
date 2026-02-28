@@ -23,6 +23,8 @@ class JobCreate(BaseModel):
     location: str = ""
     seniority: str = ""
     skills: List[str] = []
+    responsibilities: List[str] = []
+    qualifications: List[str] = []
     description: str = ""
 
 
@@ -32,6 +34,8 @@ class JobUpdate(BaseModel):
     location: Optional[str] = None
     seniority: Optional[str] = None
     skills: Optional[List[str]] = None
+    responsibilities: Optional[List[str]] = None
+    qualifications: Optional[List[str]] = None
     description: Optional[str] = None
     status: Optional[str] = None
 
@@ -156,6 +160,11 @@ class ApplicationResponse(BaseModel):
     screening_transcript: Optional[str]
     resume_score_json: Optional[dict]
     interview_score_json: Optional[dict]
+    scheduled_interview_at: Optional[str] = None
+    scheduled_interview_slot: Optional[str] = None
+    email_draft_sent: int = 0
+    final_score: Optional[float] = None
+    final_summary: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
@@ -188,6 +197,10 @@ class ApplicationMatchResponse(BaseModel):
 class BulkStageUpdate(BaseModel):
     application_ids: List[int]
     stage: PipelineStage
+
+
+class BookSlotRequest(BaseModel):
+    slot: str  # Human-readable slot text e.g. "Monday, March 3rd, 10:00 AM"
 
 
 # ═══════════════════════════════════════
@@ -314,8 +327,10 @@ class InterviewLinkPublicResponse(BaseModel):
     status: str
     candidate_first_name: str
     job_title: str
+    job_code: str = ""
     company_name: str
     elevenlabs_agent_id: str
+    screening_questions: List[str] = []
     is_valid: bool
     error: Optional[str] = None
 

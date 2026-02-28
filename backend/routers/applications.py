@@ -49,6 +49,16 @@ def _app_to_response(app: Application, db: Session) -> dict:
         "interview_score_json": json.loads(app.interview_score_json) if app.interview_score_json else None,
         "interview_link_status": app.interview_link_status,
         "interview_face_tracking_json": json.loads(app.interview_face_tracking_json) if app.interview_face_tracking_json else None,
+        "scheduled_interview_at": app.scheduled_interview_at.isoformat() if app.scheduled_interview_at else None,
+        "scheduled_interview_slot": app.scheduled_interview_slot,
+        "email_draft_sent": app.email_draft_sent or 0,
+        "final_score": app.final_score,
+        "final_summary": app.final_summary,
+        "thresholds": {
+            "resume_min": job.resume_threshold_min if job and job.resume_threshold_min is not None else 80.0,
+            "interview_min": job.interview_threshold_min if job and job.interview_threshold_min is not None else 75.0,
+            "reject_below": job.final_threshold_reject if job and job.final_threshold_reject is not None else 50.0,
+        } if job else {"resume_min": 80.0, "interview_min": 75.0, "reject_below": 50.0},
         "created_at": app.created_at.isoformat() if app.created_at else None,
         "updated_at": app.updated_at.isoformat() if app.updated_at else None,
     }
@@ -78,6 +88,7 @@ async def match_candidate_to_job(req: ApplicationMatchRequest, db: Session = Dep
         raise HTTPException(status_code=400, detail="Application already exists for this candidate-job pair")
 
     skills = json.loads(job.skills) if job.skills else []
+    responsibilities = json.loads(job.responsibilities) if job.responsibilities else []
     scorer_input = ResumeScorerInput(
         resume_text=candidate.resume_text,
         job_id=job.job_id,
@@ -86,6 +97,7 @@ async def match_candidate_to_job(req: ApplicationMatchRequest, db: Session = Dep
         must_have_skills=skills,
         nice_to_have_skills=[],
         seniority=job.seniority,
+        responsibilities=responsibilities,
     )
     score_result = await score_resume(scorer_input)
 

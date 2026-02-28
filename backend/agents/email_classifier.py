@@ -37,34 +37,62 @@ class EmailClassifierOutput:
 
 async def classify_email(input_data: EmailClassifierInput) -> EmailClassifierOutput:
     if not USE_MOCK and AGENT_ID:
-        from mistralai import Mistral
-        from services.llm_tracker import LLMCallTimer
+        try:
+            from mistralai import Mistral
+            from services.llm_tracker import LLMCallTimer
 
-        client = Mistral(api_key=os.environ.get("MISTRAL_API_KEY"))
+            client = Mistral(api_key=os.environ.get("MISTRAL_API_KEY"))
 
-        content = (
-            f"subject: {input_data.subject}\n"
-            f"from_name: {input_data.from_name}\n"
-            f"from_email: {input_data.from_email}\n"
-            f"attachment_names: {json.dumps(input_data.attachment_names)}\n"
-            f"body_text: {input_data.body_text}"
-        )
-
-        with LLMCallTimer("email_classifier", "agent") as timer:
-            response = client.beta.conversations.start(
-                agent_id=AGENT_ID,
-                inputs=[{"role": "user", "content": content}],
+            content = (
+                f"subject: {input_data.subject}\n"
+                f"from_name: {input_data.from_name}\n"
+                f"from_email: {input_data.from_email}\n"
+                f"attachment_names: {json.dumps(input_data.attachment_names)}\n"
+                f"body_text: {input_data.body_text}"
             )
-            timer.input_tokens = len(content.split()) * 2  # Approximate
-            timer.output_tokens = len(response.outputs.text.split()) * 2
 
-        # Parse JSON — handle potential markdown wrapping
-        text = response.outputs.text.strip()
-        if text.startswith("```"):
-            text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+            with LLMCallTimer("email_classifier", "agent") as timer:
+                response = client.beta.conversations.start(
+                    agent_id=AGENT_ID,
+                    inputs=[{"role": "user", "content": content}],
+                )
+                timer.input_tokens = len(content.split()) * 2  # Approximate
+                timer.output_tokens = len(response.outputs[0].content.split()) * 2
 
-        result = json.loads(text)
-        return EmailClassifierOutput(**result)
+            # Parse JSON — handle potential markdown wrapping
+            text = response.outputs[0].content.strip()
+            if text.startswith("```"):
+                text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+
+            result = json.loads(text)
+
+            # Map agent's response format to our expected schema
+            # Agent may return email_type instead of category, candidate.name instead of detected_name, etc.
+            mapped = {
+                "category": result.get("category") or result.get("email_type", "unknown"),
+                "confidence": result.get("confidence", 0.5),
+                "reasoning": result.get("reasoning", ""),
+                "suggested_action": result.get("suggested_action") or result.get("next_action", ""),
+                "detected_name": result.get("detected_name", ""),
+                "detected_role": result.get("detected_role", ""),
+            }
+            # Handle nested candidate/job_hint fields from agent
+            if "candidate" in result and isinstance(result["candidate"], dict):
+                mapped["detected_name"] = result["candidate"].get("name", "") or ""
+            if "job_hint" in result and isinstance(result["job_hint"], dict):
+                mapped["detected_role"] = result["job_hint"].get("title", "") or ""
+            # Normalize category values
+            cat = mapped["category"].lower()
+            if cat in ("candidate_application", "application", "job_application"):
+                mapped["category"] = "candidate_application"
+            elif cat in ("general", "other", "spam", "newsletter", "ignore"):
+                mapped["category"] = "general"
+            else:
+                mapped["category"] = "unknown"
+
+            return EmailClassifierOutput(**mapped)
+        except Exception as e:
+            print(f"[email_classifier] Mistral agent error: {e}, falling back to mock")
 
     # ─── MOCK IMPLEMENTATION ───
     from services.llm_tracker import log_usage

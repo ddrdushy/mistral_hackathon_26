@@ -227,6 +227,44 @@ export default function JobDetailPage() {
         </div>
       )}
 
+      {/* Responsibilities Section */}
+      {job.responsibilities && job.responsibilities.length > 0 && (
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 mb-6">
+          <h2 className="text-sm font-medium text-slate-500 uppercase tracking-wider mb-3">Responsibilities</h2>
+          <ul className="space-y-2">
+            {job.responsibilities.map((item, idx) => (
+              <li key={idx} className="flex items-start gap-2.5">
+                <span className="text-indigo-400 mt-0.5 flex-shrink-0">
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                </span>
+                <span className="text-sm text-slate-700 leading-relaxed">{item}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Qualifications Section */}
+      {job.qualifications && job.qualifications.length > 0 && (
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 mb-6">
+          <h2 className="text-sm font-medium text-slate-500 uppercase tracking-wider mb-3">Qualifications</h2>
+          <ul className="space-y-2">
+            {job.qualifications.map((item, idx) => (
+              <li key={idx} className="flex items-start gap-2.5">
+                <span className="text-emerald-500 mt-0.5 flex-shrink-0">
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                </span>
+                <span className="text-sm text-slate-700 leading-relaxed">{item}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {/* Description Section */}
       {job.description && (
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 mb-6">

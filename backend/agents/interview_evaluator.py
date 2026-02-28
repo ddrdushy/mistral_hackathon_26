@@ -42,35 +42,38 @@ class InterviewEvaluatorOutput:
 
 async def evaluate_interview(input_data: InterviewEvaluatorInput) -> InterviewEvaluatorOutput:
     if not USE_MOCK and AGENT_ID:
-        from mistralai import Mistral
-        from services.llm_tracker import LLMCallTimer
+        try:
+            from mistralai import Mistral
+            from services.llm_tracker import LLMCallTimer
 
-        client = Mistral(api_key=os.environ.get("MISTRAL_API_KEY"))
+            client = Mistral(api_key=os.environ.get("MISTRAL_API_KEY"))
 
-        content = (
-            f"transcript:\n{input_data.transcript}\n\n"
-            f"job_title: {input_data.job_title}\n"
-            f"job_description: {input_data.job_description}\n"
-            f"required_skills: {json.dumps(input_data.required_skills)}\n"
-            f"resume_score: {input_data.resume_score}\n"
-            f"resume_summary: {input_data.resume_summary}"
-        )
-
-        with LLMCallTimer("interview_evaluator", "agent") as timer:
-            response = client.beta.conversations.start(
-                agent_id=AGENT_ID,
-                inputs=[{"role": "user", "content": content}],
+            content = (
+                f"transcript:\n{input_data.transcript}\n\n"
+                f"job_title: {input_data.job_title}\n"
+                f"job_description: {input_data.job_description}\n"
+                f"required_skills: {json.dumps(input_data.required_skills)}\n"
+                f"resume_score: {input_data.resume_score}\n"
+                f"resume_summary: {input_data.resume_summary}"
             )
-            timer.input_tokens = len(content.split()) * 2
-            timer.output_tokens = len(response.outputs.text.split()) * 2
 
-        # Parse JSON — handle potential markdown wrapping
-        text = response.outputs.text.strip()
-        if text.startswith("```"):
-            text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+            with LLMCallTimer("interview_evaluator", "agent") as timer:
+                response = client.beta.conversations.start(
+                    agent_id=AGENT_ID,
+                    inputs=[{"role": "user", "content": content}],
+                )
+                timer.input_tokens = len(content.split()) * 2
+                timer.output_tokens = len(response.outputs[0].content.split()) * 2
 
-        result = json.loads(text)
-        return InterviewEvaluatorOutput(**result)
+            # Parse JSON — handle potential markdown wrapping
+            text = response.outputs[0].content.strip()
+            if text.startswith("```"):
+                text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+
+            result = json.loads(text)
+            return InterviewEvaluatorOutput(**result)
+        except Exception as e:
+            print(f"[interview_evaluator] Mistral agent error: {e}, falling back to mock")
 
     # ─── MOCK / FALLBACK IMPLEMENTATION ───
     from services.llm_tracker import log_usage

@@ -16,8 +16,16 @@ class Job(Base):
     location = Column(String, default="")
     seniority = Column(String, default="")  # junior/mid/senior/lead
     skills = Column(Text, default="[]")  # JSON array
+    responsibilities = Column(Text, default="[]")  # JSON array
+    qualifications = Column(Text, default="[]")  # JSON array
     description = Column(Text, default="")
     status = Column(String, default="open")  # open/closed/paused
+
+    # Score thresholds for auto-decision
+    resume_threshold_min = Column(Float, default=80.0)      # Min resume score to advance (80-100%)
+    interview_threshold_min = Column(Float, default=75.0)   # Min interview score to advance (75-95%)
+    final_threshold_reject = Column(Float, default=50.0)    # Below this → auto-reject
+
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -95,6 +103,15 @@ class Application(Base):
     interview_link_status = Column(String, nullable=True)  # generated/sent/opened/interview_started/interview_completed/expired
     interview_face_tracking_json = Column(Text, nullable=True)  # JSON aggregate
 
+    # Scheduling
+    scheduled_interview_at = Column(DateTime, nullable=True)
+    scheduled_interview_slot = Column(String, nullable=True)  # Human-readable slot text
+    email_draft_sent = Column(Integer, default=0)  # 0=not sent, 1=sent
+
+    # Final combined score (LLM-generated from resume + interview)
+    final_score = Column(Float, nullable=True)
+    final_summary = Column(Text, nullable=True)
+
     candidate = relationship("Candidate", back_populates="applications")
     job = relationship("Job", back_populates="applications")
     events = relationship("Event", back_populates="application")
@@ -122,6 +139,16 @@ class Event(Base):
     __table_args__ = (
         Index("idx_events_app", "app_id"),
     )
+
+
+class Setting(Base):
+    """Key-value store for persistent app settings (e.g. Gmail credentials)."""
+    __tablename__ = "settings"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    key = Column(String, unique=True, nullable=False, index=True)
+    value = Column(Text, default="")
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class InterviewLink(Base):

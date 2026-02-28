@@ -9,6 +9,8 @@ export interface Job {
   location: string;
   seniority: string;
   skills: string[];
+  responsibilities: string[];
+  qualifications: string[];
   description: string;
   status: string;
   created_at: string;
@@ -27,6 +29,8 @@ export interface JobCreate {
   location: string;
   seniority: string;
   skills: string[];
+  responsibilities: string[];
+  qualifications: string[];
   description: string;
 }
 
@@ -107,6 +111,7 @@ export interface InterviewScoreDetails {
   cultural_fit: string;
   email_draft: string;
   scheduling_slots: string[];
+  candidate_preferred_slot: string | null;
   summary: string;
 }
 
@@ -139,6 +144,16 @@ export interface Application {
   } | null;
   resume_score_json: ResumeScoreDetails | null;
   interview_score_json: InterviewScoreDetails | null;
+  scheduled_interview_at: string | null;
+  scheduled_interview_slot: string | null;
+  email_draft_sent: number;
+  final_score: number | null;
+  final_summary: string | null;
+  thresholds: {
+    resume_min: number;
+    interview_min: number;
+    reject_below: number;
+  };
   created_at: string;
   updated_at: string;
 }
@@ -230,6 +245,7 @@ export interface InterviewLinkPublicData {
   job_title: string;
   company_name: string;
   elevenlabs_agent_id: string;
+  screening_questions: string[];
   is_valid: boolean;
   error: string | null;
 }

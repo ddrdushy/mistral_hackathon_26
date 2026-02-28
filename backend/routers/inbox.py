@@ -43,6 +43,13 @@ async def connect_gmail(req: GmailConnectRequest):
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@router.post("/gmail/disconnect")
+async def disconnect_gmail():
+    """Disconnect Gmail and clear saved credentials."""
+    gmail_manager.disconnect()
+    return {"status": "disconnected"}
+
+
 @router.post("/gmail/sync")
 async def sync_gmail(db: Session = Depends(get_db)):
     """Fetch new emails from Gmail and store them."""
@@ -90,7 +97,7 @@ async def sync_and_process_gmail(db: Session = Depends(get_db)):
 
 @router.post("/gmail/watch")
 async def start_gmail_watch(req: GmailPollRequest):
-    """Start automatic polling for new Gmail emails + auto-workflow."""
+    """Start automatic polling for new Gmail emails + auto-workflow (legacy)."""
     try:
         result = gmail_manager.start_polling(interval=req.interval)
         return result
@@ -98,10 +105,26 @@ async def start_gmail_watch(req: GmailPollRequest):
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@router.post("/gmail/idle/start")
+async def start_gmail_idle():
+    """Start IMAP IDLE listener — triggers workflow instantly on new email."""
+    try:
+        result = gmail_manager.start_idle_listener()
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/gmail/idle/stop")
+async def stop_gmail_idle():
+    """Stop IMAP IDLE listener."""
+    return gmail_manager.stop_idle_listener()
+
+
 @router.post("/gmail/stop")
 async def stop_gmail_watch():
-    """Stop automatic Gmail polling."""
-    return gmail_manager.stop_polling()
+    """Stop any active listener (IDLE or polling)."""
+    return gmail_manager.stop_all()
 
 
 @router.get("/gmail/status")

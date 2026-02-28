@@ -44,6 +44,8 @@ def _job_to_response(job: Job, db: Session) -> dict:
         "location": job.location,
         "seniority": job.seniority,
         "skills": json.loads(job.skills) if job.skills else [],
+        "responsibilities": json.loads(job.responsibilities) if job.responsibilities else [],
+        "qualifications": json.loads(job.qualifications) if job.qualifications else [],
         "description": job.description,
         "status": job.status,
         "created_at": job.created_at.isoformat() if job.created_at else None,
@@ -61,6 +63,8 @@ async def create_job(req: JobCreate, db: Session = Depends(get_db)):
         location=req.location,
         seniority=req.seniority,
         skills=json.dumps(req.skills),
+        responsibilities=json.dumps(req.responsibilities),
+        qualifications=json.dumps(req.qualifications),
         description=req.description,
     )
     db.add(job)
@@ -107,8 +111,9 @@ async def update_job(job_id: int, req: JobUpdate, db: Session = Depends(get_db))
         raise HTTPException(status_code=404, detail="Job not found")
 
     update_data = req.model_dump(exclude_unset=True)
-    if "skills" in update_data:
-        update_data["skills"] = json.dumps(update_data["skills"])
+    for json_field in ("skills", "responsibilities", "qualifications"):
+        if json_field in update_data:
+            update_data[json_field] = json.dumps(update_data[json_field])
 
     for key, value in update_data.items():
         setattr(job, key, value)

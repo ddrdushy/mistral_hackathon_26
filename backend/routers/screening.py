@@ -29,6 +29,113 @@ def _log_event(db: Session, app_id: int, event_type: str, payload: dict):
     db.add(event)
 
 
+def _apply_threshold_decision(app: Application, job: Job, db: Session) -> dict:
+    """Apply threshold-based auto-decision after evaluation.
+
+    Rules:
+      - Resume >= resume_threshold_min AND Interview >= interview_threshold_min → ADVANCE
+      - Final score < final_threshold_reject → REJECT
+      - Otherwise → HOLD (HR review needed)
+
+    Returns dict with decision details.
+    """
+    resume_score = app.resume_score or 0
+    interview_score = app.interview_score or 0
+    final_score = app.final_score or 0
+
+    # Job thresholds (with defaults)
+    resume_min = job.resume_threshold_min if job.resume_threshold_min is not None else 80.0
+    interview_min = job.interview_threshold_min if job.interview_threshold_min is not None else 75.0
+    reject_below = job.final_threshold_reject if job.final_threshold_reject is not None else 50.0
+
+    resume_pass = resume_score >= resume_min
+    interview_pass = interview_score >= interview_min
+    above_reject = final_score >= reject_below
+
+    result = {
+        "resume_score": resume_score,
+        "interview_score": interview_score,
+        "final_score": final_score,
+        "resume_threshold": resume_min,
+        "interview_threshold": interview_min,
+        "reject_threshold": reject_below,
+        "resume_pass": resume_pass,
+        "interview_pass": interview_pass,
+    }
+
+    if resume_pass and interview_pass:
+        # Both scores above threshold → AUTO-ADVANCE
+        decision = "advance"
+        app.recommendation = "advance"
+        app.stage = "shortlisted"
+        app.ai_next_action = (
+            f"Auto-advanced: Resume {resume_score}% ≥ {resume_min}% ✓, "
+            f"Interview {interview_score}% ≥ {interview_min}% ✓ — "
+            f"Select interview slot to schedule"
+        )
+        result["decision"] = decision
+        result["reason"] = "Both scores meet threshold"
+
+        _log_event(db, app.id, "threshold_auto_advance", {
+            "resume_score": resume_score,
+            "interview_score": interview_score,
+            "final_score": final_score,
+            "thresholds": {"resume": resume_min, "interview": interview_min},
+        })
+
+    elif not above_reject:
+        # Final score below reject threshold → AUTO-REJECT
+        decision = "reject"
+        app.recommendation = "reject"
+        app.stage = "rejected"
+        app.ai_next_action = (
+            f"Auto-rejected: Final score {final_score}% below {reject_below}% threshold"
+        )
+        result["decision"] = decision
+        result["reason"] = f"Final score {final_score} below reject threshold {reject_below}"
+
+        # Auto-send rejection email
+        try:
+            candidate = db.query(Candidate).filter(Candidate.id == app.candidate_id).first()
+            company = os.getenv("COMPANY_NAME", "HireOps AI")
+            from services.smtp_service import send_rejection_email
+            send_rejection_email(
+                to_email=candidate.email,
+                candidate_name=candidate.name.split()[0],
+                job_title=job.title,
+                company_name=company,
+            )
+            _log_event(db, app.id, "auto_rejection_email_sent", {"to": candidate.email})
+        except Exception:
+            pass
+
+    else:
+        # Scores partially pass → HOLD for HR review
+        decision = "hold"
+        app.recommendation = "hold"
+        missing = []
+        if not resume_pass:
+            missing.append(f"Resume {resume_score}% < {resume_min}%")
+        if not interview_pass:
+            missing.append(f"Interview {interview_score}% < {interview_min}%")
+        app.ai_next_action = (
+            f"Hold for HR review: {', '.join(missing)} — "
+            f"Final score {final_score}% (above reject threshold {reject_below}%)"
+        )
+        result["decision"] = decision
+        result["reason"] = f"Partial pass: {', '.join(missing)}"
+
+        _log_event(db, app.id, "threshold_hold", {
+            "resume_score": resume_score,
+            "interview_score": interview_score,
+            "final_score": final_score,
+            "missing": missing,
+        })
+
+    app.updated_at = datetime.utcnow()
+    return result
+
+
 # ═══════════════════════════════════════
 # INTERVIEW LINK MANAGEMENT (Dashboard)
 # ═══════════════════════════════════════
@@ -84,23 +191,321 @@ async def generate_interview_link(req: InterviewLinkGenerateRequest, db: Session
 
 @router.post("/send-link")
 async def send_interview_link(body: dict, db: Session = Depends(get_db)):
-    """Mark an interview link as sent to the candidate."""
+    """Actually send interview link email to the candidate via SMTP."""
     token = body.get("token")
     link = db.query(InterviewLink).filter(InterviewLink.token == token).first()
     if not link:
         raise HTTPException(status_code=404, detail="Interview link not found")
 
-    link.status = "sent"
     app = db.query(Application).filter(Application.id == link.app_id).first()
-    if app:
-        app.interview_link_status = "sent"
-        app.ai_next_action = "Interview link sent — waiting for candidate"
-        app.updated_at = datetime.utcnow()
+    if not app:
+        raise HTTPException(status_code=404, detail="Application not found")
 
-    _log_event(db, link.app_id, "interview_link_sent", {"token": token})
+    candidate = db.query(Candidate).filter(Candidate.id == app.candidate_id).first()
+    job = db.query(Job).filter(Job.id == app.job_id).first()
+
+    if not candidate or not candidate.email:
+        raise HTTPException(status_code=400, detail="Candidate email not found")
+
+    base_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
+    interview_url = f"{base_url}/interview/{token}"
+    company = os.getenv("COMPANY_NAME", "HireOps AI")
+
+    # Send the actual email
+    from services.smtp_service import send_interview_link_email
+    result = send_interview_link_email(
+        to_email=candidate.email,
+        candidate_name=candidate.name.split()[0],
+        job_title=job.title if job else "Open Position",
+        company_name=company,
+        interview_url=interview_url,
+    )
+
+    if result["success"]:
+        link.status = "sent"
+        app.interview_link_status = "sent"
+        app.ai_next_action = "Interview link emailed to candidate — waiting for response"
+        app.updated_at = datetime.utcnow()
+        _log_event(db, link.app_id, "interview_link_emailed", {
+            "token": token,
+            "to_email": candidate.email,
+        })
+        db.commit()
+        return {"status": "sent", "token": token, "email_sent": True, "to": candidate.email}
+    else:
+        # Mark as sent (status) even if email fails — recruiter can copy link
+        link.status = "sent"
+        app.interview_link_status = "sent"
+        app.updated_at = datetime.utcnow()
+        db.commit()
+        return {"status": "sent", "token": token, "email_sent": False, "error": result["message"]}
+
+
+@router.post("/{app_id}/send-rejection")
+async def send_rejection_email(app_id: int, db: Session = Depends(get_db)):
+    """Send rejection email to candidate."""
+    app = db.query(Application).filter(Application.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    candidate = db.query(Candidate).filter(Candidate.id == app.candidate_id).first()
+    job = db.query(Job).filter(Job.id == app.job_id).first()
+
+    if not candidate or not candidate.email:
+        raise HTTPException(status_code=400, detail="Candidate email not found")
+
+    company = os.getenv("COMPANY_NAME", "HireOps AI")
+
+    from services.smtp_service import send_rejection_email as _send_rejection
+    result = _send_rejection(
+        to_email=candidate.email,
+        candidate_name=candidate.name.split()[0],
+        job_title=job.title if job else "Open Position",
+        company_name=company,
+    )
+
+    if result["success"]:
+        app.stage = "rejected"
+        app.recommendation = "reject"
+        app.ai_next_action = "Rejection email sent"
+        app.updated_at = datetime.utcnow()
+        _log_event(db, app.id, "rejection_email_sent", {"to_email": candidate.email})
+        db.commit()
+
+    return result
+
+
+@router.post("/{app_id}/send-email")
+async def send_custom_email_endpoint(app_id: int, body: dict, db: Session = Depends(get_db)):
+    """Send a custom email to candidate (e.g., AI-generated follow-up draft)."""
+    app = db.query(Application).filter(Application.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    candidate = db.query(Candidate).filter(Candidate.id == app.candidate_id).first()
+    if not candidate or not candidate.email:
+        raise HTTPException(status_code=400, detail="Candidate email not found")
+
+    subject = body.get("subject", "")
+    email_body = body.get("body", "")
+    if not subject or not email_body:
+        raise HTTPException(status_code=400, detail="Subject and body are required")
+
+    company = os.getenv("COMPANY_NAME", "HireOps AI")
+
+    from services.smtp_service import send_custom_email
+    result = send_custom_email(
+        to_email=candidate.email,
+        candidate_name=candidate.name.split()[0],
+        subject=subject,
+        body=email_body,
+        company_name=company,
+    )
+
+    if result["success"]:
+        _log_event(db, app.id, "custom_email_sent", {
+            "to_email": candidate.email,
+            "subject": subject,
+        })
+        db.commit()
+
+    return result
+
+
+@router.post("/{app_id}/book-slot")
+async def book_interview_slot(app_id: int, body: dict, db: Session = Depends(get_db)):
+    """Book an interview time slot and auto-send scheduling email to candidate."""
+    app = db.query(Application).filter(Application.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    slot = body.get("slot", "")
+    if not slot:
+        raise HTTPException(status_code=400, detail="Slot is required")
+
+    candidate = db.query(Candidate).filter(Candidate.id == app.candidate_id).first()
+    job = db.query(Job).filter(Job.id == app.job_id).first()
+
+    if not candidate or not candidate.email:
+        raise HTTPException(status_code=400, detail="Candidate email not found")
+
+    # Store the booked slot
+    app.scheduled_interview_slot = slot
+    app.stage = "shortlisted"
+    app.ai_next_action = f"In-person interview scheduled: {slot}"
+    app.updated_at = datetime.utcnow()
+
+    _log_event(db, app.id, "interview_slot_booked", {"slot": slot})
+
+    # Auto-send scheduling email
+    email_result = {"success": False, "message": "Not attempted"}
+    try:
+        company = os.getenv("COMPANY_NAME", "HireOps AI")
+        email_draft = ""
+        if app.interview_score_json:
+            score_data = json.loads(app.interview_score_json)
+            email_draft = score_data.get("email_draft", "")
+
+        from services.smtp_service import send_scheduling_email
+        email_result = send_scheduling_email(
+            to_email=candidate.email,
+            candidate_name=candidate.name.split()[0],
+            job_title=job.title if job else "Open Position",
+            company_name=company,
+            slot=slot,
+            email_draft=email_draft,
+        )
+        if email_result["success"]:
+            app.email_draft_sent = 1
+            _log_event(db, app.id, "scheduling_email_sent", {
+                "to_email": candidate.email,
+                "slot": slot,
+            })
+    except Exception as e:
+        email_result = {"success": False, "message": str(e)}
+
     db.commit()
 
-    return {"status": "sent", "token": token}
+    return {
+        "status": "booked",
+        "slot": slot,
+        "email_sent": email_result.get("success", False),
+        "email_message": email_result.get("message", ""),
+    }
+
+
+@router.post("/{app_id}/send-draft")
+async def send_email_draft(app_id: int, db: Session = Depends(get_db)):
+    """Send the AI-generated email draft to the candidate."""
+    app = db.query(Application).filter(Application.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    if not app.interview_score_json:
+        raise HTTPException(status_code=400, detail="No interview evaluation available")
+
+    score_data = json.loads(app.interview_score_json)
+    email_draft = score_data.get("email_draft", "")
+    if not email_draft:
+        raise HTTPException(status_code=400, detail="No email draft available")
+
+    candidate = db.query(Candidate).filter(Candidate.id == app.candidate_id).first()
+    job = db.query(Job).filter(Job.id == app.job_id).first()
+
+    if not candidate or not candidate.email:
+        raise HTTPException(status_code=400, detail="Candidate email not found")
+
+    company = os.getenv("COMPANY_NAME", "HireOps AI")
+    decision = score_data.get("decision", "")
+    subject = (
+        f"Next Steps — {job.title if job else 'Position'} at {company}"
+        if decision == "advance"
+        else f"Update on Your Application — {job.title if job else 'Position'} at {company}"
+    )
+
+    from services.smtp_service import send_custom_email
+    result = send_custom_email(
+        to_email=candidate.email,
+        candidate_name=candidate.name.split()[0],
+        subject=subject,
+        body=email_draft,
+        company_name=company,
+    )
+
+    if result["success"]:
+        app.email_draft_sent = 1
+        app.updated_at = datetime.utcnow()
+        _log_event(db, app.id, "email_draft_sent", {
+            "to_email": candidate.email,
+            "subject": subject,
+        })
+        db.commit()
+
+    return result
+
+
+@router.post("/{app_id}/calculate-final-score")
+async def calculate_final_score(app_id: int, db: Session = Depends(get_db)):
+    """Calculate a combined final score from resume + interview using LLM."""
+    app = db.query(Application).filter(Application.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    resume_score = app.resume_score or 0
+    interview_score = app.interview_score or 0
+
+    # Weighted combination: 40% resume, 60% interview
+    final_score = round(resume_score * 0.4 + interview_score * 0.6, 1)
+
+    # Generate LLM summary combining both assessments
+    resume_data = json.loads(app.resume_score_json) if app.resume_score_json else {}
+    interview_data = json.loads(app.interview_score_json) if app.interview_score_json else {}
+    candidate = db.query(Candidate).filter(Candidate.id == app.candidate_id).first()
+    job = db.query(Job).filter(Job.id == app.job_id).first()
+
+    final_summary = ""
+    try:
+        from mistralai import Mistral
+        client = Mistral(api_key=os.environ.get("MISTRAL_API_KEY", ""))
+
+        prompt = (
+            f"You are an HR assessment summarizer. Generate a concise 2-3 sentence final assessment "
+            f"for a candidate based on their resume and interview scores.\n\n"
+            f"Candidate: {candidate.name if candidate else 'Unknown'}\n"
+            f"Position: {job.title if job else 'Unknown'}\n"
+            f"Resume Score: {resume_score}/100\n"
+            f"Resume Summary: {resume_data.get('summary', 'N/A')}\n"
+            f"Interview Score: {interview_score}/100\n"
+            f"Interview Summary: {interview_data.get('summary', 'N/A')}\n"
+            f"Interview Decision: {interview_data.get('decision', 'N/A')}\n"
+            f"Strengths: {', '.join(interview_data.get('strengths', []))}\n"
+            f"Concerns: {', '.join(interview_data.get('concerns', []))}\n"
+            f"Communication: {interview_data.get('communication_rating', 'N/A')}\n"
+            f"Technical Depth: {interview_data.get('technical_depth', 'N/A')}\n"
+            f"Final Score: {final_score}/100\n\n"
+            f"Write a professional 2-3 sentence summary. Include the final recommendation (advance/hold/reject). "
+            f"Be specific about key strengths and concerns."
+        )
+
+        response = client.chat.complete(
+            model="mistral-small-latest",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=200,
+        )
+        final_summary = response.choices[0].message.content.strip()
+    except Exception as e:
+        # Fallback to a simple summary
+        decision = interview_data.get("decision", app.recommendation or "hold")
+        final_summary = (
+            f"Combined assessment for {candidate.name if candidate else 'candidate'} "
+            f"({job.title if job else 'position'}): Resume score {resume_score}/100, "
+            f"Interview score {interview_score}/100, Final score {final_score}/100. "
+            f"Recommendation: {decision}."
+        )
+
+    app.final_score = final_score
+    app.final_summary = final_summary
+    app.updated_at = datetime.utcnow()
+    _log_event(db, app.id, "final_score_calculated", {
+        "resume_score": resume_score,
+        "interview_score": interview_score,
+        "final_score": final_score,
+    })
+
+    # Apply threshold-based auto-decision
+    threshold_result = {}
+    if job:
+        threshold_result = _apply_threshold_decision(app, job, db)
+
+    db.commit()
+
+    return {
+        "final_score": final_score,
+        "final_summary": final_summary,
+        "resume_score": resume_score,
+        "interview_score": interview_score,
+        "threshold_decision": threshold_result,
+    }
 
 
 @router.get("/{app_id}/links")
@@ -185,13 +590,24 @@ async def get_interview_link_public(token: str, db: Session = Depends(get_db)):
     agent_id = os.getenv("ELEVENLABS_AGENT_ID", "")
     company = os.getenv("COMPANY_NAME", "HireOps AI")
 
+    # Extract screening questions from the application's resume score
+    screening_questions = []
+    if app and app.resume_score_json:
+        try:
+            score_data = json.loads(app.resume_score_json)
+            screening_questions = score_data.get("screening_questions", [])
+        except (json.JSONDecodeError, TypeError):
+            pass
+
     return InterviewLinkPublicResponse(
         token=token,
         status=link.status,
         candidate_first_name=candidate.name.split()[0] if candidate else "",
         job_title=job.title if job else "",
+        job_code=job.job_id if job else "",
         company_name=company,
         elevenlabs_agent_id=agent_id,
+        screening_questions=screening_questions,
         is_valid=True,
     )
 
@@ -353,17 +769,76 @@ async def submit_interview_transcript(token: str, req: InterviewTranscriptSubmit
             "scheduling_slots": result.scheduling_slots,
             "summary": result.summary,
         })
-        app.recommendation = result.decision
-        app.ai_next_action = (
-            "Schedule in-person interview" if result.decision == "advance"
-            else "Place on hold for review" if result.decision == "hold"
-            else "Send rejection email"
-        )
+        # Calculate final combined score
+        resume_score = app.resume_score or 0
+        final_score = round(resume_score * 0.4 + result.score * 0.6, 1)
+        app.final_score = final_score
+
+        # Generate quick final summary
+        try:
+            from mistralai import Mistral as _Mistral
+            _client = _Mistral(api_key=os.environ.get("MISTRAL_API_KEY", ""))
+            _candidate = db.query(Candidate).filter(Candidate.id == app.candidate_id).first()
+            _job = db.query(Job).filter(Job.id == app.job_id).first()
+            _prompt = (
+                f"Write a 2-sentence HR assessment summary.\n"
+                f"Candidate: {_candidate.name if _candidate else 'Unknown'}, "
+                f"Position: {_job.title if _job else 'Unknown'}, "
+                f"Resume: {resume_score}/100, Interview: {result.score}/100, "
+                f"Final: {final_score}/100, Decision: {result.decision}. "
+                f"Strengths: {', '.join(result.strengths[:3])}. "
+                f"Concerns: {', '.join(result.concerns[:2])}."
+            )
+            _resp = _client.chat.complete(
+                model="mistral-small-latest",
+                messages=[{"role": "user", "content": _prompt}],
+                max_tokens=150,
+            )
+            app.final_summary = _resp.choices[0].message.content.strip()
+        except Exception:
+            app.final_summary = (
+                f"Final score: {final_score}/100 (Resume: {resume_score}, Interview: {result.score}). "
+                f"Recommendation: {result.decision}."
+            )
+
+        # Apply threshold-based auto-decision
+        threshold_result = _apply_threshold_decision(app, job, db)
+
+        # Auto-send email draft for advance candidates
+        if threshold_result["decision"] == "advance":
+            try:
+                _candidate = db.query(Candidate).filter(Candidate.id == app.candidate_id).first()
+                _job = db.query(Job).filter(Job.id == app.job_id).first()
+                company = os.getenv("COMPANY_NAME", "HireOps AI")
+                from services.smtp_service import send_custom_email as _send_custom
+                _email_result = _send_custom(
+                    to_email=_candidate.email,
+                    candidate_name=_candidate.name.split()[0],
+                    subject=f"Next Steps — {_job.title if _job else 'Position'} at {company}",
+                    body=result.email_draft,
+                    company_name=company,
+                )
+                if _email_result["success"]:
+                    app.email_draft_sent = 1
+                    _log_event(db, app.id, "auto_email_draft_sent", {
+                        "to_email": _candidate.email,
+                        "decision": threshold_result["decision"],
+                    })
+            except Exception:
+                pass
+
         _log_event(db, app.id, "interview_auto_evaluated", {
             "score": result.score,
-            "decision": result.decision,
+            "decision": threshold_result["decision"],
+            "final_score": final_score,
+            "threshold_result": threshold_result,
         })
-        evaluation_result = {"score": result.score, "decision": result.decision}
+        evaluation_result = {
+            "score": result.score,
+            "decision": threshold_result["decision"],
+            "final_score": final_score,
+            "threshold": threshold_result,
+        }
     except Exception as e:
         _log_event(db, app.id, "interview_auto_evaluate_failed", {"error": str(e)})
 
@@ -410,6 +885,21 @@ async def evaluate_screening(body: dict, db: Session = Depends(get_db)):
     result = await evaluate_interview(eval_input)
 
     app.interview_score = result.score
+
+    # ── Extract candidate's preferred slot from transcript JSON ───────────
+    candidate_preferred_slot = None
+    try:
+        # The transcript ends with a JSON payload from the agent
+        idx = app.screening_transcript.rfind('{"candidate_name"')
+        if idx >= 0:
+            transcript_payload = json.loads(app.screening_transcript[idx:])
+            avail = transcript_payload.get("availability", {})
+            candidate_preferred_slot = avail.get("candidate_preferred_slot")
+    except Exception:
+        pass  # If parsing fails, just skip
+
+    # NOTE: Auto-booking happens AFTER threshold decision (see below)
+
     app.interview_score_json = json.dumps({
         "score": result.score,
         "decision": result.decision,
@@ -420,28 +910,75 @@ async def evaluate_screening(body: dict, db: Session = Depends(get_db)):
         "cultural_fit": result.cultural_fit,
         "email_draft": result.email_draft,
         "scheduling_slots": result.scheduling_slots,
+        "candidate_preferred_slot": candidate_preferred_slot,
         "summary": result.summary,
     })
-    app.recommendation = result.decision
-    app.ai_next_action = (
-        "Schedule in-person interview" if result.decision == "advance"
-        else "Place on hold for review" if result.decision == "hold"
-        else "Send rejection email"
-    )
+    # Calculate final combined score
+    resume_score = app.resume_score or 0
+    final_score = round(resume_score * 0.4 + result.score * 0.6, 1)
+    app.final_score = final_score
+
+    # Generate final summary
+    try:
+        from mistralai import Mistral as _Mistral
+        _client = _Mistral(api_key=os.environ.get("MISTRAL_API_KEY", ""))
+        _candidate = db.query(Candidate).filter(Candidate.id == app.candidate_id).first()
+        _prompt = (
+            f"Write a 2-sentence HR assessment summary.\n"
+            f"Candidate: {_candidate.name if _candidate else 'Unknown'}, "
+            f"Position: {job.title if job else 'Unknown'}, "
+            f"Resume: {resume_score}/100, Interview: {result.score}/100, "
+            f"Final: {final_score}/100, Decision: {result.decision}. "
+            f"Strengths: {', '.join(result.strengths[:3])}. "
+            f"Concerns: {', '.join(result.concerns[:2])}."
+        )
+        _resp = _client.chat.complete(
+            model="mistral-small-latest",
+            messages=[{"role": "user", "content": _prompt}],
+            max_tokens=150,
+        )
+        app.final_summary = _resp.choices[0].message.content.strip()
+    except Exception:
+        app.final_summary = (
+            f"Final score: {final_score}/100 (Resume: {resume_score}, Interview: {result.score}). "
+            f"Recommendation: {result.decision}."
+        )
+
+    # Apply threshold-based auto-decision
+    threshold_result = _apply_threshold_decision(app, job, db)
+
+    # ── Auto-book slot ONLY if decision is ADVANCE ────────────────────────
+    # If candidate passed all thresholds → auto-book their preferred slot.
+    # If HOLD or REJECT → clear any previously booked slot; HR must decide first.
+    if threshold_result.get("decision") == "advance" and candidate_preferred_slot:
+        app.scheduled_interview_slot = candidate_preferred_slot
+        app.scheduled_interview_at = datetime.utcnow()
+    else:
+        # Clear any stale booking from a previous evaluation
+        app.scheduled_interview_slot = None
+        app.scheduled_interview_at = None
+
     app.updated_at = datetime.utcnow()
-    _log_event(db, app.id, "evaluated", {"interview_score": result.score, "decision": result.decision})
+    _log_event(db, app.id, "evaluated", {
+        "interview_score": result.score,
+        "decision": threshold_result["decision"],
+        "final_score": final_score,
+        "threshold_result": threshold_result,
+    })
     db.commit()
     db.refresh(app)
 
     return {
         "app_id": app.id,
         "interview_score": result.score,
-        "decision": result.decision,
+        "decision": threshold_result["decision"],
         "strengths": result.strengths,
         "concerns": result.concerns,
         "email_draft": result.email_draft,
         "scheduling_slots": result.scheduling_slots,
         "summary": result.summary,
+        "final_score": final_score,
+        "final_summary": app.final_summary,
     }
 
 
