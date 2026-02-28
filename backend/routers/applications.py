@@ -27,7 +27,7 @@ def _get_interview_room_url(app: Application, db: Session) -> Optional[str]:
         InterviewLink.status != "expired",
     ).order_by(InterviewLink.created_at.desc()).first()
     if link:
-        base_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
+        base_url = os.getenv("FRONTEND_URL", "https://dushy2009-hireops-ai.hf.space")
         return "%s/interview/%s" % (base_url, link.token)
     return None
 

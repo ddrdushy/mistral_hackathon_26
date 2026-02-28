@@ -1472,7 +1472,7 @@ export default function CandidateDetailPage({
                 <audio
                   controls
                   className="w-full"
-                  src={`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1"}/screening/${app.id}/audio`}
+                  src={`${process.env.NEXT_PUBLIC_API_URL || "https://dushy2009-hireops-ai.hf.space/api/v1"}/screening/${app.id}/audio`}
                 >
                   Your browser does not support audio playback.
                 </audio>

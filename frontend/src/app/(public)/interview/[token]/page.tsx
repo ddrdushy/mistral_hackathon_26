@@ -33,7 +33,7 @@ interface InterviewData {
 }
 
 const API_BASE =
-  process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
+  process.env.NEXT_PUBLIC_API_URL || "https://dushy2009-hireops-ai.hf.space/api/v1";
 
 // ═══════════════════════════════════════
 // Main Component

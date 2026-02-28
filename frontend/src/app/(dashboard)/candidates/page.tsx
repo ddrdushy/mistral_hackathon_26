@@ -41,7 +41,7 @@ type SortOrder = "asc" | "desc";
 
 const PER_PAGE_OPTIONS = [10, 25, 50] as const;
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://dushy2009-hireops-ai.hf.space/api/v1";
 
 // ── Page wrapper with Suspense (required by Next.js 15 for useSearchParams) ─
 

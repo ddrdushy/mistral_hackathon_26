@@ -209,7 +209,7 @@ async def run_email_workflow(email_id: int, db: Session) -> Dict:
             )
             db.add(link)
 
-            base_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
+            base_url = os.getenv("FRONTEND_URL", "https://dushy2009-hireops-ai.hf.space")
             interview_url = f"{base_url}/interview/{token}"
 
             application.interview_link_status = "generated"
