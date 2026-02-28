@@ -11,6 +11,7 @@ import json
 import logging
 import imaplib
 import select
+import socket
 import threading
 import email as email_lib
 from email.header import decode_header
@@ -87,7 +88,13 @@ class GmailManager:
     def connect(self, email_address: str, app_password: str, persist: bool = True) -> Dict:
         """Test connection to Gmail via IMAP. Optionally persist credentials."""
         try:
-            mail = imaplib.IMAP4_SSL(self.imap_host, self.imap_port)
+            # Set a 15-second timeout so it fails fast if port 993 is blocked (e.g. HF Spaces)
+            old_timeout = socket.getdefaulttimeout()
+            socket.setdefaulttimeout(15)
+            try:
+                mail = imaplib.IMAP4_SSL(self.imap_host, self.imap_port)
+            finally:
+                socket.setdefaulttimeout(old_timeout)
             mail.login(email_address, app_password)
             mail.select("INBOX")
 
@@ -119,6 +126,12 @@ class GmailManager:
                     "myaccount.google.com/apppasswords"
                 )
             raise ValueError(f"IMAP connection failed: {error_msg}")
+
+        except (socket.timeout, TimeoutError, OSError) as e:
+            raise ValueError(
+                "Connection timed out — IMAP port 993 may be blocked in this environment. "
+                "Try using 'Load Sample Inbox' for demo purposes."
+            )
 
         except Exception as e:
             raise ValueError(f"Connection failed: {str(e)}")
