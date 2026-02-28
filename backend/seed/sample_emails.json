@@ -1,0 +1,152 @@
+[
+  {
+    "message_id": "<sample-001@hireops.dev>",
+    "from_address": "priya.kumar@email.com",
+    "from_name": "Priya Kumar",
+    "subject": "Application for Data Analyst Role",
+    "body_snippet": "Hi HR Team, please find my CV attached. I have 3 years experience in SQL, Power BI, Python, and data cleaning. I am very interested in the Data Analyst position at your company. Looking forward to hearing from you.",
+    "body_full": "Hi HR Team,\n\nPlease find my CV attached. I have 3 years experience in SQL, Power BI, Python, and data cleaning.\n\nI am very interested in the Data Analyst position at your company. In my current role at TechCorp, I have:\n- Built 15+ dashboards in Power BI tracking key business metrics\n- Written complex SQL queries for data extraction and reporting\n- Automated monthly reports using Python scripts\n- Managed data cleaning pipelines for 500K+ records\n\nI hold a Bachelor's in Statistics from National University.\n\nLooking forward to hearing from you.\n\nBest regards,\nPriya Kumar\npriya.kumar@email.com\n+65 9123 4567",
+    "attachments": [{"filename": "PriyaKumar_CV.pdf", "content_type": "application/pdf", "size": 245000}],
+    "received_at": "2026-02-25T09:15:00"
+  },
+  {
+    "message_id": "<sample-002@hireops.dev>",
+    "from_address": "james.chen@gmail.com",
+    "from_name": "James Chen",
+    "subject": "Software Engineer Position - Application",
+    "body_snippet": "Dear Hiring Manager, I am writing to express my interest in the Software Engineer position. I have 5 years of experience in full-stack development with React, Node.js, and AWS.",
+    "body_full": "Dear Hiring Manager,\n\nI am writing to express my interest in the Software Engineer position. I have 5 years of experience in full-stack development.\n\nTechnical Skills:\n- Frontend: React, TypeScript, Next.js, Tailwind CSS\n- Backend: Node.js, Python, FastAPI, Express\n- Cloud: AWS (EC2, S3, Lambda, RDS), Docker, Kubernetes\n- Database: PostgreSQL, MongoDB, Redis\n\nKey Achievements:\n- Led migration of monolith to microservices serving 2M+ users\n- Reduced API response time by 40% through caching optimization\n- Mentored 4 junior developers\n\nI hold an MS in Computer Science from Stanford University.\n\nBest,\nJames Chen\njames.chen@gmail.com\n+1 415 555 0123",
+    "attachments": [{"filename": "JamesChen_Resume.pdf", "content_type": "application/pdf", "size": 312000}],
+    "received_at": "2026-02-25T10:30:00"
+  },
+  {
+    "message_id": "<sample-003@hireops.dev>",
+    "from_address": "sarah.johnson@outlook.com",
+    "from_name": "Sarah Johnson",
+    "subject": "Product Manager Application - Sarah Johnson",
+    "body_snippet": "Hello, I'd like to apply for the Product Manager role. I have 7 years of product management experience at enterprise SaaS companies, including leading a team that grew ARR from $5M to $25M.",
+    "body_full": "Hello,\n\nI'd like to apply for the Product Manager role. I have 7 years of product management experience at enterprise SaaS companies.\n\nHighlights:\n- Led product team that grew ARR from $5M to $25M in 3 years\n- Managed product roadmap for 3 product lines with 50+ features\n- Conducted 200+ customer interviews to inform product strategy\n- Implemented OKR framework across 4 engineering teams\n- Launched 2 products from 0 to 1, both achieving PMF within 6 months\n\nSkills: Product Strategy, User Research, Agile/Scrum, SQL, Figma, JIRA, Data Analytics\n\nI hold an MBA from Wharton and a BS in Engineering from MIT.\n\nBest regards,\nSarah Johnson\nsarah.johnson@outlook.com\n+1 212 555 0456",
+    "attachments": [{"filename": "SarahJohnson_Resume.docx", "content_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "size": 189000}],
+    "received_at": "2026-02-25T14:00:00"
+  },
+  {
+    "message_id": "<sample-004@hireops.dev>",
+    "from_address": "vendor@officesupplies.com",
+    "from_name": "Office Supplies Co",
+    "subject": "Your Monthly Office Supply Order - Invoice #12345",
+    "body_snippet": "Dear Customer, please find attached your invoice for February 2026. Total amount: $1,234.56. Payment due by March 15, 2026.",
+    "body_full": "Dear Customer,\n\nPlease find attached your invoice for February 2026.\n\nOrder Summary:\n- Printer Paper (10 reams): $45.00\n- Ink Cartridges (4 pack): $89.99\n- Sticky Notes (24 pack): $12.50\n- Pens (50 pack): $15.99\n\nSubtotal: $163.48\nTax: $14.71\nTotal: $178.19\n\nPayment due by March 15, 2026.\n\nThank you for your business!\nOffice Supplies Co",
+    "attachments": [{"filename": "Invoice_Feb2026.pdf", "content_type": "application/pdf", "size": 98000}],
+    "received_at": "2026-02-24T08:00:00"
+  },
+  {
+    "message_id": "<sample-005@hireops.dev>",
+    "from_address": "alex.martinez@proton.me",
+    "from_name": "Alex Martinez",
+    "subject": "Re: Senior DevOps Engineer Opening",
+    "body_snippet": "Hi, I saw your job posting on LinkedIn for the Senior DevOps Engineer role. I'm very interested and have attached my resume. I have 6 years of experience with CI/CD, Kubernetes, and cloud infrastructure.",
+    "body_full": "Hi,\n\nI saw your job posting on LinkedIn for the Senior DevOps Engineer role. I'm very interested and have attached my resume.\n\nExperience:\n- 6 years in DevOps and Site Reliability Engineering\n- Expert in Kubernetes, Terraform, Ansible, Jenkins, GitHub Actions\n- AWS Certified Solutions Architect + DevOps Engineer Professional\n- Managed infrastructure serving 10M+ daily active users\n- Reduced deployment time from 2 hours to 15 minutes\n- Implemented zero-downtime deployment strategy\n- On-call rotation lead, achieved 99.99% uptime SLA\n\nTech Stack: AWS, GCP, Docker, K8s, Terraform, Prometheus, Grafana, ELK Stack\n\nBest,\nAlex Martinez\nalex.martinez@proton.me\n+1 650 555 0789",
+    "attachments": [{"filename": "AlexMartinez_CV.pdf", "content_type": "application/pdf", "size": 278000}],
+    "received_at": "2026-02-26T11:45:00"
+  },
+  {
+    "message_id": "<sample-006@hireops.dev>",
+    "from_address": "meetings@company.com",
+    "from_name": "Company Calendar",
+    "subject": "Team Sync - Weekly Standup Reminder",
+    "body_snippet": "Reminder: Weekly team standup meeting tomorrow at 10:00 AM in Conference Room B. Agenda: Sprint review, blockers, upcoming priorities.",
+    "body_full": "Reminder: Weekly team standup meeting tomorrow at 10:00 AM in Conference Room B.\n\nAgenda:\n1. Sprint Review (15 min)\n2. Current Blockers (10 min)\n3. Upcoming Priorities (10 min)\n4. Open Discussion (10 min)\n\nPlease prepare your updates.\n\n- Company Calendar Bot",
+    "attachments": [],
+    "received_at": "2026-02-26T16:00:00"
+  },
+  {
+    "message_id": "<sample-007@hireops.dev>",
+    "from_address": "mei.wong@yahoo.com",
+    "from_name": "Mei Wong",
+    "subject": "Application - UX Designer Position",
+    "body_snippet": "Dear HR, I am excited to apply for the UX Designer position. With 4 years of design experience and expertise in Figma, user research, and design systems, I believe I would be a great fit.",
+    "body_full": "Dear HR,\n\nI am excited to apply for the UX Designer position. With 4 years of design experience, I believe I would be a great fit.\n\nDesign Skills:\n- Figma, Sketch, Adobe XD, InVision\n- User Research & Usability Testing\n- Design Systems & Component Libraries\n- Wireframing & Prototyping\n- A/B Testing & Data-Driven Design\n\nPortfolio Highlights:\n- Redesigned checkout flow, increasing conversion by 23%\n- Created design system with 200+ components used by 5 product teams\n- Conducted 50+ user interviews for new product discovery\n\nI hold a BFA in Interaction Design from RISD.\n\nBest,\nMei Wong\nmei.wong@yahoo.com\n+65 8765 4321",
+    "attachments": [{"filename": "MeiWong_Portfolio_Resume.pdf", "content_type": "application/pdf", "size": 1540000}],
+    "received_at": "2026-02-26T09:20:00"
+  },
+  {
+    "message_id": "<sample-008@hireops.dev>",
+    "from_address": "newsletter@techweekly.com",
+    "from_name": "Tech Weekly",
+    "subject": "This Week in Tech: AI Hiring Tools on the Rise",
+    "body_snippet": "This week's top stories: AI-powered hiring platforms are transforming recruitment. Plus: new funding rounds, product launches, and industry analysis.",
+    "body_full": "Tech Weekly Newsletter - February 2026\n\nTop Stories:\n1. AI-powered hiring platforms are transforming recruitment\n2. Three startups raise $100M+ in Series B rounds\n3. New open-source LLM benchmarks released\n4. Cloud infrastructure costs drop 15% year-over-year\n\nTo unsubscribe, click here.",
+    "attachments": [],
+    "received_at": "2026-02-27T07:00:00"
+  },
+  {
+    "message_id": "<sample-009@hireops.dev>",
+    "from_address": "raj.patel@hotmail.com",
+    "from_name": "Raj Patel",
+    "subject": "Interested in Backend Developer Role",
+    "body_snippet": "Hello, I came across your backend developer opening. I have strong experience with Python, FastAPI, PostgreSQL, and microservices architecture. Please find my resume attached.",
+    "body_full": "Hello,\n\nI came across your backend developer opening and I'm very interested. I have strong experience with Python and backend technologies.\n\nTechnical Experience:\n- 4 years Python development (FastAPI, Django, Flask)\n- PostgreSQL, MySQL, MongoDB database design\n- Microservices architecture with Docker and Kubernetes\n- Message queues: RabbitMQ, Kafka\n- RESTful API design and GraphQL\n- Unit testing with pytest, 90%+ code coverage\n\nRecent Project:\n- Built real-time analytics pipeline processing 1M+ events/day\n- Designed API gateway handling 50K requests/minute\n\nI have a BS in Computer Science from IIT Bombay.\n\nThanks,\nRaj Patel\nraj.patel@hotmail.com\n+91 98765 43210",
+    "attachments": [{"filename": "RajPatel_Resume.pdf", "content_type": "application/pdf", "size": 210000}],
+    "received_at": "2026-02-27T13:30:00"
+  },
+  {
+    "message_id": "<sample-010@hireops.dev>",
+    "from_address": "security@company.com",
+    "from_name": "IT Security",
+    "subject": "Mandatory: Complete Annual Security Training by March 15",
+    "body_snippet": "All employees must complete the annual cybersecurity awareness training by March 15, 2026. Access the training portal at training.company.com.",
+    "body_full": "All employees must complete the annual cybersecurity awareness training by March 15, 2026.\n\nTraining Topics:\n- Phishing awareness\n- Password security\n- Data handling procedures\n- Incident reporting\n\nAccess the training portal at training.company.com\n\nThis is mandatory for all employees.\n\n- IT Security Team",
+    "attachments": [],
+    "received_at": "2026-02-24T14:30:00"
+  },
+  {
+    "message_id": "<sample-011@hireops.dev>",
+    "from_address": "lisa.tanaka@gmail.com",
+    "from_name": "Lisa Tanaka",
+    "subject": "Marketing Manager Position - Application",
+    "body_snippet": "Dear Hiring Team, I am applying for the Marketing Manager position. I bring 8 years of B2B marketing experience with a track record of increasing lead generation by 300%.",
+    "body_full": "Dear Hiring Team,\n\nI am applying for the Marketing Manager position. I bring 8 years of B2B marketing experience.\n\nKey Achievements:\n- Increased MQL pipeline by 300% through content marketing strategy\n- Managed $2M annual marketing budget across 6 channels\n- Led team of 5 marketers and 3 agencies\n- Launched ABM program targeting Fortune 500 accounts\n- Built marketing automation workflows in HubSpot\n\nSkills: Content Strategy, SEO/SEM, Marketing Automation, HubSpot, Google Analytics, ABM, Event Marketing\n\nI hold a Master's in Marketing from Columbia University.\n\nRegards,\nLisa Tanaka\nlisa.tanaka@gmail.com\n+1 310 555 0234",
+    "attachments": [{"filename": "LisaTanaka_Resume.pdf", "content_type": "application/pdf", "size": 195000}],
+    "received_at": "2026-02-27T15:45:00"
+  },
+  {
+    "message_id": "<sample-012@hireops.dev>",
+    "from_address": "facilities@company.com",
+    "from_name": "Facilities Management",
+    "subject": "Office Renovation Update - Floor 3 Closure March 1-5",
+    "body_snippet": "Please be advised that Floor 3 will be closed for renovation from March 1-5. All Floor 3 employees should work from the temporary space on Floor 5.",
+    "body_full": "Please be advised that Floor 3 will be closed for renovation from March 1-5, 2026.\n\nDetails:\n- Floor 3 will be inaccessible during this period\n- Temporary workspace available on Floor 5\n- Meeting rooms on Floor 3 are relocated to Floor 2\n- IT will assist with equipment relocation\n\nPlease contact facilities@company.com with any concerns.\n\n- Facilities Management",
+    "attachments": [],
+    "received_at": "2026-02-28T10:00:00"
+  },
+  {
+    "message_id": "<sample-013@hireops.dev>",
+    "from_address": "david.kim@outlook.com",
+    "from_name": "David Kim",
+    "subject": "CV Submission - Data Engineer Role",
+    "body_snippet": "Hi, I would like to submit my CV for the Data Engineer position. I have 5 years of experience building data pipelines with Spark, Airflow, and cloud platforms.",
+    "body_full": "Hi,\n\nI would like to submit my CV for the Data Engineer position.\n\nExperience:\n- 5 years building data pipelines and ETL systems\n- Apache Spark, Airflow, dbt, Kafka Streams\n- AWS Glue, Redshift, S3, EMR\n- Data modeling and warehouse design\n- Python, Scala, SQL expert\n- Processed 10TB+ daily data volume\n\nCertifications:\n- AWS Data Analytics Specialty\n- Databricks Certified Data Engineer\n\nI graduated from UC Berkeley with a BS in Data Science.\n\nThanks,\nDavid Kim\ndavid.kim@outlook.com\n+1 408 555 0567",
+    "attachments": [{"filename": "DavidKim_CV.pdf", "content_type": "application/pdf", "size": 267000}],
+    "received_at": "2026-02-28T08:15:00"
+  },
+  {
+    "message_id": "<sample-014@hireops.dev>",
+    "from_address": "recruiter@external-agency.com",
+    "from_name": "External Recruiter",
+    "subject": "Partnership Opportunity - Recruitment Services",
+    "body_snippet": "Dear HR Director, we are a leading recruitment agency specializing in tech talent. We'd like to discuss a partnership to help with your hiring needs.",
+    "body_full": "Dear HR Director,\n\nWe are TalentBridge, a leading recruitment agency specializing in tech talent across APAC.\n\nWe'd like to discuss a partnership to help with your hiring needs. Our services include:\n- Executive search\n- Contract staffing\n- RPO solutions\n- Employer branding\n\nWe have placed 500+ candidates at top tech companies in the region.\n\nWould you be available for a 15-minute call this week?\n\nBest regards,\nExternal Recruiter\nTalentBridge Agency\nrecruiter@external-agency.com",
+    "attachments": [],
+    "received_at": "2026-02-27T11:00:00"
+  },
+  {
+    "message_id": "<sample-015@hireops.dev>",
+    "from_address": "aisha.rahman@gmail.com",
+    "from_name": "Aisha Rahman",
+    "subject": "Application for QA Engineer Position",
+    "body_snippet": "Dear Team, I am interested in the QA Engineer position. I have 3 years of experience in automated testing with Selenium, Cypress, and performance testing with JMeter.",
+    "body_full": "Dear Team,\n\nI am interested in the QA Engineer position. I have 3 years of experience in quality assurance and automated testing.\n\nSkills & Experience:\n- Test Automation: Selenium, Cypress, Playwright\n- API Testing: Postman, REST Assured\n- Performance Testing: JMeter, k6\n- CI/CD Integration: Jenkins, GitHub Actions\n- Test Frameworks: pytest, Jest, Mocha\n- JIRA, TestRail, Zephyr\n\nAchievements:\n- Automated 80% of regression test suite (500+ test cases)\n- Reduced release cycle time by 40%\n- Implemented API contract testing across 12 microservices\n\nI have a BS in Software Engineering from NTU.\n\nBest,\nAisha Rahman\naisha.rahman@gmail.com\n+65 9876 5432",
+    "attachments": [{"filename": "AishaRahman_Resume.docx", "content_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "size": 175000}],
+    "received_at": "2026-02-28T11:30:00"
+  }
+]
