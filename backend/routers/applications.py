@@ -7,7 +7,8 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
 from database import get_db
-from models import Application, Candidate, Job, Event
+import os
+from models import Application, Candidate, Job, Event, InterviewLink
 from schemas import (
     ApplicationMatchRequest, ApplicationStageUpdate, ApplicationNotesUpdate,
     BulkStageUpdate,
@@ -16,6 +17,19 @@ from agents.resume_scorer import score_resume, ResumeScorerInput
 from services.csv_service import generate_applications_csv
 
 router = APIRouter(prefix="/api/v1/applications", tags=["applications"])
+
+
+def _get_interview_room_url(app: Application, db: Session) -> Optional[str]:
+    """Look up the latest active Round 2 interview link for this application."""
+    link = db.query(InterviewLink).filter(
+        InterviewLink.app_id == app.id,
+        InterviewLink.round == 2,
+        InterviewLink.status != "expired",
+    ).order_by(InterviewLink.created_at.desc()).first()
+    if link:
+        base_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
+        return "%s/interview/%s" % (base_url, link.token)
+    return None
 
 
 def _app_to_response(app: Application, db: Session) -> dict:
@@ -54,6 +68,7 @@ def _app_to_response(app: Application, db: Session) -> dict:
         "email_draft_sent": app.email_draft_sent or 0,
         "final_score": app.final_score,
         "final_summary": app.final_summary,
+        "interview_room_url": _get_interview_room_url(app, db),
         "thresholds": {
             "resume_min": job.resume_threshold_min if job and job.resume_threshold_min is not None else 80.0,
             "interview_min": job.interview_threshold_min if job and job.interview_threshold_min is not None else 75.0,

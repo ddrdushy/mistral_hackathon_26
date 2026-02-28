@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import Sidebar from "./Sidebar";
 import Topbar from "./Topbar";
 
@@ -10,6 +10,13 @@ interface DashboardShellProps {
 
 export default function DashboardShell({ children }: DashboardShellProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
+
+  // Persist collapse state in localStorage
+  useEffect(() => {
+    const stored = localStorage.getItem("sidebar-collapsed");
+    if (stored === "true") setCollapsed(true);
+  }, []);
 
   const handleMenuToggle = useCallback(() => {
     setSidebarOpen((prev) => !prev);
@@ -19,13 +26,26 @@ export default function DashboardShell({ children }: DashboardShellProps) {
     setSidebarOpen(false);
   }, []);
 
+  const handleToggleCollapse = useCallback(() => {
+    setCollapsed((prev) => {
+      const next = !prev;
+      localStorage.setItem("sidebar-collapsed", String(next));
+      return next;
+    });
+  }, []);
+
   return (
     <div className="min-h-screen bg-slate-50">
       {/* Sidebar */}
-      <Sidebar isOpen={sidebarOpen} onClose={handleSidebarClose} />
+      <Sidebar
+        isOpen={sidebarOpen}
+        collapsed={collapsed}
+        onClose={handleSidebarClose}
+        onToggleCollapse={handleToggleCollapse}
+      />
 
       {/* Main area offset by sidebar width on desktop */}
-      <div className="lg:pl-64 flex flex-col min-h-screen">
+      <div className={`${collapsed ? "lg:pl-16" : "lg:pl-64"} flex flex-col min-h-screen transition-all duration-300`}>
         {/* Topbar */}
         <Topbar onMenuToggle={handleMenuToggle} />
 

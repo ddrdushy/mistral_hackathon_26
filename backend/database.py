@@ -62,6 +62,23 @@ def _run_migrations():
                     except Exception:
                         pass
 
+    # InterviewLink columns
+    link_cols = {
+        "round": "INTEGER DEFAULT 1",
+        "scheduled_at": "TIMESTAMP",
+    }
+    if "interview_links" in insp.get_table_names():
+        existing = {c["name"] for c in insp.get_columns("interview_links")}
+        with engine.begin() as conn:
+            for col_name, col_type in link_cols.items():
+                if col_name not in existing:
+                    try:
+                        conn.execute(text(
+                            f"ALTER TABLE interview_links ADD COLUMN {col_name} {col_type}"
+                        ))
+                    except Exception:
+                        pass
+
     # Job threshold columns
     job_cols = {
         "resume_threshold_min": "FLOAT DEFAULT 80.0",

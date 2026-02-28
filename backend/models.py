@@ -158,7 +158,9 @@ class InterviewLink(Base):
     token = Column(String, unique=True, nullable=False, index=True)
     app_id = Column(Integer, ForeignKey("applications.id"), nullable=False)
     status = Column(String, default="generated")  # generated/sent/opened/interview_started/interview_completed/expired
+    round = Column(Integer, default=1)  # 1 = screening, 2 = in-person/follow-up
     elevenlabs_conversation_id = Column(String, nullable=True)
+    scheduled_at = Column(DateTime, nullable=True)  # When the interview is scheduled to start
     face_tracking_json = Column(Text, nullable=True)  # JSON: {avg_attention, face_present_pct, snapshots}
     expires_at = Column(DateTime, nullable=False)
     opened_at = Column(DateTime, nullable=True)

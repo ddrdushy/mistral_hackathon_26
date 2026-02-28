@@ -29,8 +29,14 @@ def send_email(
     subject: str,
     body_html: str,
     body_text: Optional[str] = None,
+    ics_attachment: Optional[str] = None,
+    ics_filename: str = "invite.ics",
 ) -> dict:
     """Send an email using stored Gmail SMTP credentials.
+
+    Args:
+        ics_attachment: Optional .ics calendar invite content to attach.
+        ics_filename: Filename for the .ics attachment.
 
     Returns: {"success": True/False, "message": "..."}
     """
@@ -41,17 +47,24 @@ def send_email(
     from_email = creds["email"]
     password = creds["password"]
 
-    msg = MIMEMultipart("alternative")
-    msg["From"] = f"HireOps AI <{from_email}>"
-    msg["To"] = to_email
-    msg["Subject"] = subject
-
-    # Plain text fallback
+    # Build text/html body alternatives
+    body_part = MIMEMultipart("alternative")
     if body_text:
-        msg.attach(MIMEText(body_text, "plain"))
+        body_part.attach(MIMEText(body_text, "plain"))
+    body_part.attach(MIMEText(body_html, "html"))
 
-    # HTML body
-    msg.attach(MIMEText(body_html, "html"))
+    if ics_attachment:
+        # Wrap in "mixed" to hold body + .ics attachment
+        msg = MIMEMultipart("mixed")
+        msg.attach(body_part)
+
+        # Add .ics as text/calendar attachment
+        ics_part = MIMEText(ics_attachment, "calendar", "utf-8")
+        ics_part.add_header("Content-Disposition", "attachment", filename=ics_filename)
+        ics_part.set_param("method", "REQUEST")
+        msg.attach(ics_part)
+    else:
+        msg = body_part
 
     try:
         with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as server:
@@ -188,13 +201,34 @@ def send_scheduling_email(
     company_name: str,
     slot: str,
     email_draft: str = "",
+    interview_url: str = "",
+    ics_attachment: Optional[str] = None,
 ) -> dict:
-    """Send interview scheduling confirmation email to candidate."""
+    """Send interview scheduling confirmation email with calendar invite and interview room link."""
     subject = f"Interview Scheduled — {job_title} at {company_name}"
 
     draft_html = ""
     if email_draft:
         draft_html = f'<p style="color: #334155; font-size: 16px; line-height: 1.6;">{email_draft.replace(chr(10), "<br>")}</p>'
+
+    interview_url_html = ""
+    if interview_url:
+        interview_url_html = f"""
+            <div style="text-align: center; margin: 24px 0;">
+                <p style="color: #334155; font-size: 14px; margin-bottom: 12px;">
+                    Your interview will be conducted via our AI-powered interview platform.
+                    Our AI assistant will join to take notes so the interviewer can focus on the conversation.
+                </p>
+                <a href="{interview_url}"
+                   style="background: #6366f1; color: white; padding: 14px 32px; border-radius: 8px;
+                          text-decoration: none; font-size: 16px; font-weight: 600; display: inline-block;">
+                    Join Interview Room
+                </a>
+                <p style="color: #64748b; font-size: 12px; margin-top: 8px;">
+                    Please have your webcam and microphone ready. This link will be active at your scheduled time.
+                </p>
+            </div>
+        """
 
     body_html = f"""
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
@@ -207,17 +241,18 @@ def send_scheduling_email(
                 Hi {candidate_name},
             </p>
             <p style="color: #334155; font-size: 16px; line-height: 1.6;">
-                Great news! Your in-person interview for the <strong>{job_title}</strong> position
+                Great news! Your Round 2 interview for the <strong>{job_title}</strong> position
                 has been scheduled.
             </p>
             <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 20px; margin: 20px 0; text-align: center;">
                 <p style="color: #166534; font-size: 14px; font-weight: 600; margin: 0 0 4px 0;">Scheduled Time</p>
                 <p style="color: #15803d; font-size: 18px; font-weight: 700; margin: 0;">{slot}</p>
             </div>
+            {interview_url_html}
             {draft_html}
             <p style="color: #64748b; font-size: 14px; line-height: 1.6;">
-                Please confirm your attendance by replying to this email. If you need to reschedule,
-                let us know at least 24 hours in advance.
+                A calendar invite is attached. Please confirm your attendance by replying to this email.
+                If you need to reschedule, let us know at least 24 hours in advance.
             </p>
             <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 24px 0;">
             <p style="color: #94a3b8; font-size: 12px; text-align: center;">
@@ -227,16 +262,21 @@ def send_scheduling_email(
     </div>
     """
 
+    interview_text = ""
+    if interview_url:
+        interview_text = f"Join your interview room: {interview_url}\n\n"
+
     body_text = (
         f"Hi {candidate_name},\n\n"
-        f"Your in-person interview for the {job_title} position has been scheduled.\n\n"
+        f"Your Round 2 interview for the {job_title} position has been scheduled.\n\n"
         f"Scheduled Time: {slot}\n\n"
+        + interview_text
         + (f"{email_draft}\n\n" if email_draft else "")
-        + f"Please confirm your attendance by replying to this email.\n\n"
+        + f"A calendar invite is attached. Please confirm your attendance by replying to this email.\n\n"
         f"Best regards,\n{company_name} Recruitment Team"
     )
 
-    return send_email(to_email, subject, body_html, body_text)
+    return send_email(to_email, subject, body_html, body_text, ics_attachment=ics_attachment)
 
 
 def send_custom_email(

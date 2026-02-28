@@ -314,7 +314,7 @@ async def send_custom_email_endpoint(app_id: int, body: dict, db: Session = Depe
 
 @router.post("/{app_id}/book-slot")
 async def book_interview_slot(app_id: int, body: dict, db: Session = Depends(get_db)):
-    """Book an interview time slot and auto-send scheduling email to candidate."""
+    """Book an interview slot, generate Round 2 interview link, and send email with .ics calendar invite."""
     app = db.query(Application).filter(Application.id == app_id).first()
     if not app:
         raise HTTPException(status_code=404, detail="Application not found")
@@ -329,18 +329,78 @@ async def book_interview_slot(app_id: int, body: dict, db: Session = Depends(get
     if not candidate or not candidate.email:
         raise HTTPException(status_code=400, detail="Candidate email not found")
 
-    # Store the booked slot
+    company = os.getenv("COMPANY_NAME", "HireOps AI")
+    base_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
+    job_title = job.title if job else "Open Position"
+
+    # ── 1. Parse slot text → datetime ──
+    from services.ics_generator import parse_slot_to_datetime
+    interview_dt = parse_slot_to_datetime(slot)
+
+    # ── 2. Store slot + advance to shortlisted ──
     app.scheduled_interview_slot = slot
+    app.scheduled_interview_at = interview_dt
     app.stage = "shortlisted"
-    app.ai_next_action = f"In-person interview scheduled: {slot}"
     app.updated_at = datetime.utcnow()
 
-    _log_event(db, app.id, "interview_slot_booked", {"slot": slot})
+    # ── 3. Generate Round 2 interview link ──
+    # Expire existing active links
+    db.query(InterviewLink).filter(
+        InterviewLink.app_id == app.id,
+        InterviewLink.status.in_(["generated", "sent", "opened"]),
+    ).update({"status": "expired"}, synchronize_session="fetch")
 
-    # Auto-send scheduling email
+    token = uuid.uuid4().hex
+    link = InterviewLink(
+        token=token,
+        app_id=app.id,
+        status="sent",
+        round=2,
+        scheduled_at=interview_dt,
+        expires_at=datetime.utcnow() + timedelta(hours=168),  # 7 days
+    )
+    db.add(link)
+    app.interview_link_status = "sent"
+
+    interview_url = f"{base_url}/interview/{token}"
+    app.ai_next_action = f"Round 2 interview scheduled: {slot} — link sent to {candidate.email}"
+
+    _log_event(db, app.id, "interview_slot_booked", {
+        "slot": slot,
+        "interview_dt": interview_dt.isoformat(),
+        "interview_url": interview_url,
+        "round": 2,
+    })
+
+    # ── 4. Generate .ics calendar invite ──
+    from services.ics_generator import generate_ics
+    from services.gmail_service import gmail_manager
+
+    organizer_creds = gmail_manager._load_credentials()
+    organizer_email = organizer_creds["email"] if organizer_creds else ""
+
+    ics_content = generate_ics(
+        summary=f"Round 2 Interview — {job_title} at {company}",
+        dtstart=interview_dt,
+        duration_minutes=60,
+        description=(
+            f"Round 2 Interview for {job_title} position at {company}.\n\n"
+            f"Candidate: {candidate.name}\n"
+            f"Join the interview room: {interview_url}\n\n"
+            f"Our AI assistant will join to transcribe and summarize the conversation.\n"
+            f"Please have your webcam and microphone ready."
+        ),
+        location=interview_url,
+        organizer_email=organizer_email,
+        organizer_name=company,
+        attendee_email=candidate.email,
+        attendee_name=candidate.name,
+        url=interview_url,
+    )
+
+    # ── 5. Send scheduling email with .ics + interview link ──
     email_result = {"success": False, "message": "Not attempted"}
     try:
-        company = os.getenv("COMPANY_NAME", "HireOps AI")
         email_draft = ""
         if app.interview_score_json:
             score_data = json.loads(app.interview_score_json)
@@ -350,16 +410,20 @@ async def book_interview_slot(app_id: int, body: dict, db: Session = Depends(get
         email_result = send_scheduling_email(
             to_email=candidate.email,
             candidate_name=candidate.name.split()[0],
-            job_title=job.title if job else "Open Position",
+            job_title=job_title,
             company_name=company,
             slot=slot,
             email_draft=email_draft,
+            interview_url=interview_url,
+            ics_attachment=ics_content,
         )
         if email_result["success"]:
             app.email_draft_sent = 1
             _log_event(db, app.id, "scheduling_email_sent", {
                 "to_email": candidate.email,
                 "slot": slot,
+                "interview_url": interview_url,
+                "ics_attached": True,
             })
     except Exception as e:
         email_result = {"success": False, "message": str(e)}
@@ -369,6 +433,8 @@ async def book_interview_slot(app_id: int, body: dict, db: Session = Depends(get
     return {
         "status": "booked",
         "slot": slot,
+        "interview_url": interview_url,
+        "interview_token": token,
         "email_sent": email_result.get("success", False),
         "email_message": email_result.get("message", ""),
     }
@@ -508,6 +574,57 @@ async def calculate_final_score(app_id: int, db: Session = Depends(get_db)):
     }
 
 
+@router.get("/{app_id}/hiring-report")
+async def get_hiring_report(app_id: int, db: Session = Depends(get_db)):
+    """Generate a comprehensive autonomous hiring report for an application."""
+    from agents.hiring_report import generate_hiring_report, HiringReportInput
+    from dataclasses import asdict
+
+    app = db.query(Application).filter(Application.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    candidate = db.query(Candidate).filter(Candidate.id == app.candidate_id).first()
+    job = db.query(Job).filter(Job.id == app.job_id).first()
+
+    resume_data = json.loads(app.resume_score_json) if app.resume_score_json else {}
+    interview_data = json.loads(app.interview_score_json) if app.interview_score_json else {}
+    snippets = json.loads(app.ai_snippets) if app.ai_snippets else {}
+
+    inp = HiringReportInput(
+        candidate_name=candidate.name if candidate else "Unknown",
+        candidate_email=candidate.email if candidate else "",
+        job_title=job.title if job else "",
+        job_code=job.job_id if job else "",
+        resume_score=app.resume_score or 0,
+        interview_score=app.interview_score,
+        final_score=app.final_score,
+        recommendation=app.recommendation or "hold",
+        resume_evidence=resume_data.get("evidence", []),
+        resume_gaps=resume_data.get("gaps", []),
+        resume_risks=resume_data.get("risks", []),
+        resume_summary=resume_data.get("summary", ""),
+        key_strengths=snippets.get("key_strengths", []),
+        main_gaps=snippets.get("main_gaps", []),
+        why_shortlisted=snippets.get("why_shortlisted", []),
+        interview_strengths=interview_data.get("strengths", []),
+        interview_concerns=interview_data.get("concerns", []),
+        communication_rating=interview_data.get("communication_rating", "N/A"),
+        technical_depth=interview_data.get("technical_depth", "N/A"),
+        cultural_fit=interview_data.get("cultural_fit", "N/A"),
+        interview_summary=interview_data.get("summary", ""),
+        final_summary=app.final_summary or "",
+        thresholds={
+            "resume_min": job.resume_threshold_min if job and job.resume_threshold_min else 80.0,
+            "interview_min": job.interview_threshold_min if job and job.interview_threshold_min else 75.0,
+            "reject_below": job.final_threshold_reject if job and job.final_threshold_reject else 50.0,
+        },
+    )
+
+    report = await generate_hiring_report(inp)
+    return asdict(report)
+
+
 @router.get("/{app_id}/links")
 async def get_application_links(app_id: int, db: Session = Depends(get_db)):
     """Get all interview links for an application."""
@@ -570,6 +687,55 @@ async def get_interview_link_public(token: str, db: Session = Depends(get_db)):
             is_valid=False, error="This interview has already been completed. Thank you!",
         )
 
+    # ── Time-gate check for Round 2 scheduled interviews ──
+    interview_round = link.round or 1
+    scheduled_at_iso = None
+    available_in_minutes = None
+
+    if link.scheduled_at and interview_round == 2:
+        now = datetime.utcnow()
+        opens_at = link.scheduled_at - timedelta(minutes=15)  # Room opens 15 min early
+        closes_at = link.scheduled_at + timedelta(hours=2)    # Room closes 2 hours after
+
+        scheduled_at_iso = link.scheduled_at.isoformat() + "Z"
+
+        if now < opens_at:
+            # Too early — show waiting/countdown
+            diff = opens_at - now
+            available_in_minutes = int(diff.total_seconds() / 60) + 1
+
+            app = db.query(Application).filter(Application.id == link.app_id).first()
+            candidate = db.query(Candidate).filter(Candidate.id == app.candidate_id).first() if app else None
+            job = db.query(Job).filter(Job.id == app.job_id).first() if app else None
+            company = os.getenv("COMPANY_NAME", "HireOps AI")
+
+            return InterviewLinkPublicResponse(
+                token=token,
+                status="waiting",
+                candidate_first_name=candidate.name.split()[0] if candidate else "",
+                job_title=job.title if job else "",
+                job_code="",
+                company_name=company,
+                elevenlabs_agent_id="",
+                is_valid=True,
+                error=None,
+                scheduled_at=scheduled_at_iso,
+                available_in_minutes=available_in_minutes,
+                interview_round=interview_round,
+            )
+
+        if now > closes_at:
+            # Too late — room closed
+            if link.status not in ("expired", "interview_completed"):
+                link.status = "expired"
+                db.commit()
+            return InterviewLinkPublicResponse(
+                token=token, status="expired", candidate_first_name="",
+                job_title="", company_name="", elevenlabs_agent_id="",
+                is_valid=False,
+                error="This interview session has ended. The room was available until 2 hours after the scheduled time. Please contact the recruiter to reschedule.",
+            )
+
     # Mark as opened on first access
     if link.status in ("generated", "sent"):
         link.status = "opened"
@@ -587,7 +753,11 @@ async def get_interview_link_public(token: str, db: Session = Depends(get_db)):
     candidate = db.query(Candidate).filter(Candidate.id == app.candidate_id).first() if app else None
     job = db.query(Job).filter(Job.id == app.job_id).first() if app else None
 
-    agent_id = os.getenv("ELEVENLABS_AGENT_ID", "")
+    # Use a different ElevenLabs agent for Round 2 (HR + AI assistant)
+    if link.round and link.round == 2:
+        agent_id = os.getenv("ELEVENLABS_ROUND2_AGENT_ID", os.getenv("ELEVENLABS_AGENT_ID", ""))
+    else:
+        agent_id = os.getenv("ELEVENLABS_AGENT_ID", "")
     company = os.getenv("COMPANY_NAME", "HireOps AI")
 
     # Extract screening questions from the application's resume score
@@ -609,6 +779,9 @@ async def get_interview_link_public(token: str, db: Session = Depends(get_db)):
         elevenlabs_agent_id=agent_id,
         screening_questions=screening_questions,
         is_valid=True,
+        scheduled_at=scheduled_at_iso,
+        available_in_minutes=None,
+        interview_round=interview_round,
     )
 
 

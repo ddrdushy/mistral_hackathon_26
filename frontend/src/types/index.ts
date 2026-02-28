@@ -149,6 +149,7 @@ export interface Application {
   email_draft_sent: number;
   final_score: number | null;
   final_summary: string | null;
+  interview_room_url: string | null;
   thresholds: {
     resume_min: number;
     interview_min: number;
@@ -209,6 +210,27 @@ export interface ActivityEvent {
 }
 
 // ═══════════════════════════════════════
+// HIRING REPORT
+// ═══════════════════════════════════════
+
+export interface HiringReportPipelineAction {
+  action: string;
+  detail: string;
+  result: string;
+}
+
+export interface HiringReport {
+  executive_summary: string;
+  hire_recommendation: string;
+  confidence_pct: number;
+  pipeline_actions: HiringReportPipelineAction[];
+  strengths_analysis: string[];
+  risk_analysis: string[];
+  verdict_reasoning: string;
+  suggested_next_steps: string[];
+}
+
+// ═══════════════════════════════════════
 // INTERVIEW LINKS
 // ═══════════════════════════════════════
 
@@ -248,6 +270,9 @@ export interface InterviewLinkPublicData {
   screening_questions: string[];
   is_valid: boolean;
   error: string | null;
+  scheduled_at: string | null;
+  available_in_minutes: number | null;
+  interview_round: number;
 }
 
 export type PipelineStage =

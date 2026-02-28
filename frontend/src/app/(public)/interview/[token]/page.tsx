@@ -10,6 +10,7 @@ import { useConversation } from "@elevenlabs/react";
 type InterviewPhase =
   | "loading"
   | "invalid"
+  | "waiting"
   | "setup"
   | "ready"
   | "interviewing"
@@ -26,6 +27,9 @@ interface InterviewData {
   screening_questions: string[];
   is_valid: boolean;
   error: string | null;
+  scheduled_at: string | null;
+  available_in_minutes: number | null;
+  interview_round: number;
 }
 
 const API_BASE =
@@ -109,6 +113,8 @@ export default function InterviewPage({
         if (!data.is_valid) {
           setPhase("invalid");
           setErrorMsg(data.error || "Invalid interview link.");
+        } else if (data.status === "waiting" && data.available_in_minutes) {
+          setPhase("waiting");
         } else {
           setPhase("setup");
         }
@@ -459,6 +465,98 @@ export default function InterviewPage({
             <p className="text-xs text-slate-400 mt-4">
               Please contact the recruiter if you believe this is an error.
             </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Waiting (scheduled interview not yet open) ─────────────────────────
+
+  if (phase === "waiting" && interviewData) {
+    const scheduledDate = interviewData.scheduled_at
+      ? new Date(interviewData.scheduled_at)
+      : null;
+    const opensAt = scheduledDate
+      ? new Date(scheduledDate.getTime() - 15 * 60 * 1000)
+      : null;
+
+    // Auto-refresh when the room should open
+    const refreshTimer = setTimeout(() => {
+      window.location.reload();
+    }, Math.max((interviewData.available_in_minutes || 1) * 60 * 1000, 30000));
+
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50">
+        <div className="max-w-md w-full mx-4">
+          <div className="bg-white rounded-2xl shadow-lg border border-slate-200 p-8 text-center">
+            <div className="w-16 h-16 bg-indigo-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <svg
+                className="w-8 h-8 text-indigo-500"
+                fill="none"
+                viewBox="0 0 24 24"
+                strokeWidth={1.5}
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"
+                />
+              </svg>
+            </div>
+            <h1 className="text-xl font-bold text-slate-900 mb-2">
+              Interview Not Yet Open
+            </h1>
+            <p className="text-sm text-slate-500 leading-relaxed mb-4">
+              Hi {interviewData.candidate_first_name}! Your interview for{" "}
+              <span className="font-medium text-slate-700">
+                {interviewData.job_title}
+              </span>{" "}
+              is scheduled and the room will open automatically.
+            </p>
+
+            {/* Scheduled time */}
+            {scheduledDate && (
+              <div className="bg-indigo-50 rounded-lg p-4 border border-indigo-100 mb-4">
+                <p className="text-xs font-medium text-indigo-600 uppercase tracking-wide mb-1">
+                  Scheduled For
+                </p>
+                <p className="text-lg font-bold text-indigo-900">
+                  {scheduledDate.toLocaleDateString(undefined, {
+                    weekday: "long",
+                    month: "long",
+                    day: "numeric",
+                    year: "numeric",
+                  })}
+                </p>
+                <p className="text-lg font-semibold text-indigo-700">
+                  {scheduledDate.toLocaleTimeString(undefined, {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}
+                </p>
+              </div>
+            )}
+
+            {/* Countdown */}
+            {interviewData.available_in_minutes != null && (
+              <div className="bg-amber-50 rounded-lg p-3 border border-amber-100 mb-4">
+                <p className="text-sm text-amber-800">
+                  <span className="font-semibold">Room opens in:</span>{" "}
+                  {interviewData.available_in_minutes >= 60
+                    ? `${Math.floor(interviewData.available_in_minutes / 60)}h ${interviewData.available_in_minutes % 60}m`
+                    : `${interviewData.available_in_minutes} minutes`}
+                </p>
+              </div>
+            )}
+
+            {opensAt && (
+              <p className="text-xs text-slate-400">
+                The room opens 15 minutes before the scheduled time.
+                {" "}This page will refresh automatically.
+              </p>
+            )}
           </div>
         </div>
       </div>

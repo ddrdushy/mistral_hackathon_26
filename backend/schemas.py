@@ -165,6 +165,9 @@ class ApplicationResponse(BaseModel):
     email_draft_sent: int = 0
     final_score: Optional[float] = None
     final_summary: Optional[str] = None
+    interview_room_url: Optional[str] = None  # Round 2 interview room URL
+    interview_link_status: Optional[str] = None
+    interview_face_tracking_json: Optional[dict] = None
     created_at: datetime
     updated_at: datetime
 
@@ -333,6 +336,10 @@ class InterviewLinkPublicResponse(BaseModel):
     screening_questions: List[str] = []
     is_valid: bool
     error: Optional[str] = None
+    # Time-gating for scheduled interviews
+    scheduled_at: Optional[str] = None  # ISO datetime when interview starts
+    available_in_minutes: Optional[int] = None  # Minutes until room opens (null = open now)
+    interview_round: int = 1  # 1=screening, 2=in-person
 
 
 class InterviewStatusUpdateRequest(BaseModel):

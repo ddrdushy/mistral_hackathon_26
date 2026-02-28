@@ -12,7 +12,7 @@ import {
   scoreBg,
   timeAgo,
 } from "@/lib/constants";
-import type { Application, InterviewLink } from "@/types/index";
+import type { Application, InterviewLink, HiringReport } from "@/types/index";
 import Card from "@/components/ui/Card";
 import Button from "@/components/ui/Button";
 import LoadingSpinner from "@/components/ui/LoadingSpinner";
@@ -110,6 +110,10 @@ export default function CandidateDetailPage({
   const [interviewLink, setInterviewLink] = useState<InterviewLink | null>(null);
   const [linkCopied, setLinkCopied] = useState(false);
 
+  // Hiring report
+  const [hiringReport, setHiringReport] = useState<HiringReport | null>(null);
+  const [reportLoading, setReportLoading] = useState(false);
+
   // ── Fetch application data ───────────────────────────────────────────────
 
   const fetchApplication = useCallback(async () => {
@@ -146,6 +150,17 @@ export default function CandidateDetailPage({
   useEffect(() => {
     fetchApplication();
   }, [fetchApplication]);
+
+  // Auto-fetch hiring report when application has resume score
+  useEffect(() => {
+    if (app && app.resume_score && !hiringReport && !reportLoading) {
+      setReportLoading(true);
+      apiGet<HiringReport>(`/screening/${id}/hiring-report`)
+        .then(setHiringReport)
+        .catch(() => {/* silently fail */})
+        .finally(() => setReportLoading(false));
+    }
+  }, [app, id, hiringReport, reportLoading]);
 
   // ── Stage change handler ─────────────────────────────────────────────────
 
@@ -441,6 +456,195 @@ export default function CandidateDetailPage({
       </Card>
 
       {/* ═══════════════════════════════════════════════════════════════════ */}
+      {/* FULL-WIDTH: AI Autonomous Hiring Report (TOP OF PAGE)             */}
+      {/* ═══════════════════════════════════════════════════════════════════ */}
+      {hiringReport && (
+        <div className="rounded-xl border border-indigo-200 bg-gradient-to-br from-indigo-50 via-white to-violet-50 overflow-hidden shadow-sm">
+          {/* Report header */}
+          <div className="bg-gradient-to-r from-indigo-600 via-indigo-700 to-violet-700 px-6 py-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-lg bg-white/20 backdrop-blur-sm flex items-center justify-center">
+                  <ShieldCheckIcon className="h-5 w-5 text-white" />
+                </div>
+                <div>
+                  <h2 className="text-white font-bold text-sm tracking-wide uppercase">
+                    AI Autonomous Hiring Report
+                  </h2>
+                  <p className="text-indigo-200 text-xs mt-0.5">
+                    End-to-end evaluation completed by HireOps AI
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <div className={`px-3 py-1.5 rounded-full text-xs font-bold tracking-wide ${
+                  hiringReport.hire_recommendation.includes("Strong Hire") ? "bg-green-400/20 text-green-100 ring-1 ring-green-400/40" :
+                  hiringReport.hire_recommendation === "Hire" ? "bg-green-400/20 text-green-100 ring-1 ring-green-400/40" :
+                  hiringReport.hire_recommendation === "Lean Hire" ? "bg-amber-400/20 text-amber-100 ring-1 ring-amber-400/40" :
+                  "bg-red-400/20 text-red-100 ring-1 ring-red-400/40"
+                }`}>
+                  {hiringReport.hire_recommendation}
+                </div>
+                <div className="text-right">
+                  <p className="text-indigo-200 text-[10px] uppercase tracking-wider">Confidence</p>
+                  <p className="text-white font-bold text-lg tabular-nums leading-none">{hiringReport.confidence_pct}%</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="p-6 space-y-6">
+            {/* Executive Summary */}
+            <div>
+              <p className="text-sm text-slate-700 leading-relaxed">
+                {hiringReport.executive_summary}
+              </p>
+            </div>
+
+            {/* Pipeline Actions Timeline */}
+            <div>
+              <h3 className="text-xs font-bold text-indigo-600 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+                <ArrowPathIcon className="h-3.5 w-3.5" />
+                What I Did Autonomously
+              </h3>
+              <div className="relative">
+                <div className="absolute left-[11px] top-3 bottom-3 w-0.5 bg-indigo-200" />
+                <div className="space-y-3">
+                  {hiringReport.pipeline_actions.map((action, i) => (
+                    <div key={i} className="flex items-start gap-3 relative">
+                      <div className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 z-10 ${
+                        i === hiringReport.pipeline_actions.length - 1
+                          ? "bg-indigo-600 text-white"
+                          : "bg-indigo-100 text-indigo-600"
+                      }`}>
+                        <CheckCircleSolid className="h-3.5 w-3.5" />
+                      </div>
+                      <div className="bg-white rounded-lg border border-slate-200 p-3 flex-1 shadow-sm">
+                        <p className="text-xs font-bold text-slate-800">{action.action}</p>
+                        <p className="text-xs text-slate-500 mt-0.5">{action.detail}</p>
+                        <p className="text-xs text-indigo-600 font-medium mt-1">→ {action.result}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Two columns: Strengths + Risks */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="bg-green-50 rounded-lg border border-green-200 p-4">
+                <h3 className="text-xs font-bold text-green-700 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                  <CheckCircleSolid className="h-3.5 w-3.5 text-green-600" />
+                  Key Strengths
+                </h3>
+                <ul className="space-y-1.5">
+                  {hiringReport.strengths_analysis.map((s, i) => (
+                    <li key={i} className="text-xs text-green-800 flex items-start gap-2">
+                      <span className="text-green-500 mt-0.5 shrink-0">✓</span>
+                      <span>{s}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <div className="bg-red-50 rounded-lg border border-red-200 p-4">
+                <h3 className="text-xs font-bold text-red-700 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                  <ExclamationTriangleIcon className="h-3.5 w-3.5 text-red-600" />
+                  Risks & Concerns
+                </h3>
+                <ul className="space-y-1.5">
+                  {hiringReport.risk_analysis.map((r, i) => (
+                    <li key={i} className="text-xs text-red-800 flex items-start gap-2">
+                      <span className="text-red-400 mt-0.5 shrink-0">⚠</span>
+                      <span>{r}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+
+            {/* Verdict */}
+            <div className={`rounded-lg p-4 border-2 ${
+              hiringReport.hire_recommendation.includes("Hire") && !hiringReport.hire_recommendation.includes("No")
+                ? "bg-green-50 border-green-300"
+                : hiringReport.hire_recommendation === "Lean Hire"
+                ? "bg-amber-50 border-amber-300"
+                : "bg-red-50 border-red-300"
+            }`}>
+              <div className="flex items-start gap-3">
+                <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${
+                  hiringReport.hire_recommendation.includes("Hire") && !hiringReport.hire_recommendation.includes("No")
+                    ? "bg-green-600"
+                    : hiringReport.hire_recommendation === "Lean Hire"
+                    ? "bg-amber-500"
+                    : "bg-red-600"
+                }`}>
+                  {hiringReport.hire_recommendation.includes("Hire") && !hiringReport.hire_recommendation.includes("No")
+                    ? <CheckCircleSolid className="h-5 w-5 text-white" />
+                    : hiringReport.hire_recommendation === "Lean Hire"
+                    ? <ExclamationTriangleIcon className="h-5 w-5 text-white" />
+                    : <XCircleIcon className="h-5 w-5 text-white" />}
+                </div>
+                <div>
+                  <h3 className={`text-sm font-bold ${
+                    hiringReport.hire_recommendation.includes("Hire") && !hiringReport.hire_recommendation.includes("No")
+                      ? "text-green-800"
+                      : hiringReport.hire_recommendation === "Lean Hire"
+                      ? "text-amber-800"
+                      : "text-red-800"
+                  }`}>
+                    Final Verdict: {hiringReport.hire_recommendation}
+                  </h3>
+                  <p className="text-xs text-slate-600 leading-relaxed mt-1">
+                    {hiringReport.verdict_reasoning}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Suggested Next Steps */}
+            <div>
+              <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                <LightBulbIcon className="h-3.5 w-3.5 text-indigo-500" />
+                Suggested Next Steps
+              </h3>
+              <ol className="space-y-1.5">
+                {hiringReport.suggested_next_steps.map((step, i) => (
+                  <li key={i} className="text-xs text-slate-600 flex items-start gap-2">
+                    <span className="bg-indigo-100 text-indigo-700 rounded-full w-5 h-5 flex items-center justify-center text-[10px] font-bold shrink-0 mt-0.5">
+                      {i + 1}
+                    </span>
+                    <span>{step}</span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+
+            {/* Footer */}
+            <div className="pt-3 border-t border-indigo-100 flex items-center justify-between">
+              <p className="text-[10px] text-slate-400">
+                Report generated autonomously by HireOps AI — no human intervention required
+              </p>
+              <div className="flex items-center gap-1">
+                <div className="w-4 h-4 rounded bg-gradient-to-br from-indigo-600 to-violet-600 flex items-center justify-center">
+                  <span className="text-white text-[8px] font-bold">H</span>
+                </div>
+                <span className="text-[10px] font-medium text-indigo-400">HireOps AI</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {reportLoading && (
+        <Card>
+          <div className="flex items-center justify-center py-8 gap-3">
+            <LoadingSpinner size="sm" />
+            <p className="text-sm text-slate-500">Generating AI hiring report...</p>
+          </div>
+        </Card>
+      )}
+
+      {/* ═══════════════════════════════════════════════════════════════════ */}
       {/* FULL-WIDTH: Summary Dashboard (only when final score exists)      */}
       {/* ═══════════════════════════════════════════════════════════════════ */}
       {app.final_score ? (
@@ -587,6 +791,47 @@ export default function CandidateDetailPage({
                   <CalendarDaysIcon className="h-5 w-5 text-green-600 mx-auto mb-1" />
                   <p className="text-sm font-bold text-green-800">{app.scheduled_interview_slot}</p>
                 </div>
+
+                {/* Round 2 Interview Room Link */}
+                {app.interview_room_url && (
+                  <div className="mt-3 bg-indigo-50 border border-indigo-200 rounded-lg p-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <PlayIcon className="h-4 w-4 text-indigo-600 shrink-0" />
+                        <div className="min-w-0">
+                          <p className="text-xs font-medium text-indigo-600 uppercase">Round 2 Interview Room</p>
+                          <p className="text-xs text-indigo-500 truncate">{app.interview_room_url}</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          onClick={async () => {
+                            await navigator.clipboard.writeText(app.interview_room_url!);
+                            setCopied(true);
+                            setTimeout(() => setCopied(false), 2000);
+                          }}
+                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs font-medium bg-white border border-indigo-300 text-indigo-700 hover:bg-indigo-100 transition-colors"
+                        >
+                          <ClipboardDocumentIcon className="h-3.5 w-3.5" />
+                          {copied ? "Copied!" : "Copy"}
+                        </button>
+                        <a
+                          href={app.interview_room_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
+                        >
+                          <PlayIcon className="h-3.5 w-3.5" />
+                          Join
+                        </a>
+                      </div>
+                    </div>
+                    <p className="mt-2 text-xs text-indigo-500 flex items-center gap-1">
+                      <LightBulbIcon className="h-3 w-3" />
+                      AI bot will join to transcribe and summarize the conversation
+                    </p>
+                  </div>
+                )}
               </div>
             </Card>
           )}
