@@ -12,8 +12,8 @@ from typing import List
 import json
 from dataclasses import dataclass
 
-USE_MOCK = True
-AGENT_ID = "ag_019ca3046554772bbbdf4d2b75bdd657"
+USE_MOCK = os.getenv("RESUME_SCORER_MOCK", "false").lower() == "true"
+AGENT_ID = os.getenv("RESUME_SCORER_AGENT_ID", "ag_019ca3046554772bbbdf4d2b75bdd657")
 
 
 @dataclass
@@ -43,7 +43,7 @@ class ResumeScorerOutput:
 
 
 async def score_resume(input_data: ResumeScorerInput) -> ResumeScorerOutput:
-    if not USE_MOCK:
+    if not USE_MOCK and AGENT_ID:
         from mistralai import Mistral
         from services.llm_tracker import LLMCallTimer
 
@@ -66,7 +66,12 @@ async def score_resume(input_data: ResumeScorerInput) -> ResumeScorerOutput:
             timer.input_tokens = len(content.split()) * 2
             timer.output_tokens = len(response.outputs.text.split()) * 2
 
-        result = json.loads(response.outputs.text)
+        # Parse JSON — handle potential markdown wrapping
+        text = response.outputs.text.strip()
+        if text.startswith("```"):
+            text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+
+        result = json.loads(text)
         return ResumeScorerOutput(**result)
 
     # ─── MOCK IMPLEMENTATION ───

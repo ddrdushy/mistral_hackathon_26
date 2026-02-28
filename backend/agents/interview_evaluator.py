@@ -1,8 +1,8 @@
 """
 Interview Evaluator Agent
-Mistral Agent ID: TBD (user will set)
+Mistral Agent ID: Set via INTERVIEW_EVALUATOR_AGENT_ID env var or below.
 
-Purpose: Evaluate a voice screening transcript against job requirements.
+Purpose: Evaluate a voice interview transcript against job requirements.
 
 INPUT: transcript + job profile + resume score summary
 OUTPUT: score, decision, strengths, concerns, email draft, scheduling slots
@@ -12,8 +12,8 @@ from typing import List
 import json
 from dataclasses import dataclass
 
-USE_MOCK = True
-AGENT_ID = ""  # User sets their Mistral agent ID
+USE_MOCK = os.getenv("INTERVIEW_EVALUATOR_MOCK", "false").lower() == "true"
+AGENT_ID = os.getenv("INTERVIEW_EVALUATOR_AGENT_ID", "")
 
 
 @dataclass
@@ -41,8 +41,10 @@ class InterviewEvaluatorOutput:
 
 
 async def evaluate_interview(input_data: InterviewEvaluatorInput) -> InterviewEvaluatorOutput:
-    if not USE_MOCK:
+    if not USE_MOCK and AGENT_ID:
         from mistralai import Mistral
+        from services.llm_tracker import LLMCallTimer
+
         client = Mistral(api_key=os.environ.get("MISTRAL_API_KEY"))
 
         content = (
@@ -54,15 +56,28 @@ async def evaluate_interview(input_data: InterviewEvaluatorInput) -> InterviewEv
             f"resume_summary: {input_data.resume_summary}"
         )
 
-        response = client.beta.conversations.start(
-            agent_id=AGENT_ID,
-            inputs=[{"role": "user", "content": content}],
-        )
+        with LLMCallTimer("interview_evaluator", "agent") as timer:
+            response = client.beta.conversations.start(
+                agent_id=AGENT_ID,
+                inputs=[{"role": "user", "content": content}],
+            )
+            timer.input_tokens = len(content.split()) * 2
+            timer.output_tokens = len(response.outputs.text.split()) * 2
 
-        result = json.loads(response.outputs.text)
+        # Parse JSON — handle potential markdown wrapping
+        text = response.outputs.text.strip()
+        if text.startswith("```"):
+            text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+
+        result = json.loads(text)
         return InterviewEvaluatorOutput(**result)
 
-    # ─── MOCK IMPLEMENTATION ───
+    # ─── MOCK / FALLBACK IMPLEMENTATION ───
+    from services.llm_tracker import log_usage
+    log_usage("interview_evaluator", "mock", input_tokens=0, output_tokens=0,
+              latency_ms=8, status="success",
+              metadata={"mode": "mock", "job": input_data.job_title})
+
     base = input_data.resume_score * 0.7
     interview_bonus = 20
     score = round(min(base + interview_bonus, 95), 1)
