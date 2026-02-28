@@ -740,6 +740,20 @@ export default function CandidateDetailPage({
               </div>
             )}
 
+            {/* Interview Recording */}
+            {app.interview_link_status === "interview_completed" && (
+              <div className="mb-4">
+                <p className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-2">Interview Recording</p>
+                <audio
+                  controls
+                  className="w-full"
+                  src={`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1"}/screening/${app.id}/audio`}
+                >
+                  Your browser does not support audio playback.
+                </audio>
+              </div>
+            )}
+
             {/* Transcript viewer */}
             {app.screening_transcript ? (
               <>

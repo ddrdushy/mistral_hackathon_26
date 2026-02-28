@@ -74,6 +74,7 @@ export default function InterviewPage({
 
   // Transcript accumulator
   const transcriptRef = useRef<string[]>([]);
+  const elapsedSecondsRef = useRef(0);
 
   // ── ElevenLabs conversation hook ────────────────────────────────────────
 
@@ -87,7 +88,7 @@ export default function InterviewPage({
     onMessage: (message: { source: string; message: string }) => {
       const role = message.source === "ai" ? "Agent" : "Candidate";
       transcriptRef.current.push(
-        `[${elapsedSeconds}s] ${role}: ${message.message}`
+        `[${elapsedSecondsRef.current}s] ${role}: ${message.message}`
       );
     },
     onError: (error: unknown) => {
@@ -275,17 +276,25 @@ export default function InterviewPage({
     }
 
     try {
-      await conversation.startSession({
+      const conversationId = await conversation.startSession({
         agentId: interviewData.elevenlabs_agent_id,
         connectionType: "websocket",
       });
+
+      // Notify backend of conversation ID so it can fetch audio later
+      if (conversationId) {
+        updateStatus("interview_started", conversationId);
+      }
 
       setPhase("interviewing");
       startFaceTracking();
 
       // Start timer
       timerRef.current = setInterval(() => {
-        setElapsedSeconds((prev) => prev + 1);
+        setElapsedSeconds((prev) => {
+          elapsedSecondsRef.current = prev + 1;
+          return prev + 1;
+        });
       }, 1000);
     } catch (err) {
       console.error("Failed to start ElevenLabs session:", err);
@@ -324,15 +333,17 @@ export default function InterviewPage({
 
     setPhase("completed");
 
-    // Submit transcript
+    // Submit transcript with conversation ID for audio retrieval
     const transcript = transcriptRef.current.join("\n");
+    const convId = conversation.getId();
     try {
       await fetch(`${API_BASE}/screening/link/${token}/transcript`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           transcript: transcript || "[No transcript captured]",
-          duration_seconds: elapsedSeconds,
+          duration_seconds: elapsedSecondsRef.current,
+          elevenlabs_conversation_id: convId || undefined,
         }),
       });
     } catch {

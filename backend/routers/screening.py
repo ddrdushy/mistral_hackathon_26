@@ -4,8 +4,10 @@ import os
 import uuid
 import hmac
 import hashlib
+import httpx
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from database import get_db
 from models import Application, Candidate, Job, Event, InterviewLink
@@ -493,6 +495,56 @@ async def get_screening_status(app_id: int, db: Session = Depends(get_db)):
             "interview_completed_at": latest_link.interview_completed_at.isoformat() if latest_link.interview_completed_at else None,
         } if latest_link else None,
     }
+
+
+# ═══════════════════════════════════════
+# INTERVIEW AUDIO RECORDING
+# ═══════════════════════════════════════
+
+@router.get("/{app_id}/audio")
+async def get_interview_audio(app_id: int, db: Session = Depends(get_db)):
+    """Proxy the interview audio recording from ElevenLabs API."""
+    app = db.query(Application).filter(Application.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    # Find the conversation ID from the latest completed interview link
+    link = db.query(InterviewLink).filter(
+        InterviewLink.app_id == app_id,
+        InterviewLink.elevenlabs_conversation_id.isnot(None),
+    ).order_by(InterviewLink.created_at.desc()).first()
+
+    if not link or not link.elevenlabs_conversation_id:
+        raise HTTPException(status_code=404, detail="No interview recording found. The conversation ID is missing.")
+
+    api_key = os.getenv("ELEVENLABS_API_KEY", "")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="ElevenLabs API key not configured")
+
+    conversation_id = link.elevenlabs_conversation_id
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(
+                f"https://api.elevenlabs.io/v1/convai/conversations/{conversation_id}/audio",
+                headers={"xi-api-key": api_key},
+            )
+            if resp.status_code != 200:
+                raise HTTPException(
+                    status_code=resp.status_code,
+                    detail=f"ElevenLabs API error: {resp.text[:200]}"
+                )
+
+            return StreamingResponse(
+                iter([resp.content]),
+                media_type="audio/mpeg",
+                headers={
+                    "Content-Disposition": f'inline; filename="interview_{app_id}_{conversation_id}.mp3"',
+                    "Cache-Control": "public, max-age=3600",
+                },
+            )
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=502, detail=f"Failed to fetch audio from ElevenLabs: {str(e)}")
 
 
 # ═══════════════════════════════════════
