@@ -12,7 +12,7 @@ import {
   scoreBg,
   timeAgo,
 } from "@/lib/constants";
-import type { Application } from "@/types/index";
+import type { Application, InterviewLink } from "@/types/index";
 import Card from "@/components/ui/Card";
 import Button from "@/components/ui/Button";
 import LoadingSpinner from "@/components/ui/LoadingSpinner";
@@ -23,7 +23,6 @@ import {
   CheckCircleIcon,
   ExclamationTriangleIcon,
   XCircleIcon,
-  StarIcon,
   ShieldCheckIcon,
   MagnifyingGlassIcon,
   ChevronDownIcon,
@@ -36,7 +35,6 @@ import {
   PlayIcon,
   ClockIcon,
   ArrowPathIcon,
-  PhoneArrowUpRightIcon,
 } from "@heroicons/react/24/outline";
 import {
   CheckCircleIcon as CheckCircleSolid,
@@ -101,20 +99,16 @@ export default function CandidateDetailPage({
 
   // Action loading states
   const [stageLoading, setStageLoading] = useState(false);
-  const [screeningLoading, setScreeningLoading] = useState(false);
   const [evaluateLoading, setEvaluateLoading] = useState(false);
-  const [retryLoading, setRetryLoading] = useState(false);
   const [copied, setCopied] = useState(false);
 
   // Transcript collapse
   const [transcriptOpen, setTranscriptOpen] = useState(false);
 
-  // Reschedule
-  const [showReschedule, setShowReschedule] = useState(false);
-  const [rescheduleDate, setRescheduleDate] = useState("");
-  const [rescheduleTime, setRescheduleTime] = useState("");
-  const [rescheduleReason, setRescheduleReason] = useState("");
-  const [rescheduleLoading, setRescheduleLoading] = useState(false);
+  // Interview link
+  const [linkLoading, setLinkLoading] = useState(false);
+  const [interviewLink, setInterviewLink] = useState<InterviewLink | null>(null);
+  const [linkCopied, setLinkCopied] = useState(false);
 
   // ── Fetch application data ───────────────────────────────────────────────
 
@@ -161,15 +155,39 @@ export default function CandidateDetailPage({
   const handleHold = () => handleStageChange("screening_scheduled");
   const handleReject = () => handleStageChange("rejected");
 
-  const handleStartScreening = async () => {
-    setScreeningLoading(true);
+  const handleGenerateLink = async () => {
+    setLinkLoading(true);
     try {
-      await apiPost("/screening/start", { app_id: Number(id) });
+      const result = await apiPost<InterviewLink>("/screening/generate-link", {
+        app_id: Number(id),
+      });
+      setInterviewLink(result);
       await fetchApplication();
     } catch {
-      alert("Failed to start screening. Please try again.");
+      alert("Failed to generate interview link.");
     } finally {
-      setScreeningLoading(false);
+      setLinkLoading(false);
+    }
+  };
+
+  const handleCopyLink = async () => {
+    if (!interviewLink) return;
+    try {
+      await navigator.clipboard.writeText(interviewLink.interview_url);
+      setLinkCopied(true);
+      setTimeout(() => setLinkCopied(false), 2000);
+    } catch {
+      alert("Failed to copy link.");
+    }
+  };
+
+  const handleSendLink = async () => {
+    if (!interviewLink) return;
+    try {
+      await apiPost("/screening/send-link", { token: interviewLink.token });
+      await fetchApplication();
+    } catch {
+      alert("Failed to mark link as sent.");
     }
   };
 
@@ -197,51 +215,6 @@ export default function CandidateDetailPage({
     }
   };
 
-  const handleRetryScreening = async () => {
-    setRetryLoading(true);
-    try {
-      await apiPost("/screening/retry", { app_id: Number(id) });
-      await fetchApplication();
-    } catch (err) {
-      alert(err instanceof Error ? err.message : "Failed to retry screening.");
-    } finally {
-      setRetryLoading(false);
-    }
-  };
-
-  const handleReschedule = async () => {
-    if (!rescheduleDate || !rescheduleTime) {
-      alert("Please select a date and time.");
-      return;
-    }
-    setRescheduleLoading(true);
-    try {
-      const scheduledAt = `${rescheduleDate}T${rescheduleTime}:00`;
-      await apiPost("/screening/reschedule", {
-        app_id: Number(id),
-        scheduled_at: scheduledAt,
-        reason: rescheduleReason || "Candidate requested reschedule",
-      });
-      setShowReschedule(false);
-      setRescheduleDate("");
-      setRescheduleTime("");
-      setRescheduleReason("");
-      await fetchApplication();
-    } catch (err) {
-      alert(err instanceof Error ? err.message : "Failed to reschedule.");
-    } finally {
-      setRescheduleLoading(false);
-    }
-  };
-
-  const handleResetAttempts = async () => {
-    try {
-      await apiPost("/screening/reset-attempts", { app_id: Number(id) });
-      await fetchApplication();
-    } catch {
-      alert("Failed to reset attempts.");
-    }
-  };
 
   // ── Loading State ────────────────────────────────────────────────────────
 
@@ -648,19 +621,19 @@ export default function CandidateDetailPage({
             </Card>
           )}
 
-          {/* ── Transcript Viewer ───────────────────────────────────────────── */}
+          {/* ── Interview Link / Transcript ──────────────────────────────────── */}
           <Card
-            title="Screening Transcript"
+            title="Interview"
             action={
               <div className="flex items-center gap-2">
-                {!app.screening_transcript && (
+                {!app.screening_transcript && !interviewLink && (
                   <Button
                     size="sm"
-                    onClick={handleStartScreening}
-                    loading={screeningLoading}
+                    onClick={handleGenerateLink}
+                    loading={linkLoading}
                   >
                     <PlayIcon className="h-4 w-4" />
-                    Start Screening
+                    Generate Interview Link
                   </Button>
                 )}
                 {app.screening_transcript && !interview && (
@@ -695,6 +668,79 @@ export default function CandidateDetailPage({
               </div>
             }
           >
+            {/* Interview link section */}
+            {interviewLink && !app.screening_transcript && (
+              <div className="space-y-3 mb-4">
+                <div className="bg-cyan-50 border border-cyan-200 rounded-lg p-4">
+                  <p className="text-sm font-medium text-cyan-800 mb-2">Interview Link Generated</p>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      readOnly
+                      value={interviewLink.interview_url}
+                      className="flex-1 rounded-md border border-cyan-300 bg-white px-3 py-1.5 text-sm text-slate-700 font-mono"
+                    />
+                    <Button size="sm" variant="secondary" onClick={handleCopyLink}>
+                      <ClipboardDocumentIcon className="h-4 w-4" />
+                      {linkCopied ? "Copied!" : "Copy"}
+                    </Button>
+                  </div>
+                  <div className="mt-2 flex items-center gap-3">
+                    <Button size="sm" onClick={handleSendLink}>
+                      <EnvelopeIcon className="h-4 w-4" />
+                      Mark as Sent
+                    </Button>
+                    <span className="text-xs text-cyan-600">
+                      Expires: {new Date(interviewLink.expires_at).toLocaleDateString()}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Link status (when link was already generated) */}
+            {!interviewLink && app.interview_link_status && !app.screening_transcript && (
+              <div className="space-y-3 mb-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-slate-500">Interview Link Status</span>
+                  <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ${
+                    app.interview_link_status === "interview_completed" ? "bg-green-100 text-green-800"
+                    : app.interview_link_status === "interview_started" ? "bg-blue-100 text-blue-800"
+                    : app.interview_link_status === "opened" ? "bg-cyan-100 text-cyan-800"
+                    : app.interview_link_status === "sent" ? "bg-indigo-100 text-indigo-800"
+                    : "bg-slate-100 text-slate-700"
+                  }`}>
+                    {(app.interview_link_status || "").replace(/_/g, " ").replace(/\b\w/g, l => l.toUpperCase())}
+                  </span>
+                </div>
+                {app.interview_link_status === "expired" && (
+                  <Button size="sm" onClick={handleGenerateLink} loading={linkLoading} className="w-full justify-center">
+                    <ArrowPathIcon className="h-4 w-4" />
+                    Regenerate Link
+                  </Button>
+                )}
+              </div>
+            )}
+
+            {/* Face tracking summary */}
+            {app.interview_face_tracking_json && (
+              <div className="grid grid-cols-2 gap-3 mb-4">
+                <div className="bg-slate-50 rounded-lg p-3 border border-slate-100 text-center">
+                  <p className="text-xs font-medium text-slate-500 uppercase tracking-wider">Attention Score</p>
+                  <p className="mt-1 text-lg font-bold text-slate-800">
+                    {Math.round(app.interview_face_tracking_json.avg_attention_score * 100)}%
+                  </p>
+                </div>
+                <div className="bg-slate-50 rounded-lg p-3 border border-slate-100 text-center">
+                  <p className="text-xs font-medium text-slate-500 uppercase tracking-wider">Face Present</p>
+                  <p className="mt-1 text-lg font-bold text-slate-800">
+                    {app.interview_face_tracking_json.face_present_percentage}%
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Transcript viewer */}
             {app.screening_transcript ? (
               <>
                 {transcriptOpen ? (
@@ -711,18 +757,17 @@ export default function CandidateDetailPage({
                   </div>
                 )}
               </>
-            ) : (
+            ) : !interviewLink && !app.interview_link_status ? (
               <div className="flex flex-col items-center py-8 text-center">
                 <ChatBubbleLeftRightIcon className="h-10 w-10 text-slate-300 mb-3" />
                 <p className="text-sm font-medium text-slate-500">
-                  No screening transcript yet
+                  No interview yet
                 </p>
                 <p className="text-xs text-slate-400 mt-1">
-                  Click &ldquo;Start Screening&rdquo; to begin an AI screening
-                  call.
+                  Generate an interview link and send it to the candidate.
                 </p>
               </div>
-            )}
+            ) : null}
           </Card>
         </div>
 
@@ -817,187 +862,6 @@ export default function CandidateDetailPage({
             </Card>
           )}
 
-          {/* ── Screening Status Card ─────────────────────────────────────── */}
-          {(app.screening_status || app.screening_attempts > 0) && (
-            <Card title="Screening Status">
-              <div className="space-y-4">
-                {/* Status badge */}
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-slate-500">Call Status</span>
-                  <span
-                    className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ${
-                      app.screening_status === "completed"
-                        ? "bg-green-100 text-green-800"
-                        : app.screening_status === "scheduled" || app.screening_status === "rescheduled"
-                        ? "bg-blue-100 text-blue-800"
-                        : app.screening_status === "no_answer" || app.screening_status === "voicemail"
-                        ? "bg-yellow-100 text-yellow-800"
-                        : app.screening_status === "failed" || app.screening_status === "exhausted"
-                        ? "bg-red-100 text-red-800"
-                        : "bg-slate-100 text-slate-700"
-                    }`}
-                  >
-                    {app.screening_status === "no_answer"
-                      ? "No Answer"
-                      : app.screening_status === "rescheduled"
-                      ? "Rescheduled"
-                      : app.screening_status === "exhausted"
-                      ? "Attempts Exhausted"
-                      : (app.screening_status || "pending")
-                          .charAt(0)
-                          .toUpperCase() +
-                        (app.screening_status || "pending").slice(1)}
-                  </span>
-                </div>
-
-                {/* Attempts counter */}
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-slate-500">Attempts</span>
-                  <span className="text-sm font-medium text-slate-700">
-                    {app.screening_attempts} / {app.screening_max_attempts}
-                  </span>
-                </div>
-
-                {/* Progress bar */}
-                <div className="w-full h-2 rounded-full bg-slate-100">
-                  <div
-                    className={`h-2 rounded-full transition-all ${
-                      app.screening_attempts >= app.screening_max_attempts
-                        ? "bg-red-500"
-                        : "bg-indigo-500"
-                    }`}
-                    style={{
-                      width: `${Math.min(
-                        (app.screening_attempts / app.screening_max_attempts) * 100,
-                        100
-                      )}%`,
-                    }}
-                  />
-                </div>
-
-                {/* Last attempt time */}
-                {app.screening_last_attempt_at && (
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-slate-500">Last Attempt</span>
-                    <span className="text-sm text-slate-600">
-                      {timeAgo(app.screening_last_attempt_at)}
-                    </span>
-                  </div>
-                )}
-
-                {/* Failure reason */}
-                {app.screening_failure_reason && (
-                  <div className="bg-red-50 border border-red-200 rounded-lg p-3">
-                    <div className="flex items-start gap-2">
-                      <ExclamationTriangleIcon className="h-4 w-4 text-red-500 mt-0.5 shrink-0" />
-                      <p className="text-sm text-red-700">
-                        {app.screening_failure_reason}
-                      </p>
-                    </div>
-                  </div>
-                )}
-
-                {/* Action buttons */}
-                <div className="flex flex-col gap-2 pt-1">
-                  {/* Retry button — show when status is retryable and attempts remain */}
-                  {["no_answer", "failed", "voicemail"].includes(
-                    app.screening_status || ""
-                  ) &&
-                    app.screening_attempts < app.screening_max_attempts && (
-                      <Button
-                        size="sm"
-                        onClick={handleRetryScreening}
-                        loading={retryLoading}
-                        className="w-full justify-center"
-                      >
-                        <ArrowPathIcon className="h-4 w-4" />
-                        Retry Call ({app.screening_max_attempts - app.screening_attempts} left)
-                      </Button>
-                    )}
-
-                  {/* Reschedule button */}
-                  {app.screening_status !== "completed" && (
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      onClick={() => setShowReschedule(!showReschedule)}
-                      className="w-full justify-center"
-                    >
-                      <CalendarDaysIcon className="h-4 w-4" />
-                      {showReschedule ? "Cancel" : "Reschedule Call"}
-                    </Button>
-                  )}
-
-                  {/* Reset attempts (admin) — show when exhausted */}
-                  {app.screening_status === "exhausted" && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={handleResetAttempts}
-                      className="w-full justify-center"
-                    >
-                      <ArrowPathIcon className="h-4 w-4" />
-                      Reset Attempts (Admin)
-                    </Button>
-                  )}
-                </div>
-
-                {/* Reschedule form */}
-                {showReschedule && (
-                  <div className="bg-slate-50 rounded-lg p-4 border border-slate-200 space-y-3">
-                    <p className="text-sm font-medium text-slate-700">
-                      Reschedule Screening Call
-                    </p>
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <label className="block text-xs text-slate-500 mb-1">
-                          Date
-                        </label>
-                        <input
-                          type="date"
-                          value={rescheduleDate}
-                          onChange={(e) => setRescheduleDate(e.target.value)}
-                          className="w-full rounded-md border border-slate-300 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs text-slate-500 mb-1">
-                          Time
-                        </label>
-                        <input
-                          type="time"
-                          value={rescheduleTime}
-                          onChange={(e) => setRescheduleTime(e.target.value)}
-                          className="w-full rounded-md border border-slate-300 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                        />
-                      </div>
-                    </div>
-                    <div>
-                      <label className="block text-xs text-slate-500 mb-1">
-                        Reason (optional)
-                      </label>
-                      <input
-                        type="text"
-                        placeholder="e.g. Candidate requested afternoon slot"
-                        value={rescheduleReason}
-                        onChange={(e) => setRescheduleReason(e.target.value)}
-                        className="w-full rounded-md border border-slate-300 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                      />
-                    </div>
-                    <Button
-                      size="sm"
-                      onClick={handleReschedule}
-                      loading={rescheduleLoading}
-                      className="w-full justify-center"
-                    >
-                      <CalendarDaysIcon className="h-4 w-4" />
-                      Confirm Reschedule
-                    </Button>
-                  </div>
-                )}
-              </div>
-            </Card>
-          )}
 
           {/* ── Next Actions Card ───────────────────────────────────────────── */}
           <Card title="Next Actions">

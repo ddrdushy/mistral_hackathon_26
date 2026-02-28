@@ -1,23 +1,25 @@
-"""Screening endpoints: start, transcript, evaluate, webhook, retry."""
+"""Screening endpoints: interview links, face tracking, transcript, evaluate, webhook."""
 import json
 import os
+import uuid
 import hmac
 import hashlib
-from datetime import datetime
+from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from database import get_db
-from models import Application, Candidate, Job, Event
-from schemas import ScreeningStartRequest, ScreeningTranscriptRequest
-from agents.voice_screener import start_voice_screening, VoiceScreenerInput
+from models import Application, Candidate, Job, Event, InterviewLink
+from schemas import (
+    InterviewLinkGenerateRequest, InterviewLinkResponse,
+    InterviewLinkPublicResponse, InterviewStatusUpdateRequest,
+    FaceTrackingDataRequest, InterviewTranscriptSubmitRequest,
+    ScreeningTranscriptRequest,
+)
 from agents.interview_evaluator import evaluate_interview, InterviewEvaluatorInput
 
 router = APIRouter(prefix="/api/v1/screening", tags=["screening"])
 
 WEBHOOK_SECRET = os.getenv("ELEVENLABS_WEBHOOK_SECRET", "")
-
-# Max retry attempts for failed calls
-MAX_SCREENING_ATTEMPTS = 3
 
 
 def _log_event(db: Session, app_id: int, event_type: str, payload: dict):
@@ -25,200 +27,367 @@ def _log_event(db: Session, app_id: int, event_type: str, payload: dict):
     db.add(event)
 
 
-@router.post("/start")
-async def start_screening(req: ScreeningStartRequest, db: Session = Depends(get_db)):
+# ═══════════════════════════════════════
+# INTERVIEW LINK MANAGEMENT (Dashboard)
+# ═══════════════════════════════════════
+
+@router.post("/generate-link")
+async def generate_interview_link(req: InterviewLinkGenerateRequest, db: Session = Depends(get_db)):
+    """Generate a unique interview link for an application."""
     app = db.query(Application).filter(Application.id == req.app_id).first()
     if not app:
         raise HTTPException(status_code=404, detail="Application not found")
 
-    candidate = db.query(Candidate).filter(Candidate.id == app.candidate_id).first()
-    job = db.query(Job).filter(Job.id == app.job_id).first()
-    if not candidate or not job:
-        raise HTTPException(status_code=404, detail="Candidate or job not found")
+    # Expire any existing active links for this application
+    db.query(InterviewLink).filter(
+        InterviewLink.app_id == req.app_id,
+        InterviewLink.status.in_(["generated", "sent", "opened"])
+    ).update({"status": "expired"}, synchronize_session="fetch")
 
-    # Check if max attempts exceeded
-    if app.screening_attempts >= (app.screening_max_attempts or MAX_SCREENING_ATTEMPTS):
-        raise HTTPException(
-            status_code=400,
-            detail=f"Maximum screening attempts ({app.screening_max_attempts or MAX_SCREENING_ATTEMPTS}) reached. "
-                   f"Manually reschedule or update candidate contact info."
-        )
-
-    # Get screening questions from resume score
-    questions = []
-    if app.resume_score_json:
-        score_data = json.loads(app.resume_score_json)
-        questions = score_data.get("screening_questions", [])
-    if not questions:
-        questions = [
-            f"Tell me about your experience relevant to the {job.title} role",
-            "What interests you most about this position?",
-            "Describe a challenging project you've worked on recently",
-            "How do you handle tight deadlines?",
-            "Where do you see yourself in 2 years?",
-        ]
-
-    screener_input = VoiceScreenerInput(
-        candidate_name=candidate.name,
-        candidate_phone=candidate.phone,
-        job_title=job.title,
-        screening_questions=questions,
+    token = uuid.uuid4().hex
+    link = InterviewLink(
+        token=token,
+        app_id=app.id,
+        status="generated",
+        expires_at=datetime.utcnow() + timedelta(hours=req.expires_hours),
     )
-    result = await start_voice_screening(screener_input)
+    db.add(link)
 
-    # Update tracking fields
-    app.screening_attempts = (app.screening_attempts or 0) + 1
-    app.screening_last_attempt_at = datetime.utcnow()
-
-    # If mock mode, store the transcript immediately
-    if result.transcript:
-        app.screening_transcript = result.transcript
-        app.stage = "screened"
-        app.screening_status = "completed"
-    else:
-        app.stage = "screening_scheduled"
-        app.screening_status = "scheduled"
-
-    app.screening_failure_reason = None
+    app.interview_link_status = "generated"
+    app.stage = "interview_link_sent"
+    app.screening_status = "link_generated"
+    app.ai_next_action = "Interview link generated — send to candidate"
     app.updated_at = datetime.utcnow()
-    _log_event(db, app.id, "screening_started", {
-        "status": result.status,
-        "conversation_id": result.conversation_id,
-        "attempt": app.screening_attempts,
-    })
+
+    _log_event(db, app.id, "interview_link_generated", {"token": token, "expires_hours": req.expires_hours})
+    db.commit()
+    db.refresh(link)
+
+    base_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
+    interview_url = f"{base_url}/interview/{token}"
+
+    return InterviewLinkResponse(
+        id=link.id,
+        token=token,
+        app_id=app.id,
+        status=link.status,
+        interview_url=interview_url,
+        expires_at=link.expires_at,
+        opened_at=link.opened_at,
+        interview_started_at=link.interview_started_at,
+        interview_completed_at=link.interview_completed_at,
+        created_at=link.created_at,
+    )
+
+
+@router.post("/send-link")
+async def send_interview_link(body: dict, db: Session = Depends(get_db)):
+    """Mark an interview link as sent to the candidate."""
+    token = body.get("token")
+    link = db.query(InterviewLink).filter(InterviewLink.token == token).first()
+    if not link:
+        raise HTTPException(status_code=404, detail="Interview link not found")
+
+    link.status = "sent"
+    app = db.query(Application).filter(Application.id == link.app_id).first()
+    if app:
+        app.interview_link_status = "sent"
+        app.ai_next_action = "Interview link sent — waiting for candidate"
+        app.updated_at = datetime.utcnow()
+
+    _log_event(db, link.app_id, "interview_link_sent", {"token": token})
     db.commit()
 
+    return {"status": "sent", "token": token}
+
+
+@router.get("/{app_id}/links")
+async def get_application_links(app_id: int, db: Session = Depends(get_db)):
+    """Get all interview links for an application."""
+    links = db.query(InterviewLink).filter(
+        InterviewLink.app_id == app_id
+    ).order_by(InterviewLink.created_at.desc()).all()
+
+    base_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
+
     return {
-        "app_id": app.id,
-        "status": result.status,
-        "questions": questions,
-        "conversation_id": result.conversation_id,
-        "attempt": app.screening_attempts,
-        "max_attempts": app.screening_max_attempts or MAX_SCREENING_ATTEMPTS,
+        "links": [
+            {
+                "id": link.id,
+                "token": link.token,
+                "status": link.status,
+                "interview_url": f"{base_url}/interview/{link.token}",
+                "expires_at": link.expires_at.isoformat() if link.expires_at else None,
+                "opened_at": link.opened_at.isoformat() if link.opened_at else None,
+                "interview_started_at": link.interview_started_at.isoformat() if link.interview_started_at else None,
+                "interview_completed_at": link.interview_completed_at.isoformat() if link.interview_completed_at else None,
+                "face_tracking_json": json.loads(link.face_tracking_json) if link.face_tracking_json else None,
+                "created_at": link.created_at.isoformat() if link.created_at else None,
+            }
+            for link in links
+        ]
     }
 
 
-@router.post("/retry")
-async def retry_screening(body: dict, db: Session = Depends(get_db)):
-    """Retry a failed screening call."""
-    app_id = body.get("app_id")
-    app = db.query(Application).filter(Application.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail="Application not found")
+# ═══════════════════════════════════════
+# PUBLIC INTERVIEW ENDPOINTS
+# ═══════════════════════════════════════
 
-    if app.screening_status not in ("no_answer", "failed", "voicemail", None):
-        raise HTTPException(
-            status_code=400,
-            detail=f"Cannot retry: current screening status is '{app.screening_status}'. "
-                   f"Only no_answer, failed, or voicemail can be retried."
+@router.get("/link/{token}")
+async def get_interview_link_public(token: str, db: Session = Depends(get_db)):
+    """Public endpoint: validate interview token and return config."""
+    link = db.query(InterviewLink).filter(InterviewLink.token == token).first()
+    if not link:
+        return InterviewLinkPublicResponse(
+            token=token, status="invalid", candidate_first_name="",
+            job_title="", company_name="", elevenlabs_agent_id="",
+            is_valid=False, error="Interview link not found.",
         )
 
-    if app.screening_attempts >= (app.screening_max_attempts or MAX_SCREENING_ATTEMPTS):
-        raise HTTPException(
-            status_code=400,
-            detail=f"Maximum attempts ({app.screening_max_attempts or MAX_SCREENING_ATTEMPTS}) reached. "
-                   f"Use /screening/reset-attempts to allow more."
+    # Check expiry
+    if link.expires_at < datetime.utcnow():
+        if link.status not in ("expired", "interview_completed"):
+            link.status = "expired"
+            db.commit()
+        return InterviewLinkPublicResponse(
+            token=token, status="expired", candidate_first_name="",
+            job_title="", company_name="", elevenlabs_agent_id="",
+            is_valid=False, error="This interview link has expired. Please contact the recruiter for a new link.",
         )
 
-    # Reset stage to allow re-scheduling
-    app.stage = "matched"
-    app.screening_status = None
-    app.screening_failure_reason = None
-    app.updated_at = datetime.utcnow()
-    _log_event(db, app.id, "screening_retry_requested", {
-        "previous_attempts": app.screening_attempts,
-        "previous_failure": app.screening_failure_reason,
-    })
+    # Check if already completed
+    if link.status == "interview_completed":
+        return InterviewLinkPublicResponse(
+            token=token, status="interview_completed", candidate_first_name="",
+            job_title="", company_name="", elevenlabs_agent_id="",
+            is_valid=False, error="This interview has already been completed. Thank you!",
+        )
+
+    # Mark as opened on first access
+    if link.status in ("generated", "sent"):
+        link.status = "opened"
+        link.opened_at = datetime.utcnow()
+        app = db.query(Application).filter(Application.id == link.app_id).first()
+        if app:
+            app.interview_link_status = "opened"
+            app.ai_next_action = "Candidate has opened the interview link"
+            app.updated_at = datetime.utcnow()
+        _log_event(db, link.app_id, "interview_link_opened", {"token": token})
+        db.commit()
+
+    # Get candidate + job info
+    app = db.query(Application).filter(Application.id == link.app_id).first()
+    candidate = db.query(Candidate).filter(Candidate.id == app.candidate_id).first() if app else None
+    job = db.query(Job).filter(Job.id == app.job_id).first() if app else None
+
+    agent_id = os.getenv("ELEVENLABS_AGENT_ID", "")
+    company = os.getenv("COMPANY_NAME", "HireOps AI")
+
+    return InterviewLinkPublicResponse(
+        token=token,
+        status=link.status,
+        candidate_first_name=candidate.name.split()[0] if candidate else "",
+        job_title=job.title if job else "",
+        company_name=company,
+        elevenlabs_agent_id=agent_id,
+        is_valid=True,
+    )
+
+
+@router.post("/link/{token}/status")
+async def update_interview_status(token: str, req: InterviewStatusUpdateRequest, db: Session = Depends(get_db)):
+    """Public endpoint: update interview status from the interview page."""
+    link = db.query(InterviewLink).filter(InterviewLink.token == token).first()
+    if not link:
+        raise HTTPException(status_code=404, detail="Interview link not found")
+
+    if req.status == "interview_started":
+        link.status = "interview_started"
+        link.interview_started_at = datetime.utcnow()
+        if req.elevenlabs_conversation_id:
+            link.elevenlabs_conversation_id = req.elevenlabs_conversation_id
+
+        app = db.query(Application).filter(Application.id == link.app_id).first()
+        if app:
+            app.interview_link_status = "interview_started"
+            app.screening_status = "in_progress"
+            app.ai_next_action = "Interview in progress"
+            app.updated_at = datetime.utcnow()
+
+        _log_event(db, link.app_id, "interview_started", {
+            "token": token,
+            "conversation_id": req.elevenlabs_conversation_id,
+        })
+
+    elif req.status == "interview_completed":
+        link.status = "interview_completed"
+        link.interview_completed_at = datetime.utcnow()
+
+        app = db.query(Application).filter(Application.id == link.app_id).first()
+        if app:
+            app.interview_link_status = "interview_completed"
+            app.ai_next_action = "Interview completed — awaiting transcript evaluation"
+            app.updated_at = datetime.utcnow()
+
+        _log_event(db, link.app_id, "interview_completed", {"token": token})
+
     db.commit()
-
-    # Now start the screening
-    req = ScreeningStartRequest(app_id=app_id)
-    return await start_screening(req, db)
+    return {"status": link.status, "token": token}
 
 
-@router.post("/reset-attempts")
-async def reset_screening_attempts(body: dict, db: Session = Depends(get_db)):
-    """Reset screening attempts counter (admin action)."""
-    app_id = body.get("app_id")
-    app = db.query(Application).filter(Application.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail="Application not found")
+@router.post("/link/{token}/face-tracking")
+async def submit_face_tracking(token: str, req: FaceTrackingDataRequest, db: Session = Depends(get_db)):
+    """Public endpoint: receive periodic face tracking data."""
+    link = db.query(InterviewLink).filter(InterviewLink.token == token).first()
+    if not link:
+        raise HTTPException(status_code=404, detail="Interview link not found")
 
-    old_attempts = app.screening_attempts
-    app.screening_attempts = 0
-    app.screening_status = None
-    app.screening_failure_reason = None
-    app.updated_at = datetime.utcnow()
-    _log_event(db, app.id, "screening_attempts_reset", {
-        "old_attempts": old_attempts,
-    })
-    db.commit()
-
-    return {
-        "app_id": app.id,
-        "status": "reset",
-        "screening_attempts": 0,
+    # Load existing tracking data
+    tracking = json.loads(link.face_tracking_json) if link.face_tracking_json else {
+        "snapshots": [],
+        "avg_attention_score": 0,
+        "face_present_count": 0,
+        "total_snapshots": 0,
     }
 
-
-@router.post("/reschedule")
-async def reschedule_screening(body: dict, db: Session = Depends(get_db)):
-    """Reschedule a screening call to a specific time slot."""
-    app_id = body.get("app_id")
-    scheduled_at = body.get("scheduled_at")  # ISO datetime string
-    reason = body.get("reason", "Candidate requested reschedule")
-
-    app = db.query(Application).filter(Application.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail="Application not found")
-
-    # Reset screening state for reschedule (don't increment attempts)
-    app.stage = "screening_scheduled"
-    app.screening_status = "rescheduled"
-    app.screening_failure_reason = None
-    app.ai_next_action = f"Screening rescheduled — {reason}"
-    app.updated_at = datetime.utcnow()
-
-    _log_event(db, app.id, "screening_rescheduled", {
-        "scheduled_at": scheduled_at,
-        "reason": reason,
-        "attempt": app.screening_attempts or 0,
+    # Add snapshot
+    tracking["snapshots"].append({
+        "face_present": req.face_present,
+        "attention_score": req.attention_score,
+        "timestamp": req.timestamp,
+        "face_count": req.face_count,
     })
+    tracking["total_snapshots"] += 1
+    if req.face_present:
+        tracking["face_present_count"] += 1
+
+    # Compute running averages
+    total = tracking["total_snapshots"]
+    tracking["avg_attention_score"] = round(
+        sum(s["attention_score"] for s in tracking["snapshots"]) / total, 3
+    )
+    tracking["face_present_percentage"] = round(
+        tracking["face_present_count"] / total * 100, 1
+    )
+
+    # Keep only last 100 snapshots to limit storage
+    if len(tracking["snapshots"]) > 100:
+        tracking["snapshots"] = tracking["snapshots"][-100:]
+
+    link.face_tracking_json = json.dumps(tracking)
+
+    # Also update application aggregate
+    app = db.query(Application).filter(Application.id == link.app_id).first()
+    if app:
+        app.interview_face_tracking_json = json.dumps({
+            "avg_attention_score": tracking["avg_attention_score"],
+            "face_present_percentage": tracking["face_present_percentage"],
+            "total_snapshots": tracking["total_snapshots"],
+        })
+
     db.commit()
-
-    return {
-        "app_id": app.id,
-        "status": "rescheduled",
-        "scheduled_at": scheduled_at,
-        "screening_attempts": app.screening_attempts or 0,
-    }
+    return {"status": "received", "total_snapshots": tracking["total_snapshots"]}
 
 
-@router.post("/transcript")
-async def store_transcript(req: ScreeningTranscriptRequest, db: Session = Depends(get_db)):
-    app = db.query(Application).filter(Application.id == req.app_id).first()
+@router.post("/link/{token}/transcript")
+async def submit_interview_transcript(token: str, req: InterviewTranscriptSubmitRequest, db: Session = Depends(get_db)):
+    """Public endpoint: submit transcript after interview completion."""
+    link = db.query(InterviewLink).filter(InterviewLink.token == token).first()
+    if not link:
+        raise HTTPException(status_code=404, detail="Interview link not found")
+
+    app = db.query(Application).filter(Application.id == link.app_id).first()
     if not app:
         raise HTTPException(status_code=404, detail="Application not found")
 
+    # Store transcript
     app.screening_transcript = req.transcript
     app.stage = "screened"
     app.screening_status = "completed"
     app.updated_at = datetime.utcnow()
-    _log_event(db, app.id, "transcript_received", {"length": len(req.transcript)})
+
+    if req.elevenlabs_conversation_id:
+        link.elevenlabs_conversation_id = req.elevenlabs_conversation_id
+    link.status = "interview_completed"
+    link.interview_completed_at = link.interview_completed_at or datetime.utcnow()
+
+    _log_event(db, app.id, "interview_transcript_received", {
+        "token": token,
+        "duration_seconds": req.duration_seconds,
+        "transcript_length": len(req.transcript),
+    })
     db.commit()
 
-    return {"status": "transcript_stored", "app_id": app.id}
+    # Auto-trigger evaluation
+    evaluation_result = None
+    try:
+        job = db.query(Job).filter(Job.id == app.job_id).first()
+        skills = json.loads(job.skills) if job and job.skills else []
+        resume_summary = ""
+        if app.resume_score_json:
+            score_data = json.loads(app.resume_score_json)
+            resume_summary = score_data.get("summary", "")
 
+        eval_input = InterviewEvaluatorInput(
+            transcript=req.transcript,
+            job_title=job.title if job else "",
+            job_description=job.description if job else "",
+            required_skills=skills,
+            resume_score=app.resume_score or 0,
+            resume_summary=resume_summary,
+        )
+        result = await evaluate_interview(eval_input)
+
+        app.interview_score = result.score
+        app.interview_score_json = json.dumps({
+            "score": result.score,
+            "decision": result.decision,
+            "strengths": result.strengths,
+            "concerns": result.concerns,
+            "communication_rating": result.communication_rating,
+            "technical_depth": result.technical_depth,
+            "cultural_fit": result.cultural_fit,
+            "email_draft": result.email_draft,
+            "scheduling_slots": result.scheduling_slots,
+            "summary": result.summary,
+        })
+        app.recommendation = result.decision
+        app.ai_next_action = (
+            "Schedule in-person interview" if result.decision == "advance"
+            else "Place on hold for review" if result.decision == "hold"
+            else "Send rejection email"
+        )
+        _log_event(db, app.id, "interview_auto_evaluated", {
+            "score": result.score,
+            "decision": result.decision,
+        })
+        evaluation_result = {"score": result.score, "decision": result.decision}
+    except Exception as e:
+        _log_event(db, app.id, "interview_auto_evaluate_failed", {"error": str(e)})
+
+    db.commit()
+
+    return {
+        "status": "transcript_stored",
+        "app_id": app.id,
+        "evaluation": evaluation_result,
+    }
+
+
+# ═══════════════════════════════════════
+# MANUAL EVALUATION (Dashboard)
+# ═══════════════════════════════════════
 
 @router.post("/evaluate")
 async def evaluate_screening(body: dict, db: Session = Depends(get_db)):
+    """Manually trigger evaluation of an existing transcript."""
     app_id = body.get("app_id")
     app = db.query(Application).filter(Application.id == app_id).first()
     if not app:
         raise HTTPException(status_code=404, detail="Application not found")
 
     if not app.screening_transcript:
-        raise HTTPException(status_code=400, detail="No transcript available. Run screening first.")
+        raise HTTPException(status_code=400, detail="No transcript available. Complete an interview first.")
 
     job = db.query(Job).filter(Job.id == app.job_id).first()
     skills = json.loads(job.skills) if job and job.skills else []
@@ -274,74 +443,61 @@ async def evaluate_screening(body: dict, db: Session = Depends(get_db)):
     }
 
 
+@router.post("/transcript")
+async def store_transcript(req: ScreeningTranscriptRequest, db: Session = Depends(get_db)):
+    """Manual transcript upload (fallback)."""
+    app = db.query(Application).filter(Application.id == req.app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    app.screening_transcript = req.transcript
+    app.stage = "screened"
+    app.screening_status = "completed"
+    app.updated_at = datetime.utcnow()
+    _log_event(db, app.id, "transcript_received", {"length": len(req.transcript)})
+    db.commit()
+
+    return {"status": "transcript_stored", "app_id": app.id}
+
+
 @router.get("/{app_id}/status")
 async def get_screening_status(app_id: int, db: Session = Depends(get_db)):
+    """Get screening/interview status for an application."""
     app = db.query(Application).filter(Application.id == app_id).first()
     if not app:
         raise HTTPException(status_code=404, detail="Application not found")
 
-    has_transcript = bool(app.screening_transcript)
-    has_evaluation = bool(app.interview_score_json)
-    can_retry = (
-        app.screening_status in ("no_answer", "failed", "voicemail", None)
-        and (app.screening_attempts or 0) < (app.screening_max_attempts or MAX_SCREENING_ATTEMPTS)
-    )
+    # Get latest active link
+    latest_link = db.query(InterviewLink).filter(
+        InterviewLink.app_id == app_id
+    ).order_by(InterviewLink.created_at.desc()).first()
+
+    base_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
 
     return {
         "app_id": app.id,
         "stage": app.stage,
         "screening_status": app.screening_status,
-        "screening_attempts": app.screening_attempts or 0,
-        "screening_max_attempts": app.screening_max_attempts or MAX_SCREENING_ATTEMPTS,
-        "screening_failure_reason": app.screening_failure_reason,
-        "screening_last_attempt_at": (
-            app.screening_last_attempt_at.isoformat()
-            if app.screening_last_attempt_at else None
-        ),
-        "has_transcript": has_transcript,
-        "has_evaluation": has_evaluation,
+        "interview_link_status": app.interview_link_status,
+        "has_transcript": bool(app.screening_transcript),
+        "has_evaluation": bool(app.interview_score_json),
         "interview_score": app.interview_score,
-        "can_retry": can_retry,
+        "face_tracking": json.loads(app.interview_face_tracking_json) if app.interview_face_tracking_json else None,
+        "latest_link": {
+            "token": latest_link.token,
+            "status": latest_link.status,
+            "interview_url": f"{base_url}/interview/{latest_link.token}",
+            "expires_at": latest_link.expires_at.isoformat() if latest_link.expires_at else None,
+            "opened_at": latest_link.opened_at.isoformat() if latest_link.opened_at else None,
+            "interview_started_at": latest_link.interview_started_at.isoformat() if latest_link.interview_started_at else None,
+            "interview_completed_at": latest_link.interview_completed_at.isoformat() if latest_link.interview_completed_at else None,
+        } if latest_link else None,
     }
 
 
 # ═══════════════════════════════════════
-# ELEVENLABS WEBHOOK
+# ELEVENLABS WEBHOOK (kept for transcript delivery)
 # ═══════════════════════════════════════
-
-# Map ElevenLabs failure reasons to our screening statuses
-FAILURE_REASON_MAP = {
-    "no_answer": "no_answer",
-    "busy": "no_answer",
-    "voicemail": "voicemail",
-    "invalid_number": "failed",
-    "network_error": "failed",
-    "timeout": "no_answer",
-    "rejected": "no_answer",
-    "carrier_error": "failed",
-}
-
-
-def _find_app_by_conversation(db: Session, conversation_id: str) -> Application:
-    """Find the application linked to an ElevenLabs conversation ID."""
-    # First try: look in events for the conversation_id
-    if conversation_id:
-        events = db.query(Event).filter(
-            Event.event_type == "screening_started",
-            Event.payload.contains(conversation_id),
-        ).order_by(Event.created_at.desc()).all()
-
-        for event in events:
-            if event.app_id:
-                app = db.query(Application).filter(Application.id == event.app_id).first()
-                if app:
-                    return app
-
-    # Fallback: most recent screening_scheduled application
-    return db.query(Application).filter(
-        Application.stage == "screening_scheduled"
-    ).order_by(Application.updated_at.desc()).first()
-
 
 @router.post("/webhook/elevenlabs")
 async def elevenlabs_webhook(request: Request, db: Session = Depends(get_db)):
@@ -349,7 +505,6 @@ async def elevenlabs_webhook(request: Request, db: Session = Depends(get_db)):
     body = await request.body()
     signature = request.headers.get("elevenlabs-signature", "")
 
-    # Verify HMAC signature if webhook secret is configured
     if WEBHOOK_SECRET:
         try:
             expected = hmac.new(
@@ -366,14 +521,10 @@ async def elevenlabs_webhook(request: Request, db: Session = Depends(get_db)):
     event_type = payload.get("type", "")
     data = payload.get("data", {})
 
-    # ─── SUCCESSFUL CALL: Got transcript ───
     if event_type == "post_call_transcription":
         conversation_id = data.get("conversation_id", "")
         transcript_turns = data.get("transcript", [])
-        analysis = data.get("analysis", {})
         metadata = data.get("metadata", {})
-        call_successful = analysis.get("call_successful", True)
-        call_duration = metadata.get("call_duration_secs", 0)
 
         # Format transcript
         transcript_text = ""
@@ -383,145 +534,70 @@ async def elevenlabs_webhook(request: Request, db: Session = Depends(get_db)):
             time_secs = turn.get("time_in_call_secs", 0)
             transcript_text += f"[{time_secs:.0f}s] {role}: {message}\n"
 
-        app = _find_app_by_conversation(db, conversation_id)
+        # Find application via InterviewLink
+        link = db.query(InterviewLink).filter(
+            InterviewLink.elevenlabs_conversation_id == conversation_id
+        ).first()
 
-        if app:
-            # Check if this was a very short call (likely voicemail/no real conversation)
-            if call_duration < 15 and not call_successful:
-                app.screening_status = "no_answer"
-                app.screening_failure_reason = "Call too short — candidate may not have answered"
-                app.ai_next_action = f"Retry screening (attempt {(app.screening_attempts or 0)}/{app.screening_max_attempts or MAX_SCREENING_ATTEMPTS})"
-                _log_event(db, app.id, "screening_no_answer", {
-                    "conversation_id": conversation_id,
-                    "duration_secs": call_duration,
-                    "call_successful": False,
-                    "attempt": app.screening_attempts,
-                })
-            else:
-                # Real conversation happened
+        if link:
+            app = db.query(Application).filter(Application.id == link.app_id).first()
+            if app and not app.screening_transcript:
+                # Only store if not already stored by client-side submission
                 app.screening_transcript = transcript_text
                 app.stage = "screened"
                 app.screening_status = "completed"
-                app.screening_failure_reason = None
+                app.updated_at = datetime.utcnow()
+
                 _log_event(db, app.id, "webhook_transcript_received", {
                     "conversation_id": conversation_id,
-                    "duration_secs": call_duration,
-                    "call_successful": call_successful,
-                    "summary": analysis.get("transcript_summary", ""),
-                    "attempt": app.screening_attempts,
+                    "duration_secs": metadata.get("call_duration_secs", 0),
                 })
 
-                # Auto-trigger evaluation
-                try:
-                    job = db.query(Job).filter(Job.id == app.job_id).first()
-                    skills = json.loads(job.skills) if job and job.skills else []
-                    resume_summary = ""
-                    if app.resume_score_json:
-                        score_data = json.loads(app.resume_score_json)
-                        resume_summary = score_data.get("summary", "")
+                # Auto-trigger evaluation if not already done
+                if not app.interview_score_json:
+                    try:
+                        job = db.query(Job).filter(Job.id == app.job_id).first()
+                        skills = json.loads(job.skills) if job and job.skills else []
+                        resume_summary = ""
+                        if app.resume_score_json:
+                            score_data = json.loads(app.resume_score_json)
+                            resume_summary = score_data.get("summary", "")
 
-                    eval_input = InterviewEvaluatorInput(
-                        transcript=transcript_text,
-                        job_title=job.title if job else "",
-                        job_description=job.description if job else "",
-                        required_skills=skills,
-                        resume_score=app.resume_score or 0,
-                        resume_summary=resume_summary,
-                    )
-                    result = await evaluate_interview(eval_input)
+                        eval_input = InterviewEvaluatorInput(
+                            transcript=transcript_text,
+                            job_title=job.title if job else "",
+                            job_description=job.description if job else "",
+                            required_skills=skills,
+                            resume_score=app.resume_score or 0,
+                            resume_summary=resume_summary,
+                        )
+                        result = await evaluate_interview(eval_input)
 
-                    app.interview_score = result.score
-                    app.interview_score_json = json.dumps({
-                        "score": result.score,
-                        "decision": result.decision,
-                        "strengths": result.strengths,
-                        "concerns": result.concerns,
-                        "communication_rating": result.communication_rating,
-                        "technical_depth": result.technical_depth,
-                        "cultural_fit": result.cultural_fit,
-                        "email_draft": result.email_draft,
-                        "scheduling_slots": result.scheduling_slots,
-                        "summary": result.summary,
-                    })
-                    app.recommendation = result.decision
-                    app.ai_next_action = (
-                        "Schedule in-person interview" if result.decision == "advance"
-                        else "Place on hold for review" if result.decision == "hold"
-                        else "Send rejection email"
-                    )
-                    _log_event(db, app.id, "auto_evaluated", {
-                        "interview_score": result.score,
-                        "decision": result.decision,
-                    })
-                except Exception as e:
-                    _log_event(db, app.id, "auto_evaluate_failed", {"error": str(e)})
+                        app.interview_score = result.score
+                        app.interview_score_json = json.dumps({
+                            "score": result.score,
+                            "decision": result.decision,
+                            "strengths": result.strengths,
+                            "concerns": result.concerns,
+                            "communication_rating": result.communication_rating,
+                            "technical_depth": result.technical_depth,
+                            "cultural_fit": result.cultural_fit,
+                            "email_draft": result.email_draft,
+                            "scheduling_slots": result.scheduling_slots,
+                            "summary": result.summary,
+                        })
+                        app.recommendation = result.decision
+                        _log_event(db, app.id, "webhook_auto_evaluated", {
+                            "score": result.score, "decision": result.decision,
+                        })
+                    except Exception as e:
+                        _log_event(db, app.id, "webhook_auto_evaluate_failed", {"error": str(e)})
 
-            app.updated_at = datetime.utcnow()
-            db.commit()
+                db.commit()
 
         return {"status": "received", "conversation_id": conversation_id}
 
-    # ─── AUDIO (optional) ───
     elif event_type == "post_call_audio":
         return {"status": "received", "type": "audio"}
-
-    # ─── CALL FAILED TO CONNECT ───
-    elif event_type == "call_initiation_failure":
-        conversation_id = data.get("conversation_id", "")
-        failure_reason = data.get("failure_reason", "unknown")
-        error_message = data.get("error_message", "")
-
-        # Map ElevenLabs failure reason to our status
-        screening_status = FAILURE_REASON_MAP.get(failure_reason, "failed")
-        human_reason = {
-            "no_answer": "Candidate did not answer the call",
-            "busy": "Candidate's line was busy",
-            "voicemail": "Call went to voicemail",
-            "invalid_number": "Phone number is invalid or disconnected",
-            "network_error": "Network error during call",
-            "timeout": "Call timed out — no response",
-            "rejected": "Call was rejected/declined",
-            "carrier_error": "Carrier/network error",
-        }.get(failure_reason, f"Call failed: {failure_reason}")
-
-        app = _find_app_by_conversation(db, conversation_id)
-
-        if app:
-            app.screening_status = screening_status
-            app.screening_failure_reason = human_reason
-            app.updated_at = datetime.utcnow()
-
-            attempts = app.screening_attempts or 0
-            max_attempts = app.screening_max_attempts or MAX_SCREENING_ATTEMPTS
-            remaining = max_attempts - attempts
-
-            if remaining > 0:
-                app.ai_next_action = f"Retry screening call ({remaining} attempts remaining)"
-            else:
-                app.ai_next_action = "Maximum call attempts reached — contact candidate via email"
-                # If we exhausted all attempts on no_answer, suggest email outreach
-                if screening_status in ("no_answer", "voicemail"):
-                    app.stage = "matched"  # Reset to matched so recruiter can decide
-                    app.screening_status = "exhausted"
-                    app.screening_failure_reason = (
-                        f"Candidate unreachable after {max_attempts} attempts. "
-                        f"Last reason: {human_reason}"
-                    )
-
-            _log_event(db, app.id, "screening_call_failed", {
-                "conversation_id": conversation_id,
-                "failure_reason": failure_reason,
-                "error_message": error_message,
-                "human_reason": human_reason,
-                "attempt": attempts,
-                "remaining_attempts": remaining,
-            })
-            db.commit()
-
-        return {
-            "status": "received",
-            "failure_reason": failure_reason,
-            "screening_status": screening_status,
-        }
 
     return {"status": "received"}

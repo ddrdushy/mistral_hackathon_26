@@ -131,6 +131,12 @@ export interface Application {
   screening_max_attempts: number;
   screening_failure_reason: string | null;
   screening_last_attempt_at: string | null;
+  interview_link_status: string | null;
+  interview_face_tracking_json: {
+    avg_attention_score: number;
+    face_present_percentage: number;
+    total_snapshots: number;
+  } | null;
   resume_score_json: ResumeScoreDetails | null;
   interview_score_json: InterviewScoreDetails | null;
   created_at: string;
@@ -187,10 +193,52 @@ export interface ActivityEvent {
   created_at: string;
 }
 
+// ═══════════════════════════════════════
+// INTERVIEW LINKS
+// ═══════════════════════════════════════
+
+export type InterviewLinkStatus =
+  | "generated"
+  | "sent"
+  | "opened"
+  | "interview_started"
+  | "interview_completed"
+  | "expired";
+
+export interface InterviewLink {
+  id: number;
+  token: string;
+  app_id: number;
+  status: InterviewLinkStatus;
+  interview_url: string;
+  expires_at: string;
+  opened_at: string | null;
+  interview_started_at: string | null;
+  interview_completed_at: string | null;
+  face_tracking_json: {
+    avg_attention_score: number;
+    face_present_percentage: number;
+    total_snapshots: number;
+  } | null;
+  created_at: string;
+}
+
+export interface InterviewLinkPublicData {
+  token: string;
+  status: string;
+  candidate_first_name: string;
+  job_title: string;
+  company_name: string;
+  elevenlabs_agent_id: string;
+  is_valid: boolean;
+  error: string | null;
+}
+
 export type PipelineStage =
   | "new"
   | "classified"
   | "matched"
+  | "interview_link_sent"
   | "screening_scheduled"
   | "screened"
   | "shortlisted"

@@ -8,7 +8,7 @@ from datetime import datetime
 
 PipelineStage = Literal[
     "new", "classified", "matched",
-    "screening_scheduled", "screened",
+    "interview_link_sent", "screening_scheduled", "screened",
     "shortlisted", "rejected"
 ]
 
@@ -285,3 +285,54 @@ class ElevenLabsWebhookPayload(BaseModel):
     type: str  # post_call_transcription / post_call_audio / call_initiation_failure
     event_timestamp: int
     data: dict
+
+
+# ═══════════════════════════════════════
+# INTERVIEW LINKS
+# ═══════════════════════════════════════
+
+class InterviewLinkGenerateRequest(BaseModel):
+    app_id: int
+    expires_hours: int = 72
+
+
+class InterviewLinkResponse(BaseModel):
+    id: int
+    token: str
+    app_id: int
+    status: str
+    interview_url: str
+    expires_at: datetime
+    opened_at: Optional[datetime] = None
+    interview_started_at: Optional[datetime] = None
+    interview_completed_at: Optional[datetime] = None
+    created_at: datetime
+
+
+class InterviewLinkPublicResponse(BaseModel):
+    token: str
+    status: str
+    candidate_first_name: str
+    job_title: str
+    company_name: str
+    elevenlabs_agent_id: str
+    is_valid: bool
+    error: Optional[str] = None
+
+
+class InterviewStatusUpdateRequest(BaseModel):
+    status: str  # interview_started / interview_completed
+    elevenlabs_conversation_id: Optional[str] = None
+
+
+class FaceTrackingDataRequest(BaseModel):
+    face_present: bool
+    attention_score: float
+    timestamp: float
+    face_count: int = 1
+
+
+class InterviewTranscriptSubmitRequest(BaseModel):
+    transcript: str
+    duration_seconds: int
+    elevenlabs_conversation_id: Optional[str] = None

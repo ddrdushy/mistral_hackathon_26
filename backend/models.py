@@ -91,9 +91,14 @@ class Application(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    # Interview link tracking
+    interview_link_status = Column(String, nullable=True)  # generated/sent/opened/interview_started/interview_completed/expired
+    interview_face_tracking_json = Column(Text, nullable=True)  # JSON aggregate
+
     candidate = relationship("Candidate", back_populates="applications")
     job = relationship("Job", back_populates="applications")
     events = relationship("Event", back_populates="application")
+    interview_links = relationship("InterviewLink", back_populates="application")
 
     __table_args__ = (
         UniqueConstraint("candidate_id", "job_id", name="uq_candidate_job"),
@@ -116,4 +121,27 @@ class Event(Base):
 
     __table_args__ = (
         Index("idx_events_app", "app_id"),
+    )
+
+
+class InterviewLink(Base):
+    __tablename__ = "interview_links"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    token = Column(String, unique=True, nullable=False, index=True)
+    app_id = Column(Integer, ForeignKey("applications.id"), nullable=False)
+    status = Column(String, default="generated")  # generated/sent/opened/interview_started/interview_completed/expired
+    elevenlabs_conversation_id = Column(String, nullable=True)
+    face_tracking_json = Column(Text, nullable=True)  # JSON: {avg_attention, face_present_pct, snapshots}
+    expires_at = Column(DateTime, nullable=False)
+    opened_at = Column(DateTime, nullable=True)
+    interview_started_at = Column(DateTime, nullable=True)
+    interview_completed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    application = relationship("Application", back_populates="interview_links")
+
+    __table_args__ = (
+        Index("idx_interview_links_app", "app_id"),
+        Index("idx_interview_links_status", "status"),
     )

@@ -47,6 +47,8 @@ def _app_to_response(app: Application, db: Session) -> dict:
         ),
         "resume_score_json": json.loads(app.resume_score_json) if app.resume_score_json else None,
         "interview_score_json": json.loads(app.interview_score_json) if app.interview_score_json else None,
+        "interview_link_status": app.interview_link_status,
+        "interview_face_tracking_json": json.loads(app.interview_face_tracking_json) if app.interview_face_tracking_json else None,
         "created_at": app.created_at.isoformat() if app.created_at else None,
         "updated_at": app.updated_at.isoformat() if app.updated_at else None,
     }
