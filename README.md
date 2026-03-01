@@ -8,6 +8,18 @@ pinned: false
 app_port: 7860
 ---
 
+<p align="center">
+  <img src="assets/cover.jpg" alt="HireOps AI — The Autonomous AI Recruiting Platform" width="100%">
+</p>
+
+<p align="center">
+  <b>From inbox to hiring decision — zero human intervention.</b><br>
+  <a href="HireOps_AI_-_The_Autonomous_AI_Recruiting_Platform.pptx">View Presentation (PPTX)</a> &nbsp;|&nbsp;
+  <a href="https://dushy2009-hireops-ai.hf.space">Live Demo</a>
+</p>
+
+---
+
 # HireOps AI
 
 Production-grade agentic HR automation platform powered by Mistral AI and ElevenLabs.
