@@ -44,7 +44,6 @@ export default function InboxPage() {
   const [gmailStatus, setGmailStatus] = useState<GmailStatus | null>(null);
   const [showGmailConnect, setShowGmailConnect] = useState(false);
   const [gmailEmail, setGmailEmail] = useState("");
-  const [gmailPassword, setGmailPassword] = useState("");
   const [gmailConnecting, setGmailConnecting] = useState(false);
   const [gmailSyncing, setGmailSyncing] = useState(false);
   const statusPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -117,8 +116,8 @@ export default function InboxPage() {
   // ─── Gmail Handlers ───
 
   const handleGmailConnect = async () => {
-    if (!gmailEmail.trim() || !gmailPassword.trim()) {
-      showToast("Enter your Gmail address and App Password", "error");
+    if (!gmailEmail.trim()) {
+      showToast("Enter your Gmail address", "error");
       return;
     }
 
@@ -126,11 +125,9 @@ export default function InboxPage() {
     try {
       await apiPost("/inbox/gmail/connect", {
         email: gmailEmail.trim(),
-        app_password: gmailPassword.trim(),
       });
       showToast("Gmail connected successfully!");
       setShowGmailConnect(false);
-      setGmailPassword("");
       await fetchGmailStatus();
     } catch (err) {
       const message = err instanceof Error ? err.message : "Connection failed";
@@ -405,34 +402,21 @@ export default function InboxPage() {
           {/* Gmail Connect Form */}
           {showGmailConnect && !gmailStatus?.connected && (
             <div className="border-t border-slate-200 pt-4 mt-2">
-              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-4">
-                <p className="text-sm text-amber-800">
-                  <strong>Setup:</strong> You need a Google App Password. Go to{" "}
-                  <span className="font-mono text-xs">myaccount.google.com/apppasswords</span>
-                  {" "}(requires 2-Step Verification enabled) and create one for &quot;Mail&quot;.
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
+                <p className="text-sm text-blue-800">
+                  <strong>Gmail API:</strong> OAuth2 credentials are configured via environment variables.
+                  Enter your Gmail address to connect.
                 </p>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Gmail Address</label>
-                  <input
-                    type="email"
-                    value={gmailEmail}
-                    onChange={(e) => setGmailEmail(e.target.value)}
-                    placeholder="you@gmail.com"
-                    className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">App Password</label>
-                  <input
-                    type="password"
-                    value={gmailPassword}
-                    onChange={(e) => setGmailPassword(e.target.value)}
-                    placeholder="xxxx xxxx xxxx xxxx"
-                    className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent"
-                  />
-                </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Gmail Address</label>
+                <input
+                  type="email"
+                  value={gmailEmail}
+                  onChange={(e) => setGmailEmail(e.target.value)}
+                  placeholder="you@gmail.com"
+                  className="w-full max-w-md px-3 py-2 rounded-lg border border-slate-300 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                />
               </div>
               <div className="flex items-center gap-3 mt-3">
                 <button

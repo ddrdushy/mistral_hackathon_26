@@ -26,7 +26,7 @@ _inbox_config: dict = {}
 
 class GmailConnectRequest(BaseModel):
     email: str
-    app_password: str
+    app_password: str = ""  # No longer required (OAuth2 via env vars)
 
 
 class GmailPollRequest(BaseModel):
