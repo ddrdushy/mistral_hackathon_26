@@ -12,6 +12,7 @@ import {
   PlayCircleIcon,
   MagnifyingGlassIcon,
   DocumentTextIcon,
+  ChartBarIcon,
 } from "@heroicons/react/24/outline";
 
 import { apiGet, apiPost } from "@/lib/api";
@@ -125,13 +126,22 @@ export default function AdminPage() {
             All tenants on the platform. Suspend, impersonate, and inspect usage.
           </p>
         </div>
-        <Link
-          href="/admin/audit-log"
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200"
-        >
-          <DocumentTextIcon className="w-3.5 h-3.5" />
-          Audit log
-        </Link>
+        <div className="flex items-center gap-2">
+          <Link
+            href="/admin/analytics"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100"
+          >
+            <ChartBarIcon className="w-3.5 h-3.5" />
+            Analytics
+          </Link>
+          <Link
+            href="/admin/audit-log"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200"
+          >
+            <DocumentTextIcon className="w-3.5 h-3.5" />
+            Audit log
+          </Link>
+        </div>
       </div>
 
       {/* Search + filter */}

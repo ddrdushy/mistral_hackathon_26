@@ -460,6 +460,225 @@ def impersonate_tenant(
     }
 
 
+# ── Platform analytics (Milestone 2) ─────────────────────────────────────
+
+
+class GrowthDayPoint(BaseModel):
+    date: str
+    signups: int
+
+
+class TopSpender(BaseModel):
+    tenant_id: int
+    tenant_name: str
+    plan: str
+    total_usd: float
+    calls: int
+
+
+class AgentBreakdown(BaseModel):
+    agent_name: str
+    total_usd: float
+    calls: int
+
+
+class PastDueTenant(BaseModel):
+    tenant_id: int
+    name: str
+    plan: str
+    owner_email: Optional[str]
+    current_period_end: Optional[datetime]
+
+
+class AnalyticsResponse(BaseModel):
+    # Growth
+    signups_per_day_30d: list[GrowthDayPoint]
+    tenants_total: int
+    tenants_active_28d: int
+    tenants_paid: int
+    free_to_paid_conversion_pct: float
+    # Revenue
+    mrr_usd: float
+    plan_breakdown: dict[str, int]
+    past_due: list[PastDueTenant]
+    # Costs
+    daily_llm_spend_30d: list[LlmSpendDay]
+    llm_spend_total_30d_usd: float
+    top_spenders_30d: list[TopSpender]
+    per_agent_breakdown_30d: list[AgentBreakdown]
+
+
+@router.get("/analytics", response_model=AnalyticsResponse)
+def analytics(
+    db: Session = Depends(get_db),
+    _: CurrentSession = Depends(require_superadmin),
+):
+    """Platform-wide analytics for the super-admin team."""
+    from billing.plans import PLANS
+
+    now = datetime.utcnow()
+    cutoff_30 = (now - timedelta(days=30)).replace(hour=0, minute=0, second=0, microsecond=0)
+    cutoff_28 = now - timedelta(days=28)
+
+    not_deleted = Tenant.deleted_at.is_(None)
+
+    # ── Growth ──
+    signup_rows = (
+        db.query(func.date(User.created_at).label("d"), func.count(User.id).label("n"))
+        .filter(User.created_at >= cutoff_30)
+        .group_by(func.date(User.created_at))
+        .all()
+    )
+    by_day = {str(r.d): int(r.n or 0) for r in signup_rows}
+    signups_series: list[GrowthDayPoint] = []
+    for i in range(30):
+        day = (now - timedelta(days=29 - i)).date()
+        signups_series.append(GrowthDayPoint(date=str(day), signups=by_day.get(str(day), 0)))
+
+    tenants_total = db.query(Tenant).filter(not_deleted).count()
+    tenants_paid = db.query(Tenant).filter(
+        not_deleted,
+        Tenant.plan.in_(["starter", "pro"]),
+        or_(
+            Tenant.subscription_status.is_(None),
+            Tenant.subscription_status.in_(("active", "trialing", "past_due")),
+        ),
+    ).count()
+
+    active_via_login = (
+        db.query(User.tenant_id)
+        .filter(User.last_login_at != None, User.last_login_at >= cutoff_28)  # noqa: E711
+        .distinct().subquery()
+    )
+    active_via_app = (
+        db.query(Application.tenant_id)
+        .filter(Application.updated_at >= cutoff_28)
+        .distinct().subquery()
+    )
+    tenants_active_28d = db.query(Tenant).filter(
+        not_deleted,
+        or_(Tenant.id.in_(db.query(active_via_login.c.tenant_id)),
+            Tenant.id.in_(db.query(active_via_app.c.tenant_id))),
+    ).count()
+
+    conversion_pct = round((tenants_paid / tenants_total * 100) if tenants_total else 0.0, 1)
+
+    # ── Revenue ──
+    mrr = 0.0
+    plan_counts: dict[str, int] = {"free": 0, "starter": 0, "pro": 0}
+    for t in db.query(Tenant).filter(not_deleted).all():
+        plan_counts[t.plan] = plan_counts.get(t.plan, 0) + 1
+        plan_obj = PLANS.get(t.plan)
+        if plan_obj and t.plan != "free":
+            sub_status = (t.subscription_status or "").lower()
+            if sub_status in ("active", "trialing", "past_due", ""):
+                mrr += plan_obj.price_monthly_usd
+
+    past_due_rows = (
+        db.query(Tenant)
+        .filter(not_deleted, Tenant.subscription_status == "past_due")
+        .order_by(Tenant.current_period_end.desc().nulls_last())
+        .limit(20)
+        .all()
+    )
+    past_due: list[PastDueTenant] = []
+    for t in past_due_rows:
+        owner = (
+            db.query(User)
+            .filter(User.tenant_id == t.id, User.role == "owner")
+            .order_by(User.id)
+            .first()
+        )
+        past_due.append(PastDueTenant(
+            tenant_id=t.id, name=t.name, plan=t.plan,
+            owner_email=owner.email if owner else None,
+            current_period_end=t.current_period_end,
+        ))
+
+    # ── Costs ──
+    spend_rows = (
+        db.query(
+            func.date(LlmUsage.created_at).label("d"),
+            func.sum(LlmUsage.cost_usd).label("total"),
+            func.count(LlmUsage.id).label("calls"),
+        )
+        .filter(LlmUsage.created_at >= cutoff_30)
+        .group_by(func.date(LlmUsage.created_at))
+        .all()
+    )
+    spend_by_day = {str(r.d): (float(r.total or 0.0), int(r.calls or 0)) for r in spend_rows}
+    daily_spend: list[LlmSpendDay] = []
+    spend_total = 0.0
+    for i in range(30):
+        day = (now - timedelta(days=29 - i)).date()
+        usd, calls = spend_by_day.get(str(day), (0.0, 0))
+        daily_spend.append(LlmSpendDay(date=str(day), total_usd=round(usd, 4), calls=calls))
+        spend_total += usd
+
+    top_rows = (
+        db.query(
+            LlmUsage.tenant_id,
+            func.sum(LlmUsage.cost_usd).label("total"),
+            func.count(LlmUsage.id).label("calls"),
+        )
+        .filter(LlmUsage.created_at >= cutoff_30, LlmUsage.tenant_id.is_not(None))
+        .group_by(LlmUsage.tenant_id)
+        .order_by(func.sum(LlmUsage.cost_usd).desc())
+        .limit(10)
+        .all()
+    )
+    tenant_ids = [r.tenant_id for r in top_rows]
+    tenant_map = {
+        t.id: t
+        for t in db.query(Tenant).filter(Tenant.id.in_(tenant_ids)).all()
+    } if tenant_ids else {}
+    top_spenders = [
+        TopSpender(
+            tenant_id=r.tenant_id,
+            tenant_name=tenant_map[r.tenant_id].name if r.tenant_id in tenant_map else f"#{r.tenant_id}",
+            plan=tenant_map[r.tenant_id].plan if r.tenant_id in tenant_map else "?",
+            total_usd=round(float(r.total or 0.0), 4),
+            calls=int(r.calls or 0),
+        )
+        for r in top_rows
+    ]
+
+    agent_rows = (
+        db.query(
+            LlmUsage.agent_name,
+            func.sum(LlmUsage.cost_usd).label("total"),
+            func.count(LlmUsage.id).label("calls"),
+        )
+        .filter(LlmUsage.created_at >= cutoff_30)
+        .group_by(LlmUsage.agent_name)
+        .order_by(func.sum(LlmUsage.cost_usd).desc())
+        .all()
+    )
+    agent_breakdown = [
+        AgentBreakdown(
+            agent_name=r.agent_name,
+            total_usd=round(float(r.total or 0.0), 4),
+            calls=int(r.calls or 0),
+        )
+        for r in agent_rows
+    ]
+
+    return AnalyticsResponse(
+        signups_per_day_30d=signups_series,
+        tenants_total=tenants_total,
+        tenants_active_28d=tenants_active_28d,
+        tenants_paid=tenants_paid,
+        free_to_paid_conversion_pct=conversion_pct,
+        mrr_usd=round(mrr, 2),
+        plan_breakdown=plan_counts,
+        past_due=past_due,
+        daily_llm_spend_30d=daily_spend,
+        llm_spend_total_30d_usd=round(spend_total, 4),
+        top_spenders_30d=top_spenders,
+        per_agent_breakdown_30d=agent_breakdown,
+    )
+
+
 # ── Audit log ─────────────────────────────────────────────────────────────
 
 

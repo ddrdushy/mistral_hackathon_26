@@ -68,6 +68,37 @@ export interface AdminTenantDetail extends AdminTenantSummary {
   llm_spend_total_30d_usd: number;
 }
 
+export interface AdminAnalytics {
+  signups_per_day_30d: { date: string; signups: number }[];
+  tenants_total: number;
+  tenants_active_28d: number;
+  tenants_paid: number;
+  free_to_paid_conversion_pct: number;
+  mrr_usd: number;
+  plan_breakdown: Record<string, number>;
+  past_due: {
+    tenant_id: number;
+    name: string;
+    plan: string;
+    owner_email: string | null;
+    current_period_end: string | null;
+  }[];
+  daily_llm_spend_30d: LlmSpendDay[];
+  llm_spend_total_30d_usd: number;
+  top_spenders_30d: {
+    tenant_id: number;
+    tenant_name: string;
+    plan: string;
+    total_usd: number;
+    calls: number;
+  }[];
+  per_agent_breakdown_30d: {
+    agent_name: string;
+    total_usd: number;
+    calls: number;
+  }[];
+}
+
 export interface AuditLogEntry {
   id: number;
   actor_email: string;
