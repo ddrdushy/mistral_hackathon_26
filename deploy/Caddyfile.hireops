@@ -1,0 +1,58 @@
+# Caddyfile fragment for hireops.symprio.com
+#
+# Caddy auto-handles HTTPS via Let's Encrypt. Just append this to your existing
+# Caddyfile (typically /etc/caddy/Caddyfile), then:
+#   caddy validate
+#   systemctl reload caddy
+#
+# Backend ports match docker-compose.prod.yml: 127.0.0.1:8017 + 127.0.0.1:3017
+
+hireops.symprio.com {
+    encode gzip zstd
+
+    # Security headers
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Frame-Options             "SAMEORIGIN"
+        X-Content-Type-Options      "nosniff"
+        Referrer-Policy             "strict-origin-when-cross-origin"
+    }
+
+    # Backend API
+    @api path /api/* /health
+    handle @api {
+        reverse_proxy 127.0.0.1:8017 {
+            header_up Host                {host}
+            header_up X-Real-IP           {remote_host}
+            header_up X-Forwarded-For     {remote_host}
+            header_up X-Forwarded-Proto   {scheme}
+            transport http {
+                read_timeout 120s
+            }
+        }
+    }
+
+    # Long-cache Next.js static assets
+    @nextStatic path /_next/static/*
+    handle @nextStatic {
+        header Cache-Control "public, max-age=31536000, immutable"
+        reverse_proxy 127.0.0.1:3017
+    }
+
+    # Everything else → Next.js
+    handle {
+        reverse_proxy 127.0.0.1:3017 {
+            header_up Host              {host}
+            header_up X-Real-IP         {remote_host}
+            header_up X-Forwarded-For   {remote_host}
+            header_up X-Forwarded-Proto {scheme}
+        }
+    }
+
+    log {
+        output file /var/log/caddy/hireops.access.log {
+            roll_size  10MiB
+            roll_keep  5
+        }
+    }
+}

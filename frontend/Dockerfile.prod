@@ -1,0 +1,48 @@
+# Production Next.js build for HireOps AI.
+# Multi-stage: deps → builder → runner. Final image is small + uses next start.
+#
+# NEXT_PUBLIC_* values are baked at build time, so docker-compose.prod.yml
+# passes them as build args.
+
+FROM node:22-alpine AS deps
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --legacy-peer-deps
+
+
+FROM node:22-alpine AS builder
+WORKDIR /app
+
+# Public env vars are inlined into the JS bundle by `next build`.
+# They must be passed as ARG (not just ENV) for Docker to pick them up.
+ARG NEXT_PUBLIC_API_URL=https://hireops.symprio.com/api/v1
+ARG NEXT_PUBLIC_SITE_URL=https://hireops.symprio.com
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_SITE_URL=$NEXT_PUBLIC_SITE_URL
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+RUN npm run build
+
+
+FROM node:22-alpine AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV PORT=3000
+ENV HOSTNAME=0.0.0.0
+
+# Run as non-root for slightly better blast radius on container escape
+RUN addgroup -S nodejs && adduser -S nextjs -G nodejs
+
+COPY --from=builder /app/public ./public
+COPY --from=builder /app/.next ./.next
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/package.json ./package.json
+
+USER nextjs
+EXPOSE 3000
+
+CMD ["npx", "next", "start", "-H", "0.0.0.0", "-p", "3000"]

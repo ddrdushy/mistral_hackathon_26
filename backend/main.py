@@ -37,13 +37,20 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+# CORS: build the allow-list from env (FRONTEND_URL) plus dev defaults.
+# Cookies require allow_credentials=True, which means we cannot use "*".
+_origins = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "https://dushy2009-hireops-ai.hf.space",
+]
+_extra = os.getenv("FRONTEND_URL", "").rstrip("/")
+if _extra and _extra not in _origins:
+    _origins.append(_extra)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "https://dushy2009-hireops-ai.hf.space",
-    ],
+    allow_origins=_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

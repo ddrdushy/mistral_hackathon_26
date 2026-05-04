@@ -1,0 +1,112 @@
+# Production docker-compose for HireOps AI on the VPS that also hosts symprio.com.
+#
+# Design notes:
+#  • All service ports bind to 127.0.0.1 only (loopback) — no ports exposed
+#    on the public internet. Your existing reverse proxy (Nginx/Caddy) is
+#    the only thing that talks to the outside world.
+#  • Non-standard ports chosen to avoid conflicts with anything else on the box:
+#    - frontend  → 127.0.0.1:3017
+#    - backend   → 127.0.0.1:8017
+#    - postgres  → 127.0.0.1:5433
+#  • Backups stored in named volume + bind-mounted to /var/backups/hireops on host.
+#  • Restart policy: always (survive reboots).
+#
+# Usage:
+#   docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: hireops-prod-db
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-hireops}
+      POSTGRES_USER: ${POSTGRES_USER:-hireops}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    ports:
+      - "127.0.0.1:5433:5432"  # localhost-only; reverse proxy doesn't need DB
+    volumes:
+      - hireops_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-hireops}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: always
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: hireops-prod-backend
+    ports:
+      - "127.0.0.1:8017:8000"  # localhost-only, served via reverse proxy
+    env_file:
+      - .env.production
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-hireops}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-hireops}
+      ENV: production
+      COOKIE_SECURE: "true"   # require HTTPS for the session cookie
+      FRONTEND_URL: https://hireops.symprio.com
+      NEXT_PUBLIC_SITE_URL: https://hireops.symprio.com
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: always
+    # Tail logs go to docker; rotate to keep disk usage bounded.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod  # multi-stage build, runs `next start`
+      # NEXT_PUBLIC_* env vars are baked at build time. We point at the public
+      # hostname so the browser hits the same origin (cookies/CORS just work).
+      args:
+        NEXT_PUBLIC_API_URL: https://hireops.symprio.com/api/v1
+        NEXT_PUBLIC_SITE_URL: https://hireops.symprio.com
+    container_name: hireops-prod-frontend
+    ports:
+      - "127.0.0.1:3017:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: https://hireops.symprio.com/api/v1
+      NEXT_PUBLIC_SITE_URL: https://hireops.symprio.com
+    depends_on:
+      - backend
+    restart: always
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  backup:
+    image: postgres:16-alpine
+    container_name: hireops-prod-backup
+    environment:
+      PGHOST: db
+      PGUSER: ${POSTGRES_USER:-hireops}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: ${POSTGRES_DB:-hireops}
+      BACKUP_DIR: /backups
+    volumes:
+      - ./deploy/backup.sh:/usr/local/bin/backup.sh:ro
+      - /var/backups/hireops:/backups  # bind-mount: backups visible on host
+    depends_on:
+      db:
+        condition: service_healthy
+    entrypoint: >
+      sh -c "while true; do /usr/local/bin/backup.sh || true; sleep 86400; done"
+    restart: always
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+volumes:
+  hireops_pgdata:
+    name: hireops_pgdata
