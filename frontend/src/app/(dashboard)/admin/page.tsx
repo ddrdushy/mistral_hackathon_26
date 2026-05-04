@@ -10,6 +10,8 @@ import {
   ArrowsRightLeftIcon,
   PauseCircleIcon,
   PlayCircleIcon,
+  MagnifyingGlassIcon,
+  DocumentTextIcon,
 } from "@heroicons/react/24/outline";
 
 import { apiGet, apiPost } from "@/lib/api";
@@ -19,6 +21,9 @@ import { timeAgo } from "@/lib/constants";
 import LoadingSpinner from "@/components/ui/LoadingSpinner";
 import EmptyState from "@/components/ui/EmptyState";
 
+type StatusFilter = "all" | "active" | "suspended" | "deleted";
+type PlanFilter = "all" | "free" | "starter" | "pro";
+
 export default function AdminPage() {
   const { me } = useAuth();
   const [tenants, setTenants] = useState<AdminTenantSummary[]>([]);
@@ -26,20 +31,29 @@ export default function AdminPage() {
   const [error, setError] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<number | null>(null);
 
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [planFilter, setPlanFilter] = useState<PlanFilter>("all");
+
   const load = useCallback(async () => {
     try {
       setLoading(true);
-      const data = await apiGet<{ tenants: AdminTenantSummary[] }>("/admin/tenants");
+      const params: Record<string, string> = {};
+      if (search.trim()) params.search = search.trim();
+      if (statusFilter !== "all") params.status = statusFilter;
+      if (planFilter !== "all") params.plan = planFilter;
+      const data = await apiGet<{ tenants: AdminTenantSummary[] }>("/admin/tenants", params);
       setTenants(data.tenants);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load tenants");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [search, statusFilter, planFilter]);
 
   useEffect(() => {
-    load();
+    const t = setTimeout(load, 250);  // debounce search
+    return () => clearTimeout(t);
   }, [load]);
 
   if (!me?.user.is_superadmin) {
@@ -101,14 +115,59 @@ export default function AdminPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <div className="flex items-center gap-2 mb-1">
-          <ShieldCheckIcon className="h-5 w-5 text-indigo-600" />
-          <h1 className="text-2xl font-semibold text-slate-900">Admin</h1>
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <div className="flex items-center gap-2 mb-1">
+            <ShieldCheckIcon className="h-5 w-5 text-indigo-600" />
+            <h1 className="text-2xl font-semibold text-slate-900">Admin</h1>
+          </div>
+          <p className="text-sm text-slate-500">
+            All tenants on the platform. Suspend, impersonate, and inspect usage.
+          </p>
         </div>
-        <p className="text-sm text-slate-500">
-          All tenants on the platform. Suspend, impersonate, and inspect usage.
-        </p>
+        <Link
+          href="/admin/audit-log"
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200"
+        >
+          <DocumentTextIcon className="w-3.5 h-3.5" />
+          Audit log
+        </Link>
+      </div>
+
+      {/* Search + filter */}
+      <div className="bg-white rounded-xl border border-slate-200 p-3 flex flex-wrap items-center gap-3">
+        <div className="relative flex-1 min-w-[240px]">
+          <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+          <input
+            type="text"
+            placeholder="Search by name, slug, or owner email..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="w-full pl-9 pr-3 py-1.5 rounded-md border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+          />
+        </div>
+        <FilterChipGroup
+          label="Status"
+          value={statusFilter}
+          onChange={(v) => setStatusFilter(v as StatusFilter)}
+          options={[
+            { value: "all", label: "All" },
+            { value: "active", label: "Active" },
+            { value: "suspended", label: "Suspended" },
+            { value: "deleted", label: "Deleted" },
+          ]}
+        />
+        <FilterChipGroup
+          label="Plan"
+          value={planFilter}
+          onChange={(v) => setPlanFilter(v as PlanFilter)}
+          options={[
+            { value: "all", label: "All" },
+            { value: "free", label: "Free" },
+            { value: "starter", label: "Starter" },
+            { value: "pro", label: "Pro" },
+          ]}
+        />
       </div>
 
       {/* Global stats */}
@@ -141,7 +200,11 @@ export default function AdminPage() {
                 <tr
                   key={t.id}
                   className={`border-b border-slate-100 last:border-0 ${
-                    t.suspended ? "bg-red-50/50" : "hover:bg-slate-50"
+                    t.deleted_at
+                      ? "bg-slate-100/60 opacity-60"
+                      : t.suspended
+                        ? "bg-red-50/50"
+                        : "hover:bg-slate-50"
                   }`}
                 >
                   <td className="px-4 py-3">
@@ -168,6 +231,11 @@ export default function AdminPage() {
                     >
                       {t.plan}
                     </span>
+                    {t.deleted_at && (
+                      <span className="ml-1.5 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-200 text-slate-700">
+                        deleted
+                      </span>
+                    )}
                     {t.suspended && (
                       <span className="ml-1.5 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-red-100 text-red-700">
                         suspended
@@ -230,6 +298,42 @@ export default function AdminPage() {
             </tbody>
           </table>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function FilterChipGroup<T extends string>({
+  label,
+  value,
+  onChange,
+  options,
+}: {
+  label: string;
+  value: T;
+  onChange: (v: T) => void;
+  options: { value: T; label: string }[];
+}) {
+  return (
+    <div className="flex items-center gap-1.5">
+      <span className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">
+        {label}:
+      </span>
+      <div className="flex gap-1">
+        {options.map((o) => (
+          <button
+            key={o.value}
+            type="button"
+            onClick={() => onChange(o.value)}
+            className={`px-2.5 py-0.5 rounded-full text-xs font-medium transition-colors ${
+              value === o.value
+                ? "bg-indigo-600 text-white"
+                : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+            }`}
+          >
+            {o.label}
+          </button>
+        ))}
       </div>
     </div>
   );

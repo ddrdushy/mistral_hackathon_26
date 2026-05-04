@@ -34,6 +34,10 @@ class Tenant(Base):
     max_interviews_per_month = Column(Integer, nullable=True)
 
     suspended = Column(Boolean, default=False, nullable=False)
+    # Soft-delete window: set when superadmin "deletes" the tenant. Hard-delete
+    # is reserved for a periodic job (TODO) that runs ~30 days later. Until then
+    # the tenant can be restored.
+    deleted_at = Column(DateTime, nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -111,6 +115,31 @@ class LlmUsage(Base):
 
     __table_args__ = (
         Index("idx_llm_usage_tenant_day", "tenant_id", "created_at"),
+    )
+
+
+class AuditLog(Base):
+    """Append-only record of every privileged super-admin action.
+
+    Stored separately from Event (which is per-tenant). Audit log is global
+    and read-only after creation.
+    """
+    __tablename__ = "audit_log"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    super_admin_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    action_type = Column(String, nullable=False, index=True)
+    # e.g. "tenant.suspend", "tenant.impersonate", "tenant.plan_change",
+    #      "tenant.quota_change", "tenant.delete", "tenant.restore",
+    #      "user.password_reset", "user.disable", "superadmin.grant"
+    target_tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=True, index=True)
+    target_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    payload = Column(Text, default="{}")  # JSON: {before:..., after:..., reason:...}
+    ip_address = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+    __table_args__ = (
+        Index("idx_audit_action_time", "action_type", "created_at"),
     )
 
 

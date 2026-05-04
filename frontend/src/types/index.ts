@@ -29,6 +29,7 @@ export interface AdminTenantSummary {
   name: string;
   plan: "free" | "starter" | "pro";
   suspended: boolean;
+  deleted_at: string | null;
   owner_email: string | null;
   member_count: number;
   job_count: number;
@@ -37,6 +38,47 @@ export interface AdminTenantSummary {
   interview_count: number;
   created_at: string;
   last_activity_at: string | null;
+}
+
+export interface AdminTenantMember {
+  id: number;
+  email: string;
+  name: string;
+  role: "owner" | "member";
+  email_verified: boolean;
+  last_login_at: string | null;
+}
+
+export interface LlmSpendDay {
+  date: string;
+  total_usd: number;
+  calls: number;
+}
+
+export interface AdminTenantDetail extends AdminTenantSummary {
+  max_jobs_override: number | null;
+  max_candidates_override: number | null;
+  max_interviews_per_month_override: number | null;
+  stripe_customer_id: string | null;
+  stripe_subscription_id: string | null;
+  subscription_status: string | null;
+  current_period_end: string | null;
+  members: AdminTenantMember[];
+  llm_spend_30d: LlmSpendDay[];
+  llm_spend_total_30d_usd: number;
+}
+
+export interface AuditLogEntry {
+  id: number;
+  actor_email: string;
+  action_type: string;
+  target_tenant_id: number | null;
+  target_tenant_name: string | null;
+  target_user_id: number | null;
+  target_user_email: string | null;
+  payload: Record<string, unknown>;
+  ip_address: string | null;
+  created_at: string;
 }
 
 export interface TeamMember {

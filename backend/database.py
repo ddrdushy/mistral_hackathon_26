@@ -35,6 +35,7 @@ def init_db():
     from models import (  # noqa: F401
         Job, Email, Candidate, Application, Event, InterviewLink, Setting, QaSession,
         Tenant, User, EmailVerification, PasswordReset, TenantInvite, LlmUsage,
+        AuditLog,
     )
     Base.metadata.create_all(bind=engine)
     _run_migrations()
@@ -136,6 +137,16 @@ def _run_migrations():
                 conn.execute(text(f"ALTER TABLE {tbl} ADD COLUMN tenant_id INTEGER"))
             except Exception:
                 pass
+
+    # Phase 6 super-admin: soft-delete column on tenants
+    if "tenants" in insp.get_table_names():
+        existing = {c["name"] for c in insp.get_columns("tenants")}
+        if "deleted_at" not in existing:
+            with engine.begin() as conn:
+                try:
+                    conn.execute(text("ALTER TABLE tenants ADD COLUMN deleted_at TIMESTAMP"))
+                except Exception:
+                    pass
 
 
 def _apply_superadmin_emails():

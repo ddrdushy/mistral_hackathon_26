@@ -41,6 +41,8 @@ def _resolve_session(token: str | None, db: Session) -> CurrentSession | None:
         return None
     if tenant.suspended:
         return None
+    if tenant.deleted_at is not None:
+        return None
     return CurrentSession(user=user, tenant=tenant)
 
 
