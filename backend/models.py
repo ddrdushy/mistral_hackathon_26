@@ -26,6 +26,9 @@ class Job(Base):
     interview_threshold_min = Column(Float, default=75.0)   # Min interview score to advance (75-95%)
     final_threshold_reject = Column(Float, default=50.0)    # Below this → auto-reject
 
+    # First-round interview mode: "voice" (ElevenLabs) or "qa" (LLM-generated written Q&A)
+    interview_mode = Column(String, default="voice")
+
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -173,4 +176,32 @@ class InterviewLink(Base):
     __table_args__ = (
         Index("idx_interview_links_app", "app_id"),
         Index("idx_interview_links_status", "status"),
+    )
+
+
+class QaSession(Base):
+    """LLM-generated written Q&A interview, scoped to one application.
+
+    Holds the 3-round question set (aptitude → reasoning → technical), the
+    candidate's answers per round, per-round scores, and the final aggregate.
+    """
+    __tablename__ = "qa_sessions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    app_id = Column(Integer, ForeignKey("applications.id"), nullable=False, unique=True)
+    token = Column(String, ForeignKey("interview_links.token"), nullable=False, index=True)
+
+    questions_json = Column(Text, nullable=False)  # {aptitude:[..], reasoning:[..], technical:[..]}
+    answers_json = Column(Text, default="{}")      # {aptitude:[..], reasoning:[..], technical:[..]}
+    scores_json = Column(Text, default="{}")       # {aptitude:{score,feedback}, reasoning:{...}, technical:{...}}
+
+    current_round = Column(String, default="aptitude")  # aptitude/reasoning/technical/completed
+    final_score = Column(Float, nullable=True)
+    final_summary = Column(Text, nullable=True)
+
+    started_at = Column(DateTime, default=datetime.utcnow)
+    completed_at = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        Index("idx_qa_sessions_app", "app_id"),
     )

@@ -1,6 +1,8 @@
 // ═══════════════════════════════════════
 // JOBS
 // ═══════════════════════════════════════
+export type InterviewMode = "voice" | "qa";
+
 export interface Job {
   id: number;
   job_id: string;
@@ -13,6 +15,7 @@ export interface Job {
   qualifications: string[];
   description: string;
   status: string;
+  interview_mode: InterviewMode;
   created_at: string;
   updated_at: string;
   candidate_count: number;
@@ -32,6 +35,7 @@ export interface JobCreate {
   responsibilities: string[];
   qualifications: string[];
   description: string;
+  interview_mode: InterviewMode;
 }
 
 // ═══════════════════════════════════════
@@ -273,6 +277,7 @@ export interface InterviewLinkPublicData {
   scheduled_at: string | null;
   available_in_minutes: number | null;
   interview_round: number;
+  interview_mode: InterviewMode;
 }
 
 export type PipelineStage =
@@ -284,3 +289,31 @@ export type PipelineStage =
   | "screened"
   | "shortlisted"
   | "rejected";
+
+// ═══════════════════════════════════════
+// Q&A INTERVIEW
+// ═══════════════════════════════════════
+
+export type QaRound = "aptitude" | "reasoning" | "technical";
+
+export interface QaSessionStartResponse {
+  token: string;
+  candidate_first_name: string;
+  job_title: string;
+  company_name: string;
+  current_round: QaRound;
+  round_index: number;
+  total_rounds: number;
+  questions: string[];
+}
+
+export interface QaRoundSubmitResponse {
+  round: QaRound;
+  round_score: number;
+  feedback: string;
+  next_round: QaRound | null;
+  next_questions: string[];
+  completed: boolean;
+  final_score: number | null;
+  final_summary: string | null;
+}

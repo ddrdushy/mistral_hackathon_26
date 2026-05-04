@@ -1,0 +1,20 @@
+//resume_scorer
+
+
+
+import os
+
+from mistralai import Mistral
+
+client = Mistral(api_key=os.environ.get("MISTRAL_API_KEY"))
+
+inputs = [
+    {"role":"user","content":"job: { \"job_id\":\"SG-HR-20260228-001\", \"title\":\"Data Analyst\",\n\"must_have_skills\":[\"SQL\",\"Power BI\",\"Data cleaning\"], \"nice_to_have_skills\":[\"Python\",\"AWS\"] }\n\nresume_text: Priya Kumar... Experience: 3 years reporting analyst. Built dashboards in Power BI, wrote SQL queries, automated monthly reports with Python..."}
+]
+
+response = client.beta.conversations.start(
+    agent_id="ag_019ca3046554772bbbdf4d2b75bdd657",
+    inputs=inputs,
+)
+
+print(response)

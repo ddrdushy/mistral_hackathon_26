@@ -4,6 +4,8 @@ import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import {
   ArrowPathIcon,
+  BellAlertIcon,
+  BriefcaseIcon,
   ChartBarIcon,
   CheckCircleIcon,
   InboxIcon,
@@ -30,7 +32,15 @@ import {
 } from "recharts";
 
 import { apiGet } from "@/lib/api";
-import { ActivityEvent, ReportSummary, TopCandidate } from "@/types/index";
+import {
+  ActivityEvent,
+  Application,
+  ApplicationListResponse,
+  Job,
+  JobListResponse,
+  ReportSummary,
+  TopCandidate,
+} from "@/types/index";
 import { STAGE_LABELS, scoreColor, timeAgo } from "@/lib/constants";
 import Badge from "@/components/ui/Badge";
 import Card from "@/components/ui/Card";
@@ -94,6 +104,8 @@ function recommendationVariant(
 export default function DashboardPage() {
   const [summary, setSummary] = useState<ReportSummary | null>(null);
   const [activity, setActivity] = useState<ActivityEvent[]>([]);
+  const [needsAction, setNeedsAction] = useState<Application[]>([]);
+  const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -103,12 +115,26 @@ export default function DashboardPage() {
       if (isRefresh) setRefreshing(true);
       else setLoading(true);
       setError(null);
-      const [summaryData, activityData] = await Promise.all([
+      const [summaryData, activityData, appsData, jobsData] = await Promise.all([
         apiGet<ReportSummary>("/reports/summary"),
         apiGet<{ activity: ActivityEvent[] }>("/reports/activity"),
+        apiGet<ApplicationListResponse>("/applications", {
+          per_page: "50",
+          sort_by: "updated_at",
+          order: "desc",
+        }),
+        apiGet<JobListResponse>("/jobs", { per_page: "20" }),
       ]);
       setSummary(summaryData);
       setActivity(activityData.activity?.slice(0, 8) ?? []);
+      const holds = (appsData.applications ?? []).filter(
+        (a) => a.recommendation === "hold",
+      );
+      setNeedsAction(holds.slice(0, 6));
+      const sortedJobs = [...(jobsData.jobs ?? [])].sort(
+        (a, b) => (b.candidate_count ?? 0) - (a.candidate_count ?? 0),
+      );
+      setJobs(sortedJobs.slice(0, 6));
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Failed to load dashboard data",
@@ -343,7 +369,7 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Row 3: Top Candidates + Recent Activity */}
+      {/* Row 3: Top Candidates + Needs Action */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2">
           <Card
@@ -435,6 +461,112 @@ export default function DashboardPage() {
         </div>
 
         <div className="lg:col-span-1">
+          <Card
+            title="Needs HR Action"
+            action={
+              needsAction.length > 0 ? (
+                <Badge variant="warning" size="sm">
+                  {needsAction.length}
+                </Badge>
+              ) : null
+            }
+          >
+            {needsAction.length === 0 ? (
+              <EmptyState
+                icon={<BellAlertIcon />}
+                title="All clear"
+                description="No candidates are awaiting HR review."
+              />
+            ) : (
+              <div className="max-h-[28rem] overflow-y-auto -mx-1 px-1 space-y-2">
+                {needsAction.map((app) => (
+                  <Link
+                    key={app.id}
+                    href={`/candidates/${app.candidate_id}`}
+                    className="block p-3 rounded-lg bg-amber-50/60 border border-amber-100 hover:bg-amber-50 transition-colors"
+                  >
+                    <div className="flex items-center justify-between gap-2 mb-1">
+                      <p className="text-sm font-medium text-slate-900 truncate">
+                        {app.candidate_name || "Unnamed"}
+                      </p>
+                      <Badge variant="warning" size="sm">
+                        Hold
+                      </Badge>
+                    </div>
+                    <p className="text-xs text-slate-600 truncate">
+                      {app.job_title}
+                    </p>
+                    <div className="flex items-center gap-3 mt-1.5 text-xs">
+                      <span className={`font-semibold ${scoreColor(app.resume_score)}`}>
+                        Resume: {app.resume_score ?? "—"}
+                      </span>
+                      {app.interview_score !== null && (
+                        <span className={`font-semibold ${scoreColor(app.interview_score)}`}>
+                          Interview: {app.interview_score}
+                        </span>
+                      )}
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            )}
+          </Card>
+        </div>
+      </div>
+
+      {/* Row 4: Active Jobs + Recent Activity */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-2">
+          <Card
+            title="Active Jobs"
+            action={
+              <Link
+                href="/jobs"
+                className="text-xs font-medium text-blue-600 hover:text-blue-700"
+              >
+                View all →
+              </Link>
+            }
+          >
+            {jobs.length === 0 ? (
+              <EmptyState
+                icon={<BriefcaseIcon />}
+                title="No jobs yet"
+                description="Create a job to start receiving applications."
+              />
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {jobs.map((job) => (
+                  <Link
+                    key={job.id}
+                    href={`/jobs/${job.id}`}
+                    className="group flex items-center justify-between gap-3 p-3 rounded-lg border border-slate-200 hover:border-blue-300 hover:bg-blue-50/40 transition-all"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-slate-900 group-hover:text-blue-600 truncate">
+                        {job.title}
+                      </p>
+                      <p className="text-xs text-slate-500 truncate">
+                        {job.department || job.job_id}
+                        {job.location ? ` · ${job.location}` : ""}
+                      </p>
+                    </div>
+                    <div className="flex flex-col items-end shrink-0">
+                      <span className="text-lg font-bold text-slate-900 leading-none">
+                        {job.candidate_count ?? 0}
+                      </span>
+                      <span className="text-[10px] uppercase tracking-wide text-slate-400">
+                        candidates
+                      </span>
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            )}
+          </Card>
+        </div>
+
+        <div className="lg:col-span-1">
           <Card title="Recent Activity">
             {activity.length === 0 ? (
               <EmptyState
@@ -478,7 +610,7 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Row 4: Quick Actions */}
+      {/* Row 5: Quick Actions */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <QuickAction
           href="/inbox"

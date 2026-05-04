@@ -10,14 +10,19 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from database import get_db
-from models import Application, Candidate, Job, Event, InterviewLink
+from models import Application, Candidate, Job, Event, InterviewLink, QaSession
 from schemas import (
     InterviewLinkGenerateRequest, InterviewLinkResponse,
     InterviewLinkPublicResponse, InterviewStatusUpdateRequest,
     FaceTrackingDataRequest, InterviewTranscriptSubmitRequest,
     ScreeningTranscriptRequest,
+    QaSessionStartResponse, QaRoundSubmitRequest, QaRoundSubmitResponse,
 )
 from agents.interview_evaluator import evaluate_interview, InterviewEvaluatorInput
+from agents.qa_interview import (
+    QaGenerateInput, QaScoreInput, ROUND_ORDER,
+    generate_question_set, score_round, aggregate_final,
+)
 
 router = APIRouter(prefix="/api/v1/screening", tags=["screening"])
 
@@ -782,6 +787,7 @@ async def get_interview_link_public(token: str, db: Session = Depends(get_db)):
         scheduled_at=scheduled_at_iso,
         available_in_minutes=None,
         interview_round=interview_round,
+        interview_mode=(job.interview_mode if job else "voice") or "voice",
     )
 
 
@@ -1363,3 +1369,228 @@ async def elevenlabs_webhook(request: Request, db: Session = Depends(get_db)):
         return {"status": "received", "type": "audio"}
 
     return {"status": "received"}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Q&A INTERVIEW (LLM-generated written rounds — alternative to voice)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def _validate_qa_link(token: str, db: Session):
+    """Resolve token → (link, app, job, candidate); raise on common errors.
+
+    Used by all Q&A public endpoints. Returns a 4-tuple.
+    """
+    link = db.query(InterviewLink).filter(InterviewLink.token == token).first()
+    if not link:
+        raise HTTPException(status_code=404, detail="Interview link not found")
+    if link.expires_at < datetime.utcnow():
+        raise HTTPException(status_code=410, detail="Interview link has expired")
+    if link.status == "interview_completed":
+        raise HTTPException(status_code=410, detail="Interview already completed")
+
+    app = db.query(Application).filter(Application.id == link.app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail="Application not found")
+    job = db.query(Job).filter(Job.id == app.job_id).first()
+    candidate = db.query(Candidate).filter(Candidate.id == app.candidate_id).first()
+    if not job or not candidate:
+        raise HTTPException(status_code=404, detail="Job or candidate missing")
+    if (job.interview_mode or "voice") != "qa":
+        raise HTTPException(status_code=400, detail="This job is not configured for Q&A interviews")
+    return link, app, job, candidate
+
+
+@router.post("/qa/{token}/start", response_model=QaSessionStartResponse)
+async def qa_start(token: str, db: Session = Depends(get_db)):
+    """Start (or resume) a Q&A session for the given interview token."""
+    link, app, job, candidate = _validate_qa_link(token, db)
+
+    session = db.query(QaSession).filter(QaSession.app_id == app.id).first()
+
+    if not session:
+        # Generate question set on first start
+        try:
+            skills = json.loads(job.skills) if job.skills else []
+        except (json.JSONDecodeError, TypeError):
+            skills = []
+
+        questions = generate_question_set(QaGenerateInput(
+            candidate_name=candidate.name,
+            resume_text=candidate.resume_text or "",
+            job_title=job.title,
+            job_description=job.description or "",
+            required_skills=skills,
+            seniority=job.seniority or "mid",
+        ))
+
+        session = QaSession(
+            app_id=app.id,
+            token=token,
+            questions_json=json.dumps(questions),
+            answers_json=json.dumps({}),
+            scores_json=json.dumps({}),
+            current_round="aptitude",
+        )
+        db.add(session)
+
+        # Mark interview started
+        if link.status in ("generated", "sent", "opened"):
+            link.status = "interview_started"
+            link.interview_started_at = datetime.utcnow()
+        app.interview_link_status = "interview_started"
+        app.screening_status = "in_progress"
+        app.ai_next_action = "Q&A interview in progress"
+        app.updated_at = datetime.utcnow()
+        _log_event(db, app.id, "qa_interview_started", {"token": token})
+        db.commit()
+        db.refresh(session)
+
+    # Resolve current round (handles resume after partial completion)
+    questions_map = json.loads(session.questions_json)
+    current = session.current_round if session.current_round in ROUND_ORDER else "aptitude"
+    round_index = ROUND_ORDER.index(current) + 1
+
+    company = os.getenv("COMPANY_NAME", "HireOps AI")
+    return QaSessionStartResponse(
+        token=token,
+        candidate_first_name=candidate.name.split()[0] if candidate.name else "",
+        job_title=job.title,
+        company_name=company,
+        current_round=current,
+        round_index=round_index,
+        total_rounds=len(ROUND_ORDER),
+        questions=questions_map.get(current, []),
+    )
+
+
+@router.post("/qa/{token}/submit-round", response_model=QaRoundSubmitResponse)
+async def qa_submit_round(token: str, req: QaRoundSubmitRequest, db: Session = Depends(get_db)):
+    """Submit answers for the current round; score it; return next round or final."""
+    link, app, job, candidate = _validate_qa_link(token, db)
+
+    session = db.query(QaSession).filter(QaSession.app_id == app.id).first()
+    if not session:
+        raise HTTPException(status_code=400, detail="Q&A session not started — call /start first")
+
+    questions_map = json.loads(session.questions_json)
+    answers_map = json.loads(session.answers_json or "{}")
+    scores_map = json.loads(session.scores_json or "{}")
+
+    if req.round != session.current_round:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Out-of-order round submission: expected {session.current_round}, got {req.round}",
+        )
+
+    questions = questions_map.get(req.round, [])
+    # Pad/truncate answers to match question count
+    answers = list(req.answers)[: len(questions)]
+    while len(answers) < len(questions):
+        answers.append("")
+
+    try:
+        skills = json.loads(job.skills) if job.skills else []
+    except (json.JSONDecodeError, TypeError):
+        skills = []
+
+    score_result = score_round(QaScoreInput(
+        round=req.round,
+        questions=questions,
+        answers=answers,
+        job_title=job.title,
+        required_skills=skills,
+        resume_text=candidate.resume_text or "",
+    ))
+
+    answers_map[req.round] = answers
+    scores_map[req.round] = score_result
+    session.answers_json = json.dumps(answers_map)
+    session.scores_json = json.dumps(scores_map)
+
+    # Advance round
+    current_idx = ROUND_ORDER.index(req.round)
+    next_round = ROUND_ORDER[current_idx + 1] if current_idx + 1 < len(ROUND_ORDER) else None
+
+    _log_event(db, app.id, "qa_round_submitted", {
+        "round": req.round,
+        "score": score_result.get("score"),
+    })
+
+    if next_round:
+        session.current_round = next_round
+        db.commit()
+        return QaRoundSubmitResponse(
+            round=req.round,
+            round_score=score_result.get("score", 0),
+            feedback=score_result.get("feedback", ""),
+            next_round=next_round,
+            next_questions=questions_map.get(next_round, []),
+            completed=False,
+        )
+
+    # Final round — aggregate, write back to Application
+    final = aggregate_final(scores_map)
+    session.current_round = "completed"
+    session.final_score = final["final_score"]
+    session.final_summary = final["summary"]
+    session.completed_at = datetime.utcnow()
+
+    app.interview_score = final["final_score"]
+    app.interview_score_json = json.dumps({
+        "score": final["final_score"],
+        "decision": "pending",  # threshold logic re-derives
+        "summary": final["summary"],
+        "rounds": scores_map,
+        "mode": "qa",
+    })
+    app.screening_transcript = _build_transcript_from_qa(questions_map, answers_map)
+    app.screening_status = "completed"
+    app.interview_link_status = "interview_completed"
+    app.stage = "screened"
+    app.ai_next_action = "Q&A interview completed — awaiting threshold decision"
+    app.updated_at = datetime.utcnow()
+
+    link.status = "interview_completed"
+    link.interview_completed_at = datetime.utcnow()
+
+    # Compute final_score field used by threshold logic (resume*0.4 + interview*0.6)
+    if app.resume_score is not None:
+        app.final_score = round(app.resume_score * 0.4 + final["final_score"] * 0.6, 1)
+    else:
+        app.final_score = final["final_score"]
+
+    decision = _apply_threshold_decision(app, job, db)
+    _log_event(db, app.id, "qa_interview_completed", {
+        "final_score": final["final_score"],
+        "decision": decision.get("decision"),
+    })
+    db.commit()
+
+    return QaRoundSubmitResponse(
+        round=req.round,
+        round_score=score_result.get("score", 0),
+        feedback=score_result.get("feedback", ""),
+        next_round=None,
+        next_questions=[],
+        completed=True,
+        final_score=final["final_score"],
+        final_summary=final["summary"],
+    )
+
+
+def _build_transcript_from_qa(questions_map: dict, answers_map: dict) -> str:
+    parts = []
+    for r in ROUND_ORDER:
+        qs = questions_map.get(r, [])
+        ans = answers_map.get(r, [])
+        if not qs:
+            continue
+        parts.append(f"=== Round: {r.upper()} ===")
+        for i, q in enumerate(qs):
+            a = ans[i] if i < len(ans) else ""
+            parts.append(f"Q{i+1}: {q}")
+            parts.append(f"A{i+1}: {a or '(no answer)'}")
+        parts.append("")
+    return "\n".join(parts)
+

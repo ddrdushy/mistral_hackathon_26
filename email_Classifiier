@@ -1,0 +1,18 @@
+//email_Classifiier agent
+
+import os
+
+from mistralai import Mistral
+
+client = Mistral(api_key=os.environ.get("MISTRAL_API_KEY"))
+
+inputs = [
+    {"role":"user","content":"subject: Application for Data Analyst role\nfrom_name: Priya Kumar\nfrom_email: priya.k@email.com\nattachment_names: [\"PriyaKumar_CV.pdf\"]\nbody_text: Hi HR, please find my CV attached. I have 3 years experience in SQL, Power BI, Python."}
+]
+
+response = client.beta.conversations.start(
+    agent_id="ag_019ca2d9a7a0773cb0104da31ed35b09",
+    inputs=inputs,
+)
+
+print(response)

@@ -18,6 +18,7 @@ export default function CreateJobPage() {
     responsibilities: [],
     qualifications: [],
     description: "",
+    interview_mode: "voice",
   });
 
   const [skillInput, setSkillInput] = useState("");
@@ -83,7 +84,7 @@ export default function CreateJobPage() {
     setError(null);
     try {
       const result = await apiPost<JobCreate>("/jobs/generate", { title: form.title.trim() });
-      setForm({
+      setForm((prev) => ({
         title: form.title.trim(),
         department: result.department || "",
         location: result.location || "",
@@ -92,7 +93,8 @@ export default function CreateJobPage() {
         responsibilities: result.responsibilities || [],
         qualifications: result.qualifications || [],
         description: result.description || "",
-      });
+        interview_mode: prev.interview_mode,
+      }));
       setAiGenerated(true);
     } catch (err) {
       const message = err instanceof Error ? err.message : "AI generation failed";
@@ -241,6 +243,61 @@ export default function CreateJobPage() {
                 </option>
               ))}
             </select>
+          </div>
+
+          {/* First-Round Interview Mode */}
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-2">
+              First-Round Interview Mode
+            </label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {(
+                [
+                  {
+                    value: "voice" as const,
+                    title: "Voice Interview",
+                    desc: "Candidate joins a web room for an ElevenLabs AI voice interview with face tracking.",
+                  },
+                  {
+                    value: "qa" as const,
+                    title: "Written Q&A",
+                    desc: "Candidate answers 3 LLM-generated rounds: aptitude, reasoning, and CV-based technical.",
+                  },
+                ]
+              ).map((opt) => {
+                const selected = form.interview_mode === opt.value;
+                return (
+                  <button
+                    type="button"
+                    key={opt.value}
+                    onClick={() =>
+                      setForm((prev) => ({ ...prev, interview_mode: opt.value }))
+                    }
+                    className={`text-left rounded-lg border p-3 transition-all ${
+                      selected
+                        ? "border-indigo-500 bg-indigo-50 ring-1 ring-indigo-500"
+                        : "border-slate-200 bg-white hover:border-slate-300"
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 mb-1">
+                      <span
+                        className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
+                          selected ? "border-indigo-600" : "border-slate-300"
+                        }`}
+                      >
+                        {selected && (
+                          <span className="w-2 h-2 rounded-full bg-indigo-600" />
+                        )}
+                      </span>
+                      <span className="text-sm font-semibold text-slate-900">
+                        {opt.title}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-500 leading-snug">{opt.desc}</p>
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           {/* Skills */}

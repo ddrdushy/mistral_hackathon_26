@@ -48,6 +48,7 @@ def _job_to_response(job: Job, db: Session) -> dict:
         "qualifications": json.loads(job.qualifications) if job.qualifications else [],
         "description": job.description,
         "status": job.status,
+        "interview_mode": job.interview_mode or "voice",
         "created_at": job.created_at.isoformat() if job.created_at else None,
         "updated_at": job.updated_at.isoformat() if job.updated_at else None,
         "candidate_count": candidate_count,
@@ -66,6 +67,7 @@ async def create_job(req: JobCreate, db: Session = Depends(get_db)):
         responsibilities=json.dumps(req.responsibilities),
         qualifications=json.dumps(req.qualifications),
         description=req.description,
+        interview_mode=req.interview_mode,
     )
     db.add(job)
     db.commit()

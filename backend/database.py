@@ -32,7 +32,7 @@ def get_db():
 
 
 def init_db():
-    from models import Job, Email, Candidate, Application, Event, InterviewLink, Setting  # noqa: F401
+    from models import Job, Email, Candidate, Application, Event, InterviewLink, Setting, QaSession  # noqa: F401
     Base.metadata.create_all(bind=engine)
     _run_migrations()
 
@@ -79,11 +79,12 @@ def _run_migrations():
                     except Exception:
                         pass
 
-    # Job threshold columns
+    # Job threshold + interview_mode columns
     job_cols = {
         "resume_threshold_min": "FLOAT DEFAULT 80.0",
         "interview_threshold_min": "FLOAT DEFAULT 75.0",
         "final_threshold_reject": "FLOAT DEFAULT 50.0",
+        "interview_mode": "VARCHAR DEFAULT 'voice'",
     }
     if "jobs" in insp.get_table_names():
         existing = {c["name"] for c in insp.get_columns("jobs")}

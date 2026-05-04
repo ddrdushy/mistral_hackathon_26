@@ -17,6 +17,9 @@ PipelineStage = Literal[
 # JOBS
 # ═══════════════════════════════════════
 
+InterviewMode = Literal["voice", "qa"]
+
+
 class JobCreate(BaseModel):
     title: str
     department: str = ""
@@ -26,6 +29,7 @@ class JobCreate(BaseModel):
     responsibilities: List[str] = []
     qualifications: List[str] = []
     description: str = ""
+    interview_mode: InterviewMode = "voice"
 
 
 class JobUpdate(BaseModel):
@@ -38,6 +42,7 @@ class JobUpdate(BaseModel):
     qualifications: Optional[List[str]] = None
     description: Optional[str] = None
     status: Optional[str] = None
+    interview_mode: Optional[InterviewMode] = None
 
 
 class JobResponse(BaseModel):
@@ -50,6 +55,7 @@ class JobResponse(BaseModel):
     skills: List[str]
     description: str
     status: str
+    interview_mode: str = "voice"
     created_at: datetime
     updated_at: datetime
     candidate_count: int = 0
@@ -340,6 +346,7 @@ class InterviewLinkPublicResponse(BaseModel):
     scheduled_at: Optional[str] = None  # ISO datetime when interview starts
     available_in_minutes: Optional[int] = None  # Minutes until room opens (null = open now)
     interview_round: int = 1  # 1=screening, 2=in-person
+    interview_mode: str = "voice"  # voice (ElevenLabs) or qa (written rounds)
 
 
 class InterviewStatusUpdateRequest(BaseModel):
@@ -358,3 +365,44 @@ class InterviewTranscriptSubmitRequest(BaseModel):
     transcript: str
     duration_seconds: int
     elevenlabs_conversation_id: Optional[str] = None
+
+
+# ═══════════════════════════════════════
+# Q&A INTERVIEW (LLM-generated written rounds)
+# ═══════════════════════════════════════
+
+QaRound = Literal["aptitude", "reasoning", "technical"]
+
+
+class QaRoundQuestions(BaseModel):
+    round: QaRound
+    questions: List[str]
+    round_index: int  # 1, 2, 3
+    total_rounds: int = 3
+
+
+class QaSessionStartResponse(BaseModel):
+    token: str
+    candidate_first_name: str
+    job_title: str
+    company_name: str
+    current_round: QaRound
+    round_index: int
+    total_rounds: int
+    questions: List[str]
+
+
+class QaRoundSubmitRequest(BaseModel):
+    round: QaRound
+    answers: List[str]
+
+
+class QaRoundSubmitResponse(BaseModel):
+    round: QaRound
+    round_score: float
+    feedback: str
+    next_round: Optional[QaRound] = None
+    next_questions: List[str] = []
+    completed: bool = False
+    final_score: Optional[float] = None
+    final_summary: Optional[str] = None

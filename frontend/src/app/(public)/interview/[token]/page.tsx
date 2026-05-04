@@ -2,6 +2,7 @@
 
 import { use, useState, useEffect, useRef, useCallback } from "react";
 import { useConversation } from "@elevenlabs/react";
+import QaInterviewRoom from "./QaInterviewRoom";
 
 // ═══════════════════════════════════════
 // Types
@@ -14,7 +15,8 @@ type InterviewPhase =
   | "setup"
   | "ready"
   | "interviewing"
-  | "completed";
+  | "completed"
+  | "qa";
 
 interface InterviewData {
   token: string;
@@ -30,6 +32,7 @@ interface InterviewData {
   scheduled_at: string | null;
   available_in_minutes: number | null;
   interview_round: number;
+  interview_mode: "voice" | "qa";
 }
 
 const API_BASE =
@@ -115,6 +118,8 @@ export default function InterviewPage({
           setErrorMsg(data.error || "Invalid interview link.");
         } else if (data.status === "waiting" && data.available_in_minutes) {
           setPhase("waiting");
+        } else if (data.interview_mode === "qa") {
+          setPhase("qa");
         } else {
           setPhase("setup");
         }
@@ -561,6 +566,12 @@ export default function InterviewPage({
         </div>
       </div>
     );
+  }
+
+  // ── Q&A interview (written rounds) ──────────────────────────────────────
+
+  if (phase === "qa") {
+    return <QaInterviewRoom token={token} />;
   }
 
   // ── Completed ───────────────────────────────────────────────────────────
