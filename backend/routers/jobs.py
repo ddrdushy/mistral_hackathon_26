@@ -10,6 +10,7 @@ from database import get_db
 from models import Job, Application
 from schemas import JobCreate, JobUpdate, JobResponse, JobListResponse
 from agents.job_generator import generate_job_details
+from auth.dependencies import current_session, CurrentSession
 
 router = APIRouter(prefix="/api/v1/jobs", tags=["jobs"])
 
@@ -19,7 +20,10 @@ class JobGenerateRequest(BaseModel):
 
 
 @router.post("/generate")
-async def generate_job(req: JobGenerateRequest):
+async def generate_job(
+    req: JobGenerateRequest,
+    _: CurrentSession = Depends(current_session),
+):
     """Use Mistral AI to auto-generate job posting details from a title."""
     if not req.title.strip():
         raise HTTPException(status_code=400, detail="Title is required")
@@ -28,9 +32,12 @@ async def generate_job(req: JobGenerateRequest):
     return result
 
 
-def _generate_job_id(db: Session) -> str:
+def _generate_job_id(db: Session, tenant_id: int) -> str:
     year = datetime.utcnow().year
-    count = db.query(Job).filter(Job.job_id.like(f"JOB-{year}-%")).count()
+    count = db.query(Job).filter(
+        Job.tenant_id == tenant_id,
+        Job.job_id.like(f"JOB-{year}-%"),
+    ).count()
     return f"JOB-{year}-{count + 1:03d}"
 
 
@@ -56,9 +63,14 @@ def _job_to_response(job: Job, db: Session) -> dict:
 
 
 @router.post("", response_model=None)
-async def create_job(req: JobCreate, db: Session = Depends(get_db)):
+async def create_job(
+    req: JobCreate,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(current_session),
+):
     job = Job(
-        job_id=_generate_job_id(db),
+        tenant_id=session.tenant.id,
+        job_id=_generate_job_id(db, session.tenant.id),
         title=req.title,
         department=req.department,
         location=req.location,
@@ -82,8 +94,9 @@ async def list_jobs(
     page: int = 1,
     per_page: int = 20,
     db: Session = Depends(get_db),
+    session: CurrentSession = Depends(current_session),
 ):
-    query = db.query(Job)
+    query = db.query(Job).filter(Job.tenant_id == session.tenant.id)
     if status:
         query = query.filter(Job.status == status)
     if department:
@@ -99,16 +112,31 @@ async def list_jobs(
 
 
 @router.get("/{job_id}")
-async def get_job(job_id: int, db: Session = Depends(get_db)):
-    job = db.query(Job).filter(Job.id == job_id).first()
+async def get_job(
+    job_id: int,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(current_session),
+):
+    job = db.query(Job).filter(
+        Job.id == job_id,
+        Job.tenant_id == session.tenant.id,
+    ).first()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     return _job_to_response(job, db)
 
 
 @router.put("/{job_id}")
-async def update_job(job_id: int, req: JobUpdate, db: Session = Depends(get_db)):
-    job = db.query(Job).filter(Job.id == job_id).first()
+async def update_job(
+    job_id: int,
+    req: JobUpdate,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(current_session),
+):
+    job = db.query(Job).filter(
+        Job.id == job_id,
+        Job.tenant_id == session.tenant.id,
+    ).first()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
 
@@ -127,8 +155,15 @@ async def update_job(job_id: int, req: JobUpdate, db: Session = Depends(get_db))
 
 
 @router.delete("/{job_id}")
-async def delete_job(job_id: int, db: Session = Depends(get_db)):
-    job = db.query(Job).filter(Job.id == job_id).first()
+async def delete_job(
+    job_id: int,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(current_session),
+):
+    job = db.query(Job).filter(
+        Job.id == job_id,
+        Job.tenant_id == session.tenant.id,
+    ).first()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     db.delete(job)

@@ -1,4 +1,29 @@
 // ═══════════════════════════════════════
+// AUTH + TENANT
+// ═══════════════════════════════════════
+
+export interface AuthUser {
+  id: number;
+  email: string;
+  name: string;
+  role: "owner" | "member";
+  is_superadmin: boolean;
+  email_verified: boolean;
+}
+
+export interface AuthTenant {
+  id: number;
+  slug: string;
+  name: string;
+  plan: "free" | "starter" | "pro";
+}
+
+export interface MeResponse {
+  user: AuthUser;
+  tenant: AuthTenant;
+}
+
+// ═══════════════════════════════════════
 // JOBS
 // ═══════════════════════════════════════
 export type InterviewMode = "voice" | "qa";
@@ -117,6 +142,12 @@ export interface InterviewScoreDetails {
   scheduling_slots: string[];
   candidate_preferred_slot: string | null;
   summary: string;
+  mode?: "voice" | "qa";
+  rounds?: Record<
+    string,
+    { score?: number; feedback?: string; strengths?: string[]; gaps?: string[] }
+  >;
+  fraud_risk_score?: number;
 }
 
 export interface Application {
@@ -148,6 +179,33 @@ export interface Application {
   } | null;
   resume_score_json: ResumeScoreDetails | null;
   interview_score_json: InterviewScoreDetails | null;
+  qa_fraud_risk_score: number | null;
+  qa_signals_summary: {
+    per_round?: Record<
+      string,
+      {
+        focus_loss_count?: number;
+        focus_loss_seconds?: number;
+        paste_count?: number;
+        paste_chars?: number;
+        time_per_question_seconds?: number[];
+        total_time_seconds?: number;
+      }
+    >;
+    summary?: {
+      focus_loss_count?: number;
+      paste_count?: number;
+      paste_chars?: number;
+      face_present_percentage?: number | null;
+      avg_attention_score?: number | null;
+      components?: {
+        focus?: number;
+        paste?: number;
+        face?: number;
+        attention?: number;
+      };
+    } | null;
+  } | null;
   scheduled_interview_at: string | null;
   scheduled_interview_slot: string | null;
   email_draft_sent: number;
@@ -296,6 +354,11 @@ export type PipelineStage =
 
 export type QaRound = "aptitude" | "reasoning" | "technical";
 
+export interface QaQuestion {
+  text: string;
+  options?: string[]; // present for MCQ rounds, absent for free-form (technical)
+}
+
 export interface QaSessionStartResponse {
   token: string;
   candidate_first_name: string;
@@ -304,7 +367,7 @@ export interface QaSessionStartResponse {
   current_round: QaRound;
   round_index: number;
   total_rounds: number;
-  questions: string[];
+  questions: QaQuestion[];
 }
 
 export interface QaRoundSubmitResponse {
@@ -312,8 +375,9 @@ export interface QaRoundSubmitResponse {
   round_score: number;
   feedback: string;
   next_round: QaRound | null;
-  next_questions: string[];
+  next_questions: QaQuestion[];
   completed: boolean;
   final_score: number | null;
   final_summary: string | null;
+  fraud_risk_score: number | null;
 }

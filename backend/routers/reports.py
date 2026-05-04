@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from database import get_db
 from models import Application, Candidate, Job, Event
+from auth.dependencies import current_session, CurrentSession
 
 router = APIRouter(prefix="/api/v1/reports", tags=["reports"])
 
@@ -17,8 +18,14 @@ PIPELINE_STAGES = [
 
 
 @router.get("/funnel")
-async def get_funnel(job_id: Optional[int] = None, db: Session = Depends(get_db)):
-    query = db.query(Application.stage, func.count(Application.id))
+async def get_funnel(
+    job_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(current_session),
+):
+    query = db.query(Application.stage, func.count(Application.id)).filter(
+        Application.tenant_id == session.tenant.id,
+    )
     if job_id:
         query = query.filter(Application.job_id == job_id)
     stage_counts = query.group_by(Application.stage).all()
@@ -37,7 +44,10 @@ async def get_funnel(job_id: Optional[int] = None, db: Session = Depends(get_db)
 
     job_title = None
     if job_id:
-        job = db.query(Job).filter(Job.id == job_id).first()
+        job = db.query(Job).filter(
+            Job.id == job_id,
+            Job.tenant_id == session.tenant.id,
+        ).first()
         job_title = job.title if job else None
 
     return {
@@ -53,8 +63,12 @@ async def get_top_candidates(
     job_id: Optional[int] = None,
     limit: int = 10,
     db: Session = Depends(get_db),
+    session: CurrentSession = Depends(current_session),
 ):
-    query = db.query(Application).filter(Application.resume_score.isnot(None))
+    query = db.query(Application).filter(
+        Application.tenant_id == session.tenant.id,
+        Application.resume_score.isnot(None),
+    )
     if job_id:
         query = query.filter(Application.job_id == job_id)
 
@@ -86,25 +100,37 @@ async def get_top_candidates(
 
 
 @router.get("/summary")
-async def get_summary(db: Session = Depends(get_db)):
-    total_jobs = db.query(Job).count()
-    total_candidates = db.query(Candidate).count()
-    total_applications = db.query(Application).count()
+async def get_summary(
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(current_session),
+):
+    tid = session.tenant.id
+    total_jobs = db.query(Job).filter(Job.tenant_id == tid).count()
+    total_candidates = db.query(Candidate).filter(Candidate.tenant_id == tid).count()
+    total_applications = db.query(Application).filter(Application.tenant_id == tid).count()
     active_screenings = db.query(Application).filter(
-        Application.stage.in_(["screening_scheduled", "screened"])
+        Application.tenant_id == tid,
+        Application.stage.in_(["screening_scheduled", "screened"]),
     ).count()
-    shortlisted_count = db.query(Application).filter(Application.stage == "shortlisted").count()
-    rejected_count = db.query(Application).filter(Application.stage == "rejected").count()
+    shortlisted_count = db.query(Application).filter(
+        Application.tenant_id == tid,
+        Application.stage == "shortlisted",
+    ).count()
+    rejected_count = db.query(Application).filter(
+        Application.tenant_id == tid,
+        Application.stage == "rejected",
+    ).count()
 
     avg_score_result = db.query(func.avg(Application.resume_score)).filter(
-        Application.resume_score.isnot(None)
+        Application.tenant_id == tid,
+        Application.resume_score.isnot(None),
     ).scalar()
     avg_resume_score = round(float(avg_score_result), 1) if avg_score_result else 0.0
 
     # Stage distribution
     stage_counts = db.query(
         Application.stage, func.count(Application.id)
-    ).group_by(Application.stage).all()
+    ).filter(Application.tenant_id == tid).group_by(Application.stage).all()
     count_map = {stage: count for stage, count in stage_counts}
     total_in_pipeline = sum(count_map.values())
 
@@ -119,7 +145,8 @@ async def get_summary(db: Session = Depends(get_db)):
 
     # Top 5 candidates
     top_apps = db.query(Application).filter(
-        Application.resume_score.isnot(None)
+        Application.tenant_id == tid,
+        Application.resume_score.isnot(None),
     ).order_by(Application.resume_score.desc()).limit(5).all()
 
     top_candidates = []
@@ -157,8 +184,14 @@ async def get_summary(db: Session = Depends(get_db)):
 
 
 @router.get("/activity")
-async def get_recent_activity(limit: int = 20, db: Session = Depends(get_db)):
-    events = db.query(Event).order_by(Event.created_at.desc()).limit(limit).all()
+async def get_recent_activity(
+    limit: int = 20,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(current_session),
+):
+    events = db.query(Event).filter(
+        Event.tenant_id == session.tenant.id,
+    ).order_by(Event.created_at.desc()).limit(limit).all()
 
     activity = []
     for event in events:

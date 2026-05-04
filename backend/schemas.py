@@ -174,6 +174,8 @@ class ApplicationResponse(BaseModel):
     interview_room_url: Optional[str] = None  # Round 2 interview room URL
     interview_link_status: Optional[str] = None
     interview_face_tracking_json: Optional[dict] = None
+    qa_fraud_risk_score: Optional[float] = None
+    qa_signals_summary: Optional[dict] = None
     created_at: datetime
     updated_at: datetime
 
@@ -374,11 +376,11 @@ class InterviewTranscriptSubmitRequest(BaseModel):
 QaRound = Literal["aptitude", "reasoning", "technical"]
 
 
-class QaRoundQuestions(BaseModel):
-    round: QaRound
-    questions: List[str]
-    round_index: int  # 1, 2, 3
-    total_rounds: int = 3
+class QaQuestion(BaseModel):
+    """Question delivered to the client. `options` is present for MCQ rounds (aptitude/reasoning),
+    absent for free-form rounds (technical). `correct_index` is NEVER sent to the client."""
+    text: str
+    options: Optional[List[str]] = None
 
 
 class QaSessionStartResponse(BaseModel):
@@ -389,12 +391,23 @@ class QaSessionStartResponse(BaseModel):
     current_round: QaRound
     round_index: int
     total_rounds: int
-    questions: List[str]
+    questions: List[QaQuestion]
+
+
+class QaBehaviouralSignals(BaseModel):
+    """Per-round anti-fraud behavioural signals captured client-side."""
+    focus_loss_count: int = 0           # # of times window/tab lost focus
+    focus_loss_seconds: float = 0       # total seconds spent away from the tab
+    paste_count: int = 0                # # of paste events across all answers
+    paste_chars: int = 0                # total chars pasted
+    time_per_question_seconds: List[float] = []  # active typing time per question
+    total_time_seconds: float = 0       # round total duration
 
 
 class QaRoundSubmitRequest(BaseModel):
     round: QaRound
     answers: List[str]
+    signals: Optional[QaBehaviouralSignals] = None
 
 
 class QaRoundSubmitResponse(BaseModel):
@@ -402,7 +415,8 @@ class QaRoundSubmitResponse(BaseModel):
     round_score: float
     feedback: str
     next_round: Optional[QaRound] = None
-    next_questions: List[str] = []
+    next_questions: List[QaQuestion] = []
     completed: bool = False
     final_score: Optional[float] = None
     final_summary: Optional[str] = None
+    fraud_risk_score: Optional[float] = None

@@ -216,7 +216,7 @@ export default function DashboardPage() {
       </div>
 
       {/* Row 1: KPI cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div data-tour="kpi-cards" className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <MetricCard
           title="Total Applications"
           value={totalApps}
@@ -249,7 +249,7 @@ export default function DashboardPage() {
 
       {/* Row 2: Pipeline funnel + Decisions donut */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2">
+        <div data-tour="pipeline-funnel" className="lg:col-span-2">
           <Card title="Pipeline Funnel">
             {pipelineData.length === 0 || totalApps === 0 ? (
               <EmptyState
@@ -309,7 +309,7 @@ export default function DashboardPage() {
           </Card>
         </div>
 
-        <div className="lg:col-span-1">
+        <div data-tour="decisions-donut" className="lg:col-span-1">
           <Card title="Decisions">
             {decisionData.length === 0 ? (
               <EmptyState
@@ -371,7 +371,7 @@ export default function DashboardPage() {
 
       {/* Row 3: Top Candidates + Needs Action */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2">
+        <div data-tour="top-candidates" className="lg:col-span-2">
           <Card
             title="Top Candidates"
             action={
@@ -460,7 +460,7 @@ export default function DashboardPage() {
           </Card>
         </div>
 
-        <div className="lg:col-span-1">
+        <div data-tour="needs-action" className="lg:col-span-1">
           <Card
             title="Needs HR Action"
             action={
@@ -611,7 +611,7 @@ export default function DashboardPage() {
       </div>
 
       {/* Row 5: Quick Actions */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div data-tour="quick-actions" className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <QuickAction
           href="/inbox"
           icon={<InboxIcon className="h-6 w-6" />}

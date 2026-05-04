@@ -1,26 +1,30 @@
 """
-Q&A Interview Agent
+Q&A Interview Agent (hybrid: MCQ + free-form)
 
-Generates a 3-round written interview (aptitude → reasoning → technical) tailored
-to the candidate's resume and the job, then scores answers per round.
+- Aptitude  → 3 multiple-choice questions (4 options each, single correct)
+- Reasoning → 3 multiple-choice questions (4 options each, single correct)
+- Technical → 3 free-form questions grounded in the candidate's CV
 
-All rounds are generated in a single LLM call when the candidate clicks "Start"
-so the question set is atomic and cheap. Scoring is one LLM call per submitted
-round.
+Question generation: ONE Mistral call up-front produces all 9 questions.
+Scoring: MCQ rounds are scored deterministically (correct_count / total).
+         Technical round is scored via Mistral.
 """
 from __future__ import annotations
 
 import json
 import os
 from dataclasses import dataclass
-from typing import Dict, List
+from typing import Dict, List, Any
 
 USE_MOCK = os.getenv("QA_INTERVIEW_MOCK", "false").lower() == "true"
 MODEL = os.getenv("QA_INTERVIEW_MODEL", "mistral-large-latest")
 
 ROUND_ORDER = ["aptitude", "reasoning", "technical"]
+MCQ_ROUNDS = {"aptitude", "reasoning"}
+FREE_FORM_ROUNDS = {"technical"}
 ROUND_WEIGHTS = {"aptitude": 0.25, "reasoning": 0.30, "technical": 0.45}
 QUESTIONS_PER_ROUND = 3
+OPTIONS_PER_MCQ = 4
 
 
 @dataclass
@@ -38,15 +42,23 @@ def _client():
     return Mistral(api_key=os.environ.get("MISTRAL_API_KEY"))
 
 
-def generate_question_set(input_data: QaGenerateInput) -> Dict[str, List[str]]:
-    """Return {aptitude:[3], reasoning:[3], technical:[3]} tailored to candidate+job."""
+def generate_question_set(input_data: QaGenerateInput) -> Dict[str, List[Dict[str, Any]]]:
+    """Return question set across the 3 rounds.
+
+    Shape:
+      {
+        "aptitude":  [{text, options:[4 strings], correct_index:int}, ...],
+        "reasoning": [{text, options:[4 strings], correct_index:int}, ...],
+        "technical": [{text}, ...]
+      }
+    """
     if USE_MOCK or not os.environ.get("MISTRAL_API_KEY"):
         return _mock_questions(input_data)
 
     try:
         from services.llm_tracker import LLMCallTimer
 
-        prompt = f"""You are an expert technical interviewer designing a written first-round screening for ONE specific candidate. Generate a 3-round Q&A interview, with EXACTLY {QUESTIONS_PER_ROUND} questions per round.
+        prompt = f"""You are an expert technical interviewer designing a written first-round screening for ONE specific candidate. Generate a 3-round Q&A interview, EXACTLY {QUESTIONS_PER_ROUND} questions per round.
 
 CANDIDATE
 - Name: {input_data.candidate_name}
@@ -61,20 +73,30 @@ JOB
 {input_data.job_description[:1500]}
 
 ROUND DESIGN
-1. "aptitude" — {QUESTIONS_PER_ROUND} concise quantitative / pattern / basic logic questions. Role-relevant where possible (e.g., for a data role: simple stats interpretation; for an engineer: complexity intuition). Each answerable in 1–3 sentences.
-2. "reasoning" — {QUESTIONS_PER_ROUND} situational/analytical scenarios that probe how the candidate thinks. Tie to the job's day-to-day work. Each answerable in 3–6 sentences.
-3. "technical" — {QUESTIONS_PER_ROUND} questions GROUNDED IN THE CANDIDATE'S RESUME. Reference specific tools/projects/claims they made and probe depth. Avoid asking things their resume already answers; instead push one level deeper. If the resume is sparse, ask about the required skills for the job.
+1. "aptitude" — {QUESTIONS_PER_ROUND} MULTIPLE CHOICE questions on quantitative reasoning, pattern recognition, and basic logic. Role-relevant where it makes sense. Each question MUST have exactly {OPTIONS_PER_MCQ} options and EXACTLY one correct answer.
+2. "reasoning" — {QUESTIONS_PER_ROUND} MULTIPLE CHOICE situational/analytical questions with realistic role-relevant scenarios. Plausible distractors that test judgment, not just recall. Each question MUST have exactly {OPTIONS_PER_MCQ} options and EXACTLY one correct answer.
+3. "technical" — {QUESTIONS_PER_ROUND} FREE-FORM questions grounded in the CANDIDATE'S RESUME. Reference specific tools/projects/claims they made and probe one level deeper. If the resume is sparse, ask about the required job skills. Free-form, no options.
 
 STRICT RULES
-- Each question is unique and self-contained (no "see above").
-- Do NOT include answers, hints, or commentary — questions only.
+- Each question is unique and self-contained.
+- For MCQ: options should be plausible — no obviously wrong distractors. correct_index is 0-based.
+- For free-form: questions only, no answers/hints.
 - Output ONLY valid JSON, no markdown fences.
 
 OUTPUT SCHEMA
 {{
-  "aptitude": ["q1", "q2", "q3"],
-  "reasoning": ["q1", "q2", "q3"],
-  "technical": ["q1", "q2", "q3"]
+  "aptitude": [
+    {{ "text": "...", "options": ["...","...","...","..."], "correct_index": 0 }},
+    ... 3 total
+  ],
+  "reasoning": [
+    {{ "text": "...", "options": ["...","...","...","..."], "correct_index": 0 }},
+    ... 3 total
+  ],
+  "technical": [
+    {{ "text": "..." }},
+    ... 3 total
+  ]
 }}"""
 
         with LLMCallTimer("qa_interview_generate", MODEL) as timer:
@@ -90,26 +112,58 @@ OUTPUT SCHEMA
                 timer.output_tokens = usage.completion_tokens
 
         result = json.loads(response.choices[0].message.content)
-        # Validate shape
-        for r in ROUND_ORDER:
-            qs = result.get(r) or []
-            if not isinstance(qs, list) or len(qs) < 1:
-                raise ValueError(f"Round {r} missing questions")
-            # Trim/pad to QUESTIONS_PER_ROUND
-            result[r] = [str(q).strip() for q in qs[:QUESTIONS_PER_ROUND] if str(q).strip()]
-            while len(result[r]) < QUESTIONS_PER_ROUND:
-                result[r].append(f"Tell us more about your experience related to {input_data.job_title}.")
-        return {r: result[r] for r in ROUND_ORDER}
+        return _validate_and_normalise(result, input_data)
 
     except Exception as e:
         print(f"[qa_interview] generate fallback: {e}")
         return _mock_questions(input_data)
 
 
+def _validate_and_normalise(
+    result: dict, input_data: QaGenerateInput
+) -> Dict[str, List[Dict[str, Any]]]:
+    """Coerce LLM output into the strict schema. Pad short rounds with mocks."""
+    mock = _mock_questions(input_data)
+    out: Dict[str, List[Dict[str, Any]]] = {}
+
+    for r in ROUND_ORDER:
+        items = result.get(r) or []
+        normalised: List[Dict[str, Any]] = []
+        for q in items[:QUESTIONS_PER_ROUND]:
+            if not isinstance(q, dict):
+                continue
+            text = str(q.get("text") or q.get("question") or "").strip()
+            if not text:
+                continue
+            if r in MCQ_ROUNDS:
+                opts_raw = q.get("options") or []
+                if not isinstance(opts_raw, list):
+                    continue
+                options = [str(o).strip() for o in opts_raw if str(o).strip()][:OPTIONS_PER_MCQ]
+                while len(options) < OPTIONS_PER_MCQ:
+                    options.append("(no option)")
+                ci = q.get("correct_index")
+                try:
+                    ci = int(ci)
+                except (TypeError, ValueError):
+                    ci = 0
+                if not (0 <= ci < OPTIONS_PER_MCQ):
+                    ci = 0
+                normalised.append({"text": text, "options": options, "correct_index": ci})
+            else:
+                normalised.append({"text": text})
+        # Pad short rounds with mock questions
+        while len(normalised) < QUESTIONS_PER_ROUND:
+            normalised.append(mock[r][len(normalised)])
+        out[r] = normalised
+
+    return out
+
+
 @dataclass
 class QaScoreInput:
     round: str
-    questions: List[str]
+    questions: List[Dict[str, Any]]
     answers: List[str]
     job_title: str
     required_skills: List[str]
@@ -117,33 +171,71 @@ class QaScoreInput:
 
 
 def score_round(input_data: QaScoreInput) -> Dict:
-    """Score one round. Returns {score: 0-100, feedback: str, strengths: [..], gaps: [..]}.
+    """Score one round.
+
+    MCQ rounds: deterministic correct/total; no LLM call.
+    Free-form rounds: Mistral evaluator.
     """
+    if input_data.round in MCQ_ROUNDS:
+        return _score_mcq(input_data)
+    return _score_free_form(input_data)
+
+
+def _score_mcq(input_data: QaScoreInput) -> Dict:
+    total = len(input_data.questions)
+    correct = 0
+    breakdown = []
+    for q, a in zip(input_data.questions, input_data.answers):
+        ci = int(q.get("correct_index") or 0)
+        try:
+            chosen = int(str(a).strip()) if str(a).strip() != "" else -1
+        except ValueError:
+            chosen = -1
+        is_correct = chosen == ci
+        if is_correct:
+            correct += 1
+        breakdown.append({
+            "question": q.get("text"),
+            "chosen_index": chosen,
+            "correct_index": ci,
+            "correct": is_correct,
+        })
+    score = round((correct / total * 100) if total else 0.0, 1)
+    feedback = (
+        f"Answered {correct}/{total} correctly."
+    )
+    strengths = [f"{correct}/{total} correct on {input_data.round}"] if correct else []
+    gaps = [f"Missed {total - correct}/{total} questions"] if (total - correct) > 0 else []
+    return {
+        "score": score,
+        "feedback": feedback,
+        "strengths": strengths,
+        "gaps": gaps,
+        "breakdown": breakdown,
+    }
+
+
+def _score_free_form(input_data: QaScoreInput) -> Dict:
     if USE_MOCK or not os.environ.get("MISTRAL_API_KEY"):
-        return _mock_score(input_data)
+        return _mock_score_free_form(input_data)
 
     try:
         from services.llm_tracker import LLMCallTimer
 
+        question_texts = [q.get("text", "") for q in input_data.questions]
         qa_pairs = "\n\n".join(
             f"Q{i+1}: {q}\nA{i+1}: {a or '(no answer)'}"
-            for i, (q, a) in enumerate(zip(input_data.questions, input_data.answers))
+            for i, (q, a) in enumerate(zip(question_texts, input_data.answers))
         )
 
-        rubric = {
-            "aptitude": "Score correctness of reasoning and clarity. Penalize hand-waving. 0–100.",
-            "reasoning": "Score quality of thinking, structure, and role-relevance. Reward concrete examples. 0–100.",
-            "technical": "Score technical depth, accuracy, and specificity to the candidate's claimed experience. Penalize vague answers. 0–100.",
-        }.get(input_data.round, "Score 0–100.")
-
-        prompt = f"""You are evaluating a candidate's written answers for the "{input_data.round}" round of a screening for the role of {input_data.job_title}.
+        prompt = f"""You are evaluating a candidate's written answers for the "technical" round of a screening for the role of {input_data.job_title}.
 
 REQUIRED SKILLS: {", ".join(input_data.required_skills) or "general"}
 
 RUBRIC
-{rubric}
+Score technical depth, accuracy, and specificity to the candidate's claimed experience. Penalize vague answers. 0-100.
 
-CANDIDATE'S RESUME (for context — only relevant for technical round):
+CANDIDATE'S RESUME (for context):
 {input_data.resume_text[:1500]}
 
 ANSWERS TO EVALUATE
@@ -152,12 +244,12 @@ ANSWERS TO EVALUATE
 Return ONLY valid JSON:
 {{
   "score": <0-100 integer>,
-  "feedback": "<2-3 sentences summarising performance for HR>",
+  "feedback": "<2-3 sentences for HR>",
   "strengths": ["short bullet", ...],
   "gaps": ["short bullet", ...]
 }}"""
 
-        with LLMCallTimer(f"qa_interview_score_{input_data.round}", MODEL) as timer:
+        with LLMCallTimer("qa_interview_score_technical", MODEL) as timer:
             response = _client().chat.complete(
                 model=MODEL,
                 messages=[{"role": "user", "content": prompt}],
@@ -178,8 +270,8 @@ Return ONLY valid JSON:
         }
 
     except Exception as e:
-        print(f"[qa_interview] score fallback: {e}")
-        return _mock_score(input_data)
+        print(f"[qa_interview] score_free_form fallback: {e}")
+        return _mock_score_free_form(input_data)
 
 
 def aggregate_final(scores: Dict[str, Dict]) -> Dict:
@@ -206,29 +298,67 @@ def aggregate_final(scores: Dict[str, Dict]) -> Dict:
 
 # ─── Mock fallbacks ──────────────────────────────────────────────────────────
 
-def _mock_questions(input_data: QaGenerateInput) -> Dict[str, List[str]]:
+def _mock_questions(input_data: QaGenerateInput) -> Dict[str, List[Dict[str, Any]]]:
     skill = (input_data.required_skills or ["the role"])[0]
     return {
         "aptitude": [
-            "If a process takes 12 minutes per item and you have 75 items, how many full work-hours of effort is that?",
-            "A dashboard's daily active users grew from 1,200 to 1,650 in a month. What is the percentage increase, rounded to one decimal?",
-            "Which is larger and by how much: 7/12 or 0.6?",
+            {
+                "text": "If a process takes 12 minutes per item and you have 75 items, how many full work-hours of effort is that?",
+                "options": ["12 hours", "15 hours", "18 hours", "20 hours"],
+                "correct_index": 1,
+            },
+            {
+                "text": "A dashboard's daily active users grew from 1,200 to 1,650 in a month. What is the percentage increase, rounded to one decimal?",
+                "options": ["27.3%", "37.5%", "45.0%", "55.0%"],
+                "correct_index": 1,
+            },
+            {
+                "text": "Which is larger: 7/12 or 0.6?",
+                "options": ["7/12", "0.6", "They're equal", "Cannot be determined"],
+                "correct_index": 1,
+            },
         ],
         "reasoning": [
-            f"You inherit a {input_data.job_title} project that is two weeks behind. Walk through how you'd diagnose the cause and decide what to cut.",
-            "A teammate insists on a solution you believe is wrong. You have 24 hours before commit. How do you handle it?",
-            "Describe how you'd validate that a new feature you shipped is actually working in production.",
+            {
+                "text": f"You inherit a {input_data.job_title} project that is two weeks behind. What's the FIRST thing you should do?",
+                "options": [
+                    "Push the team to work overtime to catch up",
+                    "Diagnose the root cause of the delay before deciding what to cut",
+                    "Tell stakeholders the deadline will slip",
+                    "Add more engineers to the project",
+                ],
+                "correct_index": 1,
+            },
+            {
+                "text": "A teammate insists on a solution you believe is wrong, with 24 hours before commit. The most professional response is:",
+                "options": [
+                    "Override their choice — you're more senior",
+                    "Let them ship it; you can fix it later",
+                    "Ask for their reasoning, share your concerns with concrete examples, escalate if needed",
+                    "Stay quiet to keep the peace",
+                ],
+                "correct_index": 2,
+            },
+            {
+                "text": "How would you BEST validate that a new feature is actually working in production?",
+                "options": [
+                    "Check that the deploy succeeded",
+                    "Ask users informally if they like it",
+                    "Define metrics tied to the feature's goal and monitor them post-launch",
+                    "Wait for support tickets",
+                ],
+                "correct_index": 2,
+            },
         ],
         "technical": [
-            f"Your resume mentions experience with {skill}. Describe the trickiest bug or design issue you hit and exactly how you resolved it.",
-            f"For a {input_data.job_title} role, walk through how you'd structure your first 30 days based on what you've done before.",
-            "Pick one project from your resume and explain its architecture, the trade-offs you made, and what you'd do differently today.",
+            {"text": f"Your resume mentions experience with {skill}. Describe the trickiest bug or design issue you hit and exactly how you resolved it."},
+            {"text": f"For a {input_data.job_title} role, walk through how you'd structure your first 30 days based on what you've done before."},
+            {"text": "Pick one project from your resume and explain its architecture, the trade-offs you made, and what you'd do differently today."},
         ],
     }
 
 
-def _mock_score(input_data: QaScoreInput) -> Dict:
-    # Heuristic: score on answer length / non-emptiness
+def _mock_score_free_form(input_data: QaScoreInput) -> Dict:
     total_chars = sum(len((a or "").strip()) for a in input_data.answers)
     answered = sum(1 for a in input_data.answers if (a or "").strip())
     base = (answered / max(1, len(input_data.questions))) * 60
@@ -236,7 +366,7 @@ def _mock_score(input_data: QaScoreInput) -> Dict:
     score = round(min(95, base + depth_bonus), 1)
     return {
         "score": score,
-        "feedback": f"Mock evaluation for {input_data.round} round. Answered {answered}/{len(input_data.questions)} questions.",
-        "strengths": ["Provided answers to all questions"] if answered == len(input_data.questions) else [],
+        "feedback": f"Mock evaluation for technical round. Answered {answered}/{len(input_data.questions)} questions.",
+        "strengths": ["Provided answers"] if answered == len(input_data.questions) else [],
         "gaps": [f"Skipped {len(input_data.questions) - answered} question(s)"] if answered < len(input_data.questions) else [],
     }

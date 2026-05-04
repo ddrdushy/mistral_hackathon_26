@@ -3,6 +3,7 @@
 import { useState, useCallback, useEffect } from "react";
 import Sidebar from "./Sidebar";
 import Topbar from "./Topbar";
+import OnboardingTour from "@/components/tour/OnboardingTour";
 
 interface DashboardShellProps {
   children: React.ReactNode;
@@ -54,6 +55,9 @@ export default function DashboardShell({ children }: DashboardShellProps) {
           {children}
         </main>
       </div>
+
+      {/* Guided tour for first-time users */}
+      <OnboardingTour />
     </div>
   );
 }

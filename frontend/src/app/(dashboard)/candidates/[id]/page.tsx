@@ -13,6 +13,10 @@ import {
   timeAgo,
 } from "@/lib/constants";
 import type { Application, InterviewLink, HiringReport } from "@/types/index";
+import ScoreGauge from "@/components/viz/ScoreGauge";
+import RadialMeter from "@/components/viz/RadialMeter";
+import RoundBars from "@/components/viz/RoundBars";
+import PipelineStepper from "@/components/viz/PipelineStepper";
 import Card from "@/components/ui/Card";
 import Button from "@/components/ui/Button";
 import LoadingSpinner from "@/components/ui/LoadingSpinner";
@@ -104,6 +108,7 @@ export default function CandidateDetailPage({
 
   // Transcript collapse
   const [transcriptOpen, setTranscriptOpen] = useState(false);
+  const [aiReportOpen, setAiReportOpen] = useState(false);
 
   // Interview link
   const [linkLoading, setLinkLoading] = useState(false);
@@ -456,12 +461,21 @@ export default function CandidateDetailPage({
       </Card>
 
       {/* ═══════════════════════════════════════════════════════════════════ */}
+      {/* RESULTS DASHBOARD — pipeline stepper + score gauges + integrity   */}
+      {/* ═══════════════════════════════════════════════════════════════════ */}
+      <ResultsHero app={app} />
+
+      {/* ═══════════════════════════════════════════════════════════════════ */}
       {/* FULL-WIDTH: AI Autonomous Hiring Report (TOP OF PAGE)             */}
       {/* ═══════════════════════════════════════════════════════════════════ */}
       {hiringReport && (
         <div className="rounded-xl border border-indigo-200 bg-gradient-to-br from-indigo-50 via-white to-violet-50 overflow-hidden shadow-sm">
-          {/* Report header */}
-          <div className="bg-gradient-to-r from-indigo-600 via-indigo-700 to-violet-700 px-6 py-4">
+          {/* Report header (clickable to toggle) */}
+          <button
+            type="button"
+            onClick={() => setAiReportOpen((v) => !v)}
+            className="w-full bg-gradient-to-r from-indigo-600 via-indigo-700 to-violet-700 px-6 py-4 text-left hover:brightness-105 transition"
+          >
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <div className="w-9 h-9 rounded-lg bg-white/20 backdrop-blur-sm flex items-center justify-center">
@@ -472,7 +486,7 @@ export default function CandidateDetailPage({
                     AI Autonomous Hiring Report
                   </h2>
                   <p className="text-indigo-200 text-xs mt-0.5">
-                    End-to-end evaluation completed by HireOps AI
+                    {aiReportOpen ? "Click to collapse" : "Click to expand the full evaluation"}
                   </p>
                 </div>
               </div>
@@ -489,10 +503,18 @@ export default function CandidateDetailPage({
                   <p className="text-indigo-200 text-[10px] uppercase tracking-wider">Confidence</p>
                   <p className="text-white font-bold text-lg tabular-nums leading-none">{hiringReport.confidence_pct}%</p>
                 </div>
+                <svg
+                  className={`h-5 w-5 text-white/80 transition-transform ${aiReportOpen ? "rotate-180" : ""}`}
+                  viewBox="0 0 20 20"
+                  fill="currentColor"
+                >
+                  <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.06l3.71-3.83a.75.75 0 111.08 1.04l-4.24 4.39a.75.75 0 01-1.08 0L5.21 8.27a.75.75 0 01.02-1.06z" clipRule="evenodd" />
+                </svg>
               </div>
             </div>
-          </div>
+          </button>
 
+          {aiReportOpen && (
           <div className="p-6 space-y-6">
             {/* Executive Summary */}
             <div>
@@ -632,6 +654,7 @@ export default function CandidateDetailPage({
               </div>
             </div>
           </div>
+          )}
         </div>
       )}
 
@@ -1210,14 +1233,14 @@ export default function CandidateDetailPage({
                 </div>
 
                 {/* Strengths */}
-                {interview.strengths.length > 0 && (
+                {(interview.strengths?.length ?? 0) > 0 && (
                   <div>
                     <h4 className="text-sm font-semibold text-slate-700 mb-2 flex items-center gap-1.5">
                       <CheckCircleSolid className="h-4 w-4 text-green-500" />
                       Strengths
                     </h4>
                     <ul className="space-y-1.5">
-                      {interview.strengths.map((item, i) => (
+                      {(interview.strengths ?? []).map((item, i) => (
                         <li
                           key={i}
                           className="flex items-start gap-2 text-sm text-slate-600"
@@ -1231,14 +1254,14 @@ export default function CandidateDetailPage({
                 )}
 
                 {/* Concerns */}
-                {interview.concerns.length > 0 && (
+                {(interview.concerns?.length ?? 0) > 0 && (
                   <div>
                     <h4 className="text-sm font-semibold text-slate-700 mb-2 flex items-center gap-1.5">
                       <XCircleIcon className="h-4 w-4 text-red-500" />
                       Concerns
                     </h4>
                     <ul className="space-y-1.5">
-                      {interview.concerns.map((item, i) => (
+                      {(interview.concerns ?? []).map((item, i) => (
                         <li
                           key={i}
                           className="flex items-start gap-2 text-sm text-slate-600"
@@ -1262,6 +1285,7 @@ export default function CandidateDetailPage({
                     </p>
                   </div>
                 )}
+
               </div>
             </Card>
           )}
@@ -1447,37 +1471,20 @@ export default function CandidateDetailPage({
               </div>
             )}
 
-            {/* Face tracking summary */}
-            {app.interview_face_tracking_json && (
-              <div className="grid grid-cols-2 gap-3 mb-4">
-                <div className="bg-slate-50 rounded-lg p-3 border border-slate-100 text-center">
-                  <p className="text-xs font-medium text-slate-500 uppercase tracking-wider">Attention Score</p>
-                  <p className="mt-1 text-lg font-bold text-slate-800">
-                    {Math.round(app.interview_face_tracking_json.avg_attention_score * 100)}%
-                  </p>
+            {/* Interview Recording — voice interviews only (Q&A has no audio) */}
+            {app.interview_link_status === "interview_completed" &&
+              interview?.mode !== "qa" && (
+                <div className="mb-4">
+                  <p className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-2">Interview Recording</p>
+                  <audio
+                    controls
+                    className="w-full"
+                    src={`${process.env.NEXT_PUBLIC_API_URL || "https://dushy2009-hireops-ai.hf.space/api/v1"}/screening/${app.id}/audio`}
+                  >
+                    Your browser does not support audio playback.
+                  </audio>
                 </div>
-                <div className="bg-slate-50 rounded-lg p-3 border border-slate-100 text-center">
-                  <p className="text-xs font-medium text-slate-500 uppercase tracking-wider">Face Present</p>
-                  <p className="mt-1 text-lg font-bold text-slate-800">
-                    {app.interview_face_tracking_json.face_present_percentage}%
-                  </p>
-                </div>
-              </div>
-            )}
-
-            {/* Interview Recording */}
-            {app.interview_link_status === "interview_completed" && (
-              <div className="mb-4">
-                <p className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-2">Interview Recording</p>
-                <audio
-                  controls
-                  className="w-full"
-                  src={`${process.env.NEXT_PUBLIC_API_URL || "https://dushy2009-hireops-ai.hf.space/api/v1"}/screening/${app.id}/audio`}
-                >
-                  Your browser does not support audio playback.
-                </audio>
-              </div>
-            )}
+              )}
 
             {/* Transcript viewer */}
             {app.screening_transcript ? (
@@ -1642,3 +1649,200 @@ export default function CandidateDetailPage({
     </div>
   );
 }
+
+// ── Results hero: pipeline + score gauges + round bars + integrity stats ──
+
+function ResultsHero({ app }: { app: Application }) {
+  const interview = app.interview_score_json;
+  const isQa = interview?.mode === "qa";
+  const rounds = isQa
+    ? [
+        {
+          label: "Aptitude",
+          score: interview?.rounds?.aptitude?.score ?? null,
+          weight: 0.25,
+        },
+        {
+          label: "Reasoning",
+          score: interview?.rounds?.reasoning?.score ?? null,
+          weight: 0.3,
+        },
+        {
+          label: "Technical",
+          score: interview?.rounds?.technical?.score ?? null,
+          weight: 0.45,
+        },
+      ]
+    : [];
+
+  const facePct = app.interview_face_tracking_json?.face_present_percentage ?? null;
+  const attention =
+    app.interview_face_tracking_json?.avg_attention_score != null
+      ? app.interview_face_tracking_json.avg_attention_score * 100
+      : null;
+  const fraud = app.qa_fraud_risk_score ?? null;
+
+  const thresholds = app.thresholds || {
+    resume_min: 80,
+    interview_min: 75,
+    reject_below: 50,
+  };
+
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white shadow-sm p-5 space-y-5">
+      {/* Pipeline */}
+      <div>
+        <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-2">
+          Pipeline progress
+        </p>
+        <PipelineStepper stage={app.stage} />
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 pt-1">
+        {/* Score gauges */}
+        <div className="lg:col-span-7">
+          <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-3">
+            Scores
+          </p>
+          <div className="grid grid-cols-3 gap-3">
+            <ScoreGauge
+              value={app.resume_score}
+              threshold={thresholds.resume_min}
+              label="Resume"
+              size={130}
+            />
+            <ScoreGauge
+              value={app.interview_score}
+              threshold={thresholds.interview_min}
+              label="Interview"
+              size={130}
+            />
+            <ScoreGauge
+              value={app.final_score}
+              threshold={thresholds.reject_below}
+              label="Final"
+              size={130}
+            />
+          </div>
+          <p className="mt-3 text-[11px] text-slate-400 text-center">
+            Dot = decision threshold
+          </p>
+        </div>
+
+        {/* Q&A round breakdown OR integrity meter */}
+        <div className="lg:col-span-5 lg:border-l lg:border-slate-100 lg:pl-5">
+          {isQa ? (
+            <>
+              <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-3">
+                Q&A round scores
+              </p>
+              <RoundBars rounds={rounds} />
+            </>
+          ) : (
+            <>
+              <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-3">
+                Recommendation
+              </p>
+              <div className="flex items-center gap-2">
+                <span
+                  className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-semibold capitalize ${
+                    app.recommendation === "advance"
+                      ? "bg-emerald-50 text-emerald-700"
+                      : app.recommendation === "reject"
+                        ? "bg-red-50 text-red-700"
+                        : app.recommendation === "hold"
+                          ? "bg-amber-50 text-amber-700"
+                          : "bg-slate-100 text-slate-600"
+                  }`}
+                >
+                  {app.recommendation || "pending"}
+                </span>
+              </div>
+              {app.ai_next_action && (
+                <p className="mt-3 text-xs text-slate-600 leading-relaxed">
+                  {app.ai_next_action}
+                </p>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Integrity strip — shown when we have any signals */}
+      {(fraud != null || facePct != null || attention != null) && (
+        <div className="border-t border-slate-100 pt-4">
+          <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-3">
+            Interview integrity
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-center">
+            {fraud != null && (
+              <div className="md:col-span-1">
+                <RadialMeter value={fraud} label="Fraud risk" size={130} />
+              </div>
+            )}
+            <div className={`md:col-span-${fraud != null ? 3 : 4} grid grid-cols-2 sm:grid-cols-4 gap-2`}>
+              <HeroStat
+                label="Face Present"
+                value={facePct != null ? `${Math.round(facePct)}%` : "—"}
+                warn={facePct != null && facePct < 80}
+              />
+              <HeroStat
+                label="Attention"
+                value={attention != null ? `${Math.round(attention)}%` : "—"}
+                warn={attention != null && attention < 60}
+              />
+              <HeroStat
+                label="Tab / blur"
+                value={app.qa_signals_summary?.summary?.focus_loss_count ?? "—"}
+                warn={
+                  (app.qa_signals_summary?.summary?.focus_loss_count ?? 0) > 1
+                }
+              />
+              <HeroStat
+                label="Pastes"
+                value={app.qa_signals_summary?.summary?.paste_count ?? "—"}
+                sub={
+                  app.qa_signals_summary?.summary?.paste_chars
+                    ? `${app.qa_signals_summary.summary.paste_chars} chars`
+                    : undefined
+                }
+                warn={
+                  (app.qa_signals_summary?.summary?.paste_chars ?? 0) > 200
+                }
+              />
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function HeroStat({
+  label,
+  value,
+  sub,
+  warn,
+}: {
+  label: string;
+  value: string | number;
+  sub?: string;
+  warn?: boolean;
+}) {
+  return (
+    <div className="rounded-lg bg-slate-50 px-3 py-2.5 text-center border border-slate-100">
+      <p className="text-[10px] font-medium text-slate-500 uppercase tracking-wider">
+        {label}
+      </p>
+      <p
+        className={`mt-0.5 text-base font-bold tabular-nums ${
+          warn ? "text-red-600" : "text-slate-800"
+        }`}
+      >
+        {value}
+      </p>
+      {sub && <p className="text-[10px] text-slate-500">{sub}</p>}
+    </div>
+  );
+}
+

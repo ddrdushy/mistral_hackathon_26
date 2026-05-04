@@ -32,9 +32,13 @@ def get_db():
 
 
 def init_db():
-    from models import Job, Email, Candidate, Application, Event, InterviewLink, Setting, QaSession  # noqa: F401
+    from models import (  # noqa: F401
+        Job, Email, Candidate, Application, Event, InterviewLink, Setting, QaSession,
+        Tenant, User, EmailVerification, PasswordReset,
+    )
     Base.metadata.create_all(bind=engine)
     _run_migrations()
+    _backfill_demo_tenant()
 
 
 def _run_migrations():
@@ -97,3 +101,77 @@ def _run_migrations():
                         ))
                     except Exception:
                         pass
+
+    # QaSession new columns (signals + fraud_risk_score)
+    qa_cols = {
+        "signals_json": "TEXT DEFAULT '{}'",
+        "fraud_risk_score": "FLOAT",
+    }
+    if "qa_sessions" in insp.get_table_names():
+        existing = {c["name"] for c in insp.get_columns("qa_sessions")}
+        with engine.begin() as conn:
+            for col_name, col_type in qa_cols.items():
+                if col_name not in existing:
+                    try:
+                        conn.execute(text(
+                            f"ALTER TABLE qa_sessions ADD COLUMN {col_name} {col_type}"
+                        ))
+                    except Exception:
+                        pass
+
+    # Multi-tenancy: add tenant_id to every tenant-scoped table
+    tenant_scoped_tables = [
+        "jobs", "emails", "candidates", "applications", "events",
+        "interview_links", "qa_sessions", "settings",
+    ]
+    for tbl in tenant_scoped_tables:
+        if tbl not in insp.get_table_names():
+            continue
+        cols = {c["name"] for c in insp.get_columns(tbl)}
+        if "tenant_id" in cols:
+            continue
+        with engine.begin() as conn:
+            try:
+                conn.execute(text(f"ALTER TABLE {tbl} ADD COLUMN tenant_id INTEGER"))
+            except Exception:
+                pass
+
+
+def _backfill_demo_tenant():
+    """Ensure a 'demo' tenant exists and every legacy tenant_id-NULL row is owned by it.
+
+    Runs on every startup but is idempotent: skips work when nothing's NULL.
+    """
+    from models import Tenant
+    db = SessionLocal()
+    try:
+        demo = db.query(Tenant).filter(Tenant.slug == "demo").first()
+        if not demo:
+            demo = Tenant(slug="demo", name="Demo Tenant", plan="pro")
+            db.add(demo)
+            db.commit()
+            db.refresh(demo)
+
+        # Backfill any existing rows that predate multi-tenancy
+        tenant_scoped_tables = [
+            "jobs", "emails", "candidates", "applications", "events",
+            "interview_links", "qa_sessions", "settings",
+        ]
+        from sqlalchemy import text, inspect as sa_inspect
+        insp = sa_inspect(engine)
+        with engine.begin() as conn:
+            for tbl in tenant_scoped_tables:
+                if tbl not in insp.get_table_names():
+                    continue
+                cols = {c["name"] for c in insp.get_columns(tbl)}
+                if "tenant_id" not in cols:
+                    continue
+                try:
+                    conn.execute(
+                        text(f"UPDATE {tbl} SET tenant_id = :tid WHERE tenant_id IS NULL"),
+                        {"tid": demo.id},
+                    )
+                except Exception:
+                    pass
+    finally:
+        db.close()

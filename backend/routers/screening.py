@@ -23,15 +23,35 @@ from agents.qa_interview import (
     QaGenerateInput, QaScoreInput, ROUND_ORDER,
     generate_question_set, score_round, aggregate_final,
 )
+from auth.dependencies import current_session, CurrentSession
 
 router = APIRouter(prefix="/api/v1/screening", tags=["screening"])
 
 WEBHOOK_SECRET = os.getenv("ELEVENLABS_WEBHOOK_SECRET", "")
 
 
-def _log_event(db: Session, app_id: int, event_type: str, payload: dict):
-    event = Event(app_id=app_id, event_type=event_type, payload=json.dumps(payload))
+def _log_event(db: Session, app_id: int, event_type: str, payload: dict, tenant_id: int | None = None):
+    event = Event(
+        app_id=app_id,
+        event_type=event_type,
+        payload=json.dumps(payload),
+        tenant_id=tenant_id,
+    )
     db.add(event)
+
+
+def _hr_app(db: Session, app_id: int, session: CurrentSession) -> Application:
+    """Look up an Application that belongs to the calling tenant. 404 otherwise.
+
+    Use this in every HR-side endpoint instead of a raw `db.query(Application)...first()`.
+    """
+    app = db.query(Application).filter(
+        Application.id == app_id,
+        Application.tenant_id == session.tenant.id,
+    ).first()
+    if not app:
+        raise HTTPException(status_code=404, detail="Application not found")
+    return app
 
 
 def _apply_threshold_decision(app: Application, job: Job, db: Session) -> dict:
@@ -146,9 +166,16 @@ def _apply_threshold_decision(app: Application, job: Job, db: Session) -> dict:
 # ═══════════════════════════════════════
 
 @router.post("/generate-link")
-async def generate_interview_link(req: InterviewLinkGenerateRequest, db: Session = Depends(get_db)):
+async def generate_interview_link(
+    req: InterviewLinkGenerateRequest,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(current_session),
+):
     """Generate a unique interview link for an application."""
-    app = db.query(Application).filter(Application.id == req.app_id).first()
+    app = db.query(Application).filter(
+        Application.id == req.app_id,
+        Application.tenant_id == session.tenant.id,
+    ).first()
     if not app:
         raise HTTPException(status_code=404, detail="Application not found")
 
@@ -160,6 +187,7 @@ async def generate_interview_link(req: InterviewLinkGenerateRequest, db: Session
 
     token = uuid.uuid4().hex
     link = InterviewLink(
+        tenant_id=session.tenant.id,
         token=token,
         app_id=app.id,
         status="generated",
@@ -195,7 +223,7 @@ async def generate_interview_link(req: InterviewLinkGenerateRequest, db: Session
 
 
 @router.post("/send-link")
-async def send_interview_link(body: dict, db: Session = Depends(get_db)):
+async def send_interview_link(body: dict, db: Session = Depends(get_db), session: CurrentSession = Depends(current_session)):
     """Actually send interview link email to the candidate via SMTP."""
     token = body.get("token")
     link = db.query(InterviewLink).filter(InterviewLink.token == token).first()
@@ -247,11 +275,9 @@ async def send_interview_link(body: dict, db: Session = Depends(get_db)):
 
 
 @router.post("/{app_id}/send-rejection")
-async def send_rejection_email(app_id: int, db: Session = Depends(get_db)):
+async def send_rejection_email(app_id: int, db: Session = Depends(get_db), session: CurrentSession = Depends(current_session)):
     """Send rejection email to candidate."""
-    app = db.query(Application).filter(Application.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail="Application not found")
+    app = _hr_app(db, app_id, session)
 
     candidate = db.query(Candidate).filter(Candidate.id == app.candidate_id).first()
     job = db.query(Job).filter(Job.id == app.job_id).first()
@@ -281,11 +307,9 @@ async def send_rejection_email(app_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/{app_id}/send-email")
-async def send_custom_email_endpoint(app_id: int, body: dict, db: Session = Depends(get_db)):
+async def send_custom_email_endpoint(app_id: int, body: dict, db: Session = Depends(get_db), session: CurrentSession = Depends(current_session)):
     """Send a custom email to candidate (e.g., AI-generated follow-up draft)."""
-    app = db.query(Application).filter(Application.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail="Application not found")
+    app = _hr_app(db, app_id, session)
 
     candidate = db.query(Candidate).filter(Candidate.id == app.candidate_id).first()
     if not candidate or not candidate.email:
@@ -318,11 +342,9 @@ async def send_custom_email_endpoint(app_id: int, body: dict, db: Session = Depe
 
 
 @router.post("/{app_id}/book-slot")
-async def book_interview_slot(app_id: int, body: dict, db: Session = Depends(get_db)):
+async def book_interview_slot(app_id: int, body: dict, db: Session = Depends(get_db), session: CurrentSession = Depends(current_session)):
     """Book an interview slot, generate Round 2 interview link, and send email with .ics calendar invite."""
-    app = db.query(Application).filter(Application.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail="Application not found")
+    app = _hr_app(db, app_id, session)
 
     slot = body.get("slot", "")
     if not slot:
@@ -446,11 +468,9 @@ async def book_interview_slot(app_id: int, body: dict, db: Session = Depends(get
 
 
 @router.post("/{app_id}/send-draft")
-async def send_email_draft(app_id: int, db: Session = Depends(get_db)):
+async def send_email_draft(app_id: int, db: Session = Depends(get_db), session: CurrentSession = Depends(current_session)):
     """Send the AI-generated email draft to the candidate."""
-    app = db.query(Application).filter(Application.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail="Application not found")
+    app = _hr_app(db, app_id, session)
 
     if not app.interview_score_json:
         raise HTTPException(status_code=400, detail="No interview evaluation available")
@@ -496,11 +516,9 @@ async def send_email_draft(app_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/{app_id}/calculate-final-score")
-async def calculate_final_score(app_id: int, db: Session = Depends(get_db)):
+async def calculate_final_score(app_id: int, db: Session = Depends(get_db), session: CurrentSession = Depends(current_session)):
     """Calculate a combined final score from resume + interview using LLM."""
-    app = db.query(Application).filter(Application.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail="Application not found")
+    app = _hr_app(db, app_id, session)
 
     resume_score = app.resume_score or 0
     interview_score = app.interview_score or 0
@@ -580,14 +598,12 @@ async def calculate_final_score(app_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/{app_id}/hiring-report")
-async def get_hiring_report(app_id: int, db: Session = Depends(get_db)):
+async def get_hiring_report(app_id: int, db: Session = Depends(get_db), session: CurrentSession = Depends(current_session)):
     """Generate a comprehensive autonomous hiring report for an application."""
     from agents.hiring_report import generate_hiring_report, HiringReportInput
     from dataclasses import asdict
 
-    app = db.query(Application).filter(Application.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail="Application not found")
+    app = _hr_app(db, app_id, session)
 
     candidate = db.query(Candidate).filter(Candidate.id == app.candidate_id).first()
     job = db.query(Job).filter(Job.id == app.job_id).first()
@@ -631,7 +647,7 @@ async def get_hiring_report(app_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/{app_id}/links")
-async def get_application_links(app_id: int, db: Session = Depends(get_db)):
+async def get_application_links(app_id: int, db: Session = Depends(get_db), session: CurrentSession = Depends(current_session)):
     """Get all interview links for an application."""
     links = db.query(InterviewLink).filter(
         InterviewLink.app_id == app_id
@@ -1035,12 +1051,10 @@ async def submit_interview_transcript(token: str, req: InterviewTranscriptSubmit
 # ═══════════════════════════════════════
 
 @router.post("/evaluate")
-async def evaluate_screening(body: dict, db: Session = Depends(get_db)):
+async def evaluate_screening(body: dict, db: Session = Depends(get_db), session: CurrentSession = Depends(current_session)):
     """Manually trigger evaluation of an existing transcript."""
     app_id = body.get("app_id")
-    app = db.query(Application).filter(Application.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail="Application not found")
+    app = _hr_app(db, app_id, session)
 
     if not app.screening_transcript:
         raise HTTPException(status_code=400, detail="No transcript available. Complete an interview first.")
@@ -1162,7 +1176,7 @@ async def evaluate_screening(body: dict, db: Session = Depends(get_db)):
 
 
 @router.post("/transcript")
-async def store_transcript(req: ScreeningTranscriptRequest, db: Session = Depends(get_db)):
+async def store_transcript(req: ScreeningTranscriptRequest, db: Session = Depends(get_db), session: CurrentSession = Depends(current_session)):
     """Manual transcript upload (fallback)."""
     app = db.query(Application).filter(Application.id == req.app_id).first()
     if not app:
@@ -1179,11 +1193,9 @@ async def store_transcript(req: ScreeningTranscriptRequest, db: Session = Depend
 
 
 @router.get("/{app_id}/status")
-async def get_screening_status(app_id: int, db: Session = Depends(get_db)):
+async def get_screening_status(app_id: int, db: Session = Depends(get_db), session: CurrentSession = Depends(current_session)):
     """Get screening/interview status for an application."""
-    app = db.query(Application).filter(Application.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail="Application not found")
+    app = _hr_app(db, app_id, session)
 
     # Get latest active link
     latest_link = db.query(InterviewLink).filter(
@@ -1218,11 +1230,9 @@ async def get_screening_status(app_id: int, db: Session = Depends(get_db)):
 # ═══════════════════════════════════════
 
 @router.get("/{app_id}/audio")
-async def get_interview_audio(app_id: int, db: Session = Depends(get_db)):
+async def get_interview_audio(app_id: int, db: Session = Depends(get_db), session: CurrentSession = Depends(current_session)):
     """Proxy the interview audio recording from ElevenLabs API."""
-    app = db.query(Application).filter(Application.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail="Application not found")
+    app = _hr_app(db, app_id, session)
 
     # Find the conversation ID from the latest completed interview link
     link = db.query(InterviewLink).filter(
@@ -1460,8 +1470,72 @@ async def qa_start(token: str, db: Session = Depends(get_db)):
         current_round=current,
         round_index=round_index,
         total_rounds=len(ROUND_ORDER),
-        questions=questions_map.get(current, []),
+        questions=_questions_for_client(questions_map.get(current, [])),
     )
+
+
+def _questions_for_client(stored: list) -> list:
+    """Strip server-only fields (correct_index) before sending to candidate."""
+    out = []
+    for q in stored or []:
+        if not isinstance(q, dict):
+            # Backwards-compat: legacy stored questions were plain strings
+            out.append({"text": str(q)})
+            continue
+        item = {"text": q.get("text", "")}
+        if isinstance(q.get("options"), list) and q.get("options"):
+            item["options"] = [str(o) for o in q["options"]]
+        out.append(item)
+    return out
+
+
+def _compute_fraud_risk(signals_map: dict, face_tracking: dict | None) -> tuple[float, dict]:
+    """Combine per-round behavioural signals + face-tracking aggregate into a 0-100 score.
+
+    Heuristic — not a final decision, just a flag for HR review:
+      - Each focus-loss event: +5 (capped at 30 from focus alone)
+      - Pasted chars: +1 per 50 chars (capped at 30)
+      - Face-presence below 80%: scaled penalty up to 25
+      - Avg attention below 0.6: scaled penalty up to 15
+    """
+    focus_loss_count = 0
+    paste_chars = 0
+    paste_count = 0
+    for r in ROUND_ORDER:
+        s = signals_map.get(r) or {}
+        focus_loss_count += int(s.get("focus_loss_count") or 0)
+        paste_chars += int(s.get("paste_chars") or 0)
+        paste_count += int(s.get("paste_count") or 0)
+
+    focus_penalty = min(30, focus_loss_count * 5)
+    paste_penalty = min(30, paste_chars // 50)
+
+    face_penalty = 0
+    attention_penalty = 0
+    if face_tracking:
+        face_present_pct = float(face_tracking.get("face_present_percentage") or 100)
+        if face_present_pct < 80:
+            face_penalty = min(25, (80 - face_present_pct) * 1.25)
+        attention = float(face_tracking.get("avg_attention_score") or 1.0)
+        if attention < 0.6:
+            attention_penalty = min(15, (0.6 - attention) * 30)
+
+    score = round(min(100, focus_penalty + paste_penalty + face_penalty + attention_penalty), 1)
+
+    summary = {
+        "focus_loss_count": focus_loss_count,
+        "paste_count": paste_count,
+        "paste_chars": paste_chars,
+        "face_present_percentage": float(face_tracking.get("face_present_percentage")) if face_tracking else None,
+        "avg_attention_score": float(face_tracking.get("avg_attention_score")) if face_tracking else None,
+        "components": {
+            "focus": focus_penalty,
+            "paste": paste_penalty,
+            "face": face_penalty,
+            "attention": attention_penalty,
+        },
+    }
+    return score, summary
 
 
 @router.post("/qa/{token}/submit-round", response_model=QaRoundSubmitResponse)
@@ -1476,6 +1550,7 @@ async def qa_submit_round(token: str, req: QaRoundSubmitRequest, db: Session = D
     questions_map = json.loads(session.questions_json)
     answers_map = json.loads(session.answers_json or "{}")
     scores_map = json.loads(session.scores_json or "{}")
+    signals_map = json.loads(session.signals_json or "{}")
 
     if req.round != session.current_round:
         raise HTTPException(
@@ -1505,8 +1580,11 @@ async def qa_submit_round(token: str, req: QaRoundSubmitRequest, db: Session = D
 
     answers_map[req.round] = answers
     scores_map[req.round] = score_result
+    if req.signals is not None:
+        signals_map[req.round] = req.signals.model_dump()
     session.answers_json = json.dumps(answers_map)
     session.scores_json = json.dumps(scores_map)
+    session.signals_json = json.dumps(signals_map)
 
     # Advance round
     current_idx = ROUND_ORDER.index(req.round)
@@ -1515,6 +1593,8 @@ async def qa_submit_round(token: str, req: QaRoundSubmitRequest, db: Session = D
     _log_event(db, app.id, "qa_round_submitted", {
         "round": req.round,
         "score": score_result.get("score"),
+        "focus_loss_count": (req.signals.focus_loss_count if req.signals else 0),
+        "paste_count": (req.signals.paste_count if req.signals else 0),
     })
 
     if next_round:
@@ -1525,7 +1605,7 @@ async def qa_submit_round(token: str, req: QaRoundSubmitRequest, db: Session = D
             round_score=score_result.get("score", 0),
             feedback=score_result.get("feedback", ""),
             next_round=next_round,
-            next_questions=questions_map.get(next_round, []),
+            next_questions=_questions_for_client(questions_map.get(next_round, [])),
             completed=False,
         )
 
@@ -1536,19 +1616,54 @@ async def qa_submit_round(token: str, req: QaRoundSubmitRequest, db: Session = D
     session.final_summary = final["summary"]
     session.completed_at = datetime.utcnow()
 
+    # Compute fraud risk from collected signals + face tracking aggregate (set by face-tracking endpoint)
+    face_tracking = None
+    if app.interview_face_tracking_json:
+        try:
+            face_tracking = json.loads(app.interview_face_tracking_json)
+        except (json.JSONDecodeError, TypeError):
+            face_tracking = None
+    fraud_score, fraud_summary = _compute_fraud_risk(signals_map, face_tracking)
+    session.fraud_risk_score = fraud_score
+
+    # Aggregate strengths/concerns from per-round scoring so the existing Interview Score
+    # panel renders with useful info (mirrors the voice-flow shape).
+    aggregated_strengths: list[str] = []
+    aggregated_gaps: list[str] = []
+    for r in ROUND_ORDER:
+        rs = scores_map.get(r) or {}
+        for s in (rs.get("strengths") or [])[:3]:
+            label = f"[{r.title()}] {s}"
+            if label not in aggregated_strengths:
+                aggregated_strengths.append(label)
+        for g in (rs.get("gaps") or [])[:3]:
+            label = f"[{r.title()}] {g}"
+            if label not in aggregated_gaps:
+                aggregated_gaps.append(label)
+
     app.interview_score = final["final_score"]
     app.interview_score_json = json.dumps({
         "score": final["final_score"],
         "decision": "pending",  # threshold logic re-derives
         "summary": final["summary"],
+        "strengths": aggregated_strengths[:8],
+        "concerns": aggregated_gaps[:8],
+        "communication_rating": "n/a",
+        "technical_depth": "see technical round score",
+        "cultural_fit": "n/a",
+        "scheduling_slots": [],
         "rounds": scores_map,
         "mode": "qa",
+        "fraud_risk_score": fraud_score,
+        "signals_summary": fraud_summary,
     })
     app.screening_transcript = _build_transcript_from_qa(questions_map, answers_map)
     app.screening_status = "completed"
     app.interview_link_status = "interview_completed"
     app.stage = "screened"
-    app.ai_next_action = "Q&A interview completed — awaiting threshold decision"
+    app.ai_next_action = (
+        f"Q&A interview completed — fraud risk {fraud_score}/100 — awaiting threshold decision"
+    )
     app.updated_at = datetime.utcnow()
 
     link.status = "interview_completed"
@@ -1564,6 +1679,7 @@ async def qa_submit_round(token: str, req: QaRoundSubmitRequest, db: Session = D
     _log_event(db, app.id, "qa_interview_completed", {
         "final_score": final["final_score"],
         "decision": decision.get("decision"),
+        "fraud_risk_score": fraud_score,
     })
     db.commit()
 
@@ -1576,6 +1692,7 @@ async def qa_submit_round(token: str, req: QaRoundSubmitRequest, db: Session = D
         completed=True,
         final_score=final["final_score"],
         final_summary=final["summary"],
+        fraud_risk_score=fraud_score,
     )
 
 
@@ -1588,9 +1705,31 @@ def _build_transcript_from_qa(questions_map: dict, answers_map: dict) -> str:
             continue
         parts.append(f"=== Round: {r.upper()} ===")
         for i, q in enumerate(qs):
-            a = ans[i] if i < len(ans) else ""
-            parts.append(f"Q{i+1}: {q}")
-            parts.append(f"A{i+1}: {a or '(no answer)'}")
+            raw = ans[i] if i < len(ans) else ""
+            if isinstance(q, dict):
+                text = q.get("text", "")
+                options = q.get("options")
+                parts.append(f"Q{i+1}: {text}")
+                if isinstance(options, list) and options:
+                    # MCQ: render options + which one was picked vs correct
+                    for j, opt in enumerate(options):
+                        marker = ""
+                        if j == q.get("correct_index"):
+                            marker += " (correct)"
+                        try:
+                            if int(str(raw).strip()) == j:
+                                marker += " ← chosen"
+                        except (ValueError, TypeError):
+                            pass
+                        parts.append(f"   {chr(65 + j)}. {opt}{marker}")
+                    parts.append(f"A{i+1}: option {raw}" if str(raw).strip() != "" else f"A{i+1}: (no answer)")
+                else:
+                    # Free-form
+                    parts.append(f"A{i+1}: {raw or '(no answer)'}")
+            else:
+                # Legacy: stored question is a plain string
+                parts.append(f"Q{i+1}: {q}")
+                parts.append(f"A{i+1}: {raw or '(no answer)'}")
         parts.append("")
     return "\n".join(parts)
 

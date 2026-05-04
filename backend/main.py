@@ -8,7 +8,7 @@ load_dotenv()
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from database import init_db
-from routers import inbox, jobs, candidates, applications, screening, reports, settings
+from routers import inbox, jobs, candidates, applications, screening, reports, settings, auth
 
 logger = logging.getLogger("hireops")
 
@@ -30,6 +30,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth.router)
 app.include_router(inbox.router)
 app.include_router(jobs.router)
 app.include_router(candidates.router)

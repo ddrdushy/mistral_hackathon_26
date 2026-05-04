@@ -57,6 +57,7 @@ export default function Sidebar({ isOpen, collapsed, onClose, onToggleCollapse }
 
       {/* Sidebar */}
       <aside
+        data-tour="sidebar"
         className={`
           fixed top-0 left-0 z-50 h-full bg-slate-900 flex flex-col
           transition-all duration-300 ease-in-out

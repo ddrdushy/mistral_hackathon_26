@@ -13,6 +13,7 @@ from services.email_service import load_sample_inbox, fetch_imap_emails, sync_im
 from agents.email_classifier import classify_email, EmailClassifierInput
 from services.gmail_service import gmail_manager
 from services.workflow_service import run_email_workflow, run_workflow_for_new_emails
+from auth.dependencies import current_session, CurrentSession
 
 router = APIRouter(prefix="/api/v1/inbox", tags=["inbox"])
 
@@ -34,7 +35,10 @@ class GmailPollRequest(BaseModel):
 
 
 @router.post("/gmail/connect")
-async def connect_gmail(req: GmailConnectRequest):
+async def connect_gmail(
+    req: GmailConnectRequest,
+    _: CurrentSession = Depends(current_session),
+):
     """Connect to Gmail via IMAP with App Password."""
     try:
         result = gmail_manager.connect(req.email, req.app_password)
@@ -44,20 +48,28 @@ async def connect_gmail(req: GmailConnectRequest):
 
 
 @router.post("/gmail/disconnect")
-async def disconnect_gmail():
+async def disconnect_gmail(_: CurrentSession = Depends(current_session)):
     """Disconnect Gmail and clear saved credentials."""
     gmail_manager.disconnect()
     return {"status": "disconnected"}
 
 
 @router.post("/gmail/sync")
-async def sync_gmail(db: Session = Depends(get_db)):
-    """Fetch new emails from Gmail and store them."""
+async def sync_gmail(
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(current_session),
+):
+    """Fetch new emails from Gmail and store them under the caller's tenant."""
     if not gmail_manager.connected:
         raise HTTPException(status_code=400, detail="Gmail not connected")
 
     try:
         new_emails = gmail_manager.fetch_new_emails(db, limit=20)
+        # Tag any newly synced emails (which were inserted with no tenant_id) for this tenant
+        for em in new_emails:
+            if em.tenant_id is None:
+                em.tenant_id = session.tenant.id
+        db.commit()
         return {
             "synced_count": len(new_emails),
             "new_emails": [_email_to_response(e) for e in new_emails],
@@ -67,13 +79,21 @@ async def sync_gmail(db: Session = Depends(get_db)):
 
 
 @router.post("/gmail/sync-and-process")
-async def sync_and_process_gmail(db: Session = Depends(get_db)):
+async def sync_and_process_gmail(
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(current_session),
+):
     """Fetch new emails from Gmail AND run auto-workflow on each."""
     if not gmail_manager.connected:
         raise HTTPException(status_code=400, detail="Gmail not connected")
 
     try:
         new_emails = gmail_manager.fetch_new_emails(db, limit=20)
+        for em in new_emails:
+            if em.tenant_id is None:
+                em.tenant_id = session.tenant.id
+        db.commit()
+
         workflow_results = []
 
         for em in new_emails:
@@ -96,7 +116,10 @@ async def sync_and_process_gmail(db: Session = Depends(get_db)):
 
 
 @router.post("/gmail/watch")
-async def start_gmail_watch(req: GmailPollRequest):
+async def start_gmail_watch(
+    req: GmailPollRequest,
+    _: CurrentSession = Depends(current_session),
+):
     """Start automatic polling for new Gmail emails + auto-workflow (legacy)."""
     try:
         result = gmail_manager.start_polling(interval=req.interval)
@@ -106,7 +129,7 @@ async def start_gmail_watch(req: GmailPollRequest):
 
 
 @router.post("/gmail/idle/start")
-async def start_gmail_idle():
+async def start_gmail_idle(_: CurrentSession = Depends(current_session)):
     """Start IMAP IDLE listener — triggers workflow instantly on new email."""
     try:
         result = gmail_manager.start_idle_listener()
@@ -116,19 +139,19 @@ async def start_gmail_idle():
 
 
 @router.post("/gmail/idle/stop")
-async def stop_gmail_idle():
+async def stop_gmail_idle(_: CurrentSession = Depends(current_session)):
     """Stop IMAP IDLE listener."""
     return gmail_manager.stop_idle_listener()
 
 
 @router.post("/gmail/stop")
-async def stop_gmail_watch():
+async def stop_gmail_watch(_: CurrentSession = Depends(current_session)):
     """Stop any active listener (IDLE or polling)."""
     return gmail_manager.stop_all()
 
 
 @router.get("/gmail/status")
-async def gmail_status():
+async def gmail_status(_: CurrentSession = Depends(current_session)):
     """Get Gmail connection and auto-workflow status."""
     return gmail_manager.get_status()
 
@@ -138,7 +161,10 @@ async def gmail_status():
 # ═══════════════════════════════════════
 
 @router.post("/workflow/run")
-async def run_auto_workflow(db: Session = Depends(get_db)):
+async def run_auto_workflow(
+    db: Session = Depends(get_db),
+    _: CurrentSession = Depends(current_session),
+):
     """Run auto-workflow on all unprocessed emails."""
     results = await run_workflow_for_new_emails(db)
     return {
@@ -148,8 +174,18 @@ async def run_auto_workflow(db: Session = Depends(get_db)):
 
 
 @router.post("/workflow/run/{email_id}")
-async def run_workflow_single(email_id: int, db: Session = Depends(get_db)):
+async def run_workflow_single(
+    email_id: int,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(current_session),
+):
     """Run auto-workflow for a single email."""
+    em = db.query(Email).filter(
+        Email.id == email_id,
+        Email.tenant_id == session.tenant.id,
+    ).first()
+    if not em:
+        raise HTTPException(status_code=404, detail="Email not found")
     result = await run_email_workflow(email_id, db)
     return result
 
@@ -159,18 +195,29 @@ async def run_workflow_single(email_id: int, db: Session = Depends(get_db)):
 # ═══════════════════════════════════════
 
 @router.post("/connect")
-async def connect_inbox(req: InboxConnectRequest, db: Session = Depends(get_db)):
+async def connect_inbox(
+    req: InboxConnectRequest,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(current_session),
+):
     global _inbox_config
     _inbox_config = req.model_dump()
     if req.mode == "sample":
         emails = load_sample_inbox(db)
+        for em in emails:
+            if em.tenant_id is None:
+                em.tenant_id = session.tenant.id
+        db.commit()
         return {"status": "connected", "mode": "sample", "emails_loaded": len(emails)}
     else:
         return {"status": "connected", "mode": "imap", "host": req.imap_host}
 
 
 @router.post("/sync", response_model=InboxSyncResponse)
-async def sync_inbox(db: Session = Depends(get_db)):
+async def sync_inbox(
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(current_session),
+):
     mode = _inbox_config.get("mode", "sample")
     if mode == "sample":
         emails = load_sample_inbox(db)
@@ -187,6 +234,11 @@ async def sync_inbox(db: Session = Depends(get_db)):
         )
         emails = sync_imap_emails(db, fetched)
 
+    for em in emails:
+        if em.tenant_id is None:
+            em.tenant_id = session.tenant.id
+    db.commit()
+
     return InboxSyncResponse(
         synced_count=len(emails),
         new_emails=[_email_to_response(e) for e in emails],
@@ -194,8 +246,14 @@ async def sync_inbox(db: Session = Depends(get_db)):
 
 
 @router.post("/classify", response_model=InboxClassifyResponse)
-async def classify_emails(db: Session = Depends(get_db)):
-    unclassified = db.query(Email).filter(Email.classified_as.is_(None)).all()
+async def classify_emails(
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(current_session),
+):
+    unclassified = db.query(Email).filter(
+        Email.tenant_id == session.tenant.id,
+        Email.classified_as.is_(None),
+    ).all()
     results = []
     for em in unclassified:
         attachments = json.loads(em.attachments) if em.attachments else []
@@ -239,8 +297,9 @@ async def list_emails(
     page: int = 1,
     per_page: int = 20,
     db: Session = Depends(get_db),
+    session: CurrentSession = Depends(current_session),
 ):
-    query = db.query(Email)
+    query = db.query(Email).filter(Email.tenant_id == session.tenant.id)
     if classified_as:
         query = query.filter(Email.classified_as == classified_as)
 
@@ -256,8 +315,15 @@ async def list_emails(
 
 
 @router.get("/emails/{email_id}")
-async def get_email(email_id: int, db: Session = Depends(get_db)):
-    em = db.query(Email).filter(Email.id == email_id).first()
+async def get_email(
+    email_id: int,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(current_session),
+):
+    em = db.query(Email).filter(
+        Email.id == email_id,
+        Email.tenant_id == session.tenant.id,
+    ).first()
     if not em:
         raise HTTPException(status_code=404, detail="Email not found")
     resp = _email_to_response(em)

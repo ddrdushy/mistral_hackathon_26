@@ -8,15 +8,41 @@ from sqlalchemy.orm import Session
 from sqlalchemy import or_
 from database import get_db
 import os
-from models import Application, Candidate, Job, Event, InterviewLink
+from models import Application, Candidate, Job, Event, InterviewLink, QaSession
 from schemas import (
     ApplicationMatchRequest, ApplicationStageUpdate, ApplicationNotesUpdate,
     BulkStageUpdate,
 )
 from agents.resume_scorer import score_resume, ResumeScorerInput
 from services.csv_service import generate_applications_csv
+from auth.dependencies import current_session, CurrentSession
 
 router = APIRouter(prefix="/api/v1/applications", tags=["applications"])
+
+
+def _qa_fraud_risk(app: Application, db: Session) -> Optional[float]:
+    session = db.query(QaSession).filter(QaSession.app_id == app.id).first()
+    return session.fraud_risk_score if session else None
+
+
+def _qa_signals_summary(app: Application, db: Session) -> Optional[dict]:
+    """Per-round behavioural signals + the components used to compute the risk score."""
+    session = db.query(QaSession).filter(QaSession.app_id == app.id).first()
+    if not session or not session.signals_json:
+        return None
+    try:
+        signals = json.loads(session.signals_json)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    # Surface a summary if it's been computed and stored on interview_score_json
+    summary_block = None
+    if app.interview_score_json:
+        try:
+            iv = json.loads(app.interview_score_json)
+            summary_block = iv.get("signals_summary")
+        except (json.JSONDecodeError, TypeError):
+            summary_block = None
+    return {"per_round": signals, "summary": summary_block}
 
 
 def _get_interview_room_url(app: Application, db: Session) -> Optional[str]:
@@ -63,6 +89,8 @@ def _app_to_response(app: Application, db: Session) -> dict:
         "interview_score_json": json.loads(app.interview_score_json) if app.interview_score_json else None,
         "interview_link_status": app.interview_link_status,
         "interview_face_tracking_json": json.loads(app.interview_face_tracking_json) if app.interview_face_tracking_json else None,
+        "qa_fraud_risk_score": _qa_fraud_risk(app, db),
+        "qa_signals_summary": _qa_signals_summary(app, db),
         "scheduled_interview_at": app.scheduled_interview_at.isoformat() if app.scheduled_interview_at else None,
         "scheduled_interview_slot": app.scheduled_interview_slot,
         "email_draft_sent": app.email_draft_sent or 0,
@@ -79,18 +107,33 @@ def _app_to_response(app: Application, db: Session) -> dict:
     }
 
 
-def _log_event(db: Session, app_id: int, event_type: str, payload: dict):
-    event = Event(app_id=app_id, event_type=event_type, payload=json.dumps(payload))
+def _log_event(db: Session, app_id: int, event_type: str, payload: dict, tenant_id: int | None = None):
+    event = Event(
+        app_id=app_id,
+        event_type=event_type,
+        payload=json.dumps(payload),
+        tenant_id=tenant_id,
+    )
     db.add(event)
 
 
 @router.post("/match")
-async def match_candidate_to_job(req: ApplicationMatchRequest, db: Session = Depends(get_db)):
-    candidate = db.query(Candidate).filter(Candidate.id == req.candidate_id).first()
+async def match_candidate_to_job(
+    req: ApplicationMatchRequest,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(current_session),
+):
+    candidate = db.query(Candidate).filter(
+        Candidate.id == req.candidate_id,
+        Candidate.tenant_id == session.tenant.id,
+    ).first()
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")
 
-    job = db.query(Job).filter(Job.id == req.job_id).first()
+    job = db.query(Job).filter(
+        Job.id == req.job_id,
+        Job.tenant_id == session.tenant.id,
+    ).first()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
 
@@ -117,6 +160,7 @@ async def match_candidate_to_job(req: ApplicationMatchRequest, db: Session = Dep
     score_result = await score_resume(scorer_input)
 
     application = Application(
+        tenant_id=session.tenant.id,
         candidate_id=candidate.id,
         job_id=job.id,
         stage="matched",
@@ -145,7 +189,7 @@ async def match_candidate_to_job(req: ApplicationMatchRequest, db: Session = Dep
     db.commit()
     db.refresh(application)
 
-    _log_event(db, application.id, "matched", {"resume_score": score_result.score, "recommendation": score_result.recommendation})
+    _log_event(db, application.id, "matched", {"resume_score": score_result.score, "recommendation": score_result.recommendation}, tenant_id=session.tenant.id)
     db.commit()
 
     return {
@@ -174,8 +218,9 @@ async def list_applications(
     page: int = 1,
     per_page: int = 20,
     db: Session = Depends(get_db),
+    session: CurrentSession = Depends(current_session),
 ):
-    query = db.query(Application)
+    query = db.query(Application).filter(Application.tenant_id == session.tenant.id)
 
     if job_id:
         query = query.filter(Application.job_id == job_id)
@@ -219,8 +264,9 @@ async def export_csv(
     job_id: Optional[int] = None,
     stage: Optional[str] = None,
     db: Session = Depends(get_db),
+    session: CurrentSession = Depends(current_session),
 ):
-    query = db.query(Application)
+    query = db.query(Application).filter(Application.tenant_id == session.tenant.id)
     if job_id:
         query = query.filter(Application.job_id == job_id)
     if stage:
@@ -239,16 +285,31 @@ async def export_csv(
 
 
 @router.get("/{app_id}")
-async def get_application(app_id: int, db: Session = Depends(get_db)):
-    app = db.query(Application).filter(Application.id == app_id).first()
+async def get_application(
+    app_id: int,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(current_session),
+):
+    app = db.query(Application).filter(
+        Application.id == app_id,
+        Application.tenant_id == session.tenant.id,
+    ).first()
     if not app:
         raise HTTPException(status_code=404, detail="Application not found")
     return _app_to_response(app, db)
 
 
 @router.patch("/{app_id}/stage")
-async def update_stage(app_id: int, req: ApplicationStageUpdate, db: Session = Depends(get_db)):
-    app = db.query(Application).filter(Application.id == app_id).first()
+async def update_stage(
+    app_id: int,
+    req: ApplicationStageUpdate,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(current_session),
+):
+    app = db.query(Application).filter(
+        Application.id == app_id,
+        Application.tenant_id == session.tenant.id,
+    ).first()
     if not app:
         raise HTTPException(status_code=404, detail="Application not found")
 
@@ -256,19 +317,30 @@ async def update_stage(app_id: int, req: ApplicationStageUpdate, db: Session = D
     app.stage = req.stage
     app.updated_at = datetime.utcnow()
 
-    _log_event(db, app.id, "stage_changed", {"from": old_stage, "to": req.stage})
+    _log_event(db, app.id, "stage_changed", {"from": old_stage, "to": req.stage}, tenant_id=session.tenant.id)
     db.commit()
     db.refresh(app)
     return _app_to_response(app, db)
 
 
 @router.patch("/{app_id}/notes")
-async def update_application_notes(app_id: int, req: ApplicationNotesUpdate, db: Session = Depends(get_db)):
-    app = db.query(Application).filter(Application.id == app_id).first()
+async def update_application_notes(
+    app_id: int,
+    req: ApplicationNotesUpdate,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(current_session),
+):
+    app = db.query(Application).filter(
+        Application.id == app_id,
+        Application.tenant_id == session.tenant.id,
+    ).first()
     if not app:
         raise HTTPException(status_code=404, detail="Application not found")
 
-    candidate = db.query(Candidate).filter(Candidate.id == app.candidate_id).first()
+    candidate = db.query(Candidate).filter(
+        Candidate.id == app.candidate_id,
+        Candidate.tenant_id == session.tenant.id,
+    ).first()
     if candidate:
         candidate.notes = req.notes
         candidate.updated_at = datetime.utcnow()
@@ -280,15 +352,22 @@ async def update_application_notes(app_id: int, req: ApplicationNotesUpdate, db:
 
 
 @router.post("/bulk/stage")
-async def bulk_update_stage(req: BulkStageUpdate, db: Session = Depends(get_db)):
+async def bulk_update_stage(
+    req: BulkStageUpdate,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(current_session),
+):
     updated = 0
     for app_id in req.application_ids:
-        app = db.query(Application).filter(Application.id == app_id).first()
+        app = db.query(Application).filter(
+            Application.id == app_id,
+            Application.tenant_id == session.tenant.id,
+        ).first()
         if app:
             old_stage = app.stage
             app.stage = req.stage
             app.updated_at = datetime.utcnow()
-            _log_event(db, app.id, "stage_changed", {"from": old_stage, "to": req.stage})
+            _log_event(db, app.id, "stage_changed", {"from": old_stage, "to": req.stage}, tenant_id=session.tenant.id)
             updated += 1
 
     db.commit()

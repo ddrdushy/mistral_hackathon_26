@@ -1,11 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   QaSessionStartResponse,
   QaRoundSubmitResponse,
   QaRound,
+  QaQuestion,
 } from "@/types/index";
+import { useFaceTracking } from "@/hooks/useFaceTracking";
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_URL || "https://dushy2009-hireops-ai.hf.space/api/v1";
@@ -25,12 +27,22 @@ const ROUND_DESCRIPTIONS: Record<QaRound, string> = {
     "Questions tailored to your CV and the role. Be specific and concrete.",
 };
 
+interface RoundSignals {
+  focus_loss_count: number;
+  focus_loss_seconds: number;
+  paste_count: number;
+  paste_chars: number;
+  time_per_question_seconds: number[];
+  total_time_seconds: number;
+}
+
 type Phase =
   | { type: "loading" }
+  | { type: "camera_setup"; data: QaSessionStartResponse }
   | { type: "intro"; data: QaSessionStartResponse }
   | { type: "round"; data: QaSessionStartResponse }
   | { type: "submitting" }
-  | { type: "round_done"; result: QaRoundSubmitResponse; nextRound: QaRound; nextQuestions: string[]; meta: { jobTitle: string; companyName: string; firstName: string; totalRounds: number } }
+  | { type: "round_done"; result: QaRoundSubmitResponse; nextRound: QaRound; nextQuestions: QaQuestion[]; meta: { jobTitle: string; companyName: string; firstName: string; totalRounds: number } }
   | { type: "completed"; result: QaRoundSubmitResponse }
   | { type: "error"; message: string };
 
@@ -38,6 +50,22 @@ export default function QaInterviewRoom({ token }: { token: string }) {
   const [phase, setPhase] = useState<Phase>({ type: "loading" });
   const [answers, setAnswers] = useState<string[]>([]);
 
+  // Behavioural signal accumulators (reset per round)
+  const signalsRef = useRef<RoundSignals>(emptySignals());
+  const roundStartRef = useRef<number>(0);
+  const focusLostAtRef = useRef<number | null>(null);
+  const questionFocusAtRef = useRef<number | null>(null);
+  const activeQuestionRef = useRef<number | null>(null);
+
+  // Webcam + face tracking
+  const {
+    videoRef,
+    state: faceState,
+    start: startCamera,
+    stop: stopCamera,
+  } = useFaceTracking(token);
+
+  // ── Bootstrap session ──
   useEffect(() => {
     let cancelled = false;
     async function start() {
@@ -52,7 +80,7 @@ export default function QaInterviewRoom({ token }: { token: string }) {
         const data: QaSessionStartResponse = await res.json();
         if (cancelled) return;
         setAnswers(new Array(data.questions.length).fill(""));
-        setPhase({ type: "intro", data });
+        setPhase({ type: "camera_setup", data });
       } catch (e) {
         if (cancelled) return;
         setPhase({
@@ -67,42 +95,133 @@ export default function QaInterviewRoom({ token }: { token: string }) {
     };
   }, [token]);
 
-  const submitRound = async (round: QaRound, currentAnswers: string[], data: QaSessionStartResponse) => {
-    setPhase({ type: "submitting" });
-    try {
-      const res = await fetch(`${API_BASE}/screening/qa/${token}/submit-round`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ round, answers: currentAnswers }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.detail || `Submit failed (status ${res.status})`);
+  // ── Tab/window focus tracking (active during round phases only) ──
+  useEffect(() => {
+    if (phase.type !== "round") return;
+    const onHide = () => {
+      if (document.hidden) {
+        focusLostAtRef.current = Date.now();
+        signalsRef.current.focus_loss_count += 1;
+      } else if (focusLostAtRef.current) {
+        const away = (Date.now() - focusLostAtRef.current) / 1000;
+        signalsRef.current.focus_loss_seconds += away;
+        focusLostAtRef.current = null;
       }
-      const result: QaRoundSubmitResponse = await res.json();
-      if (result.completed) {
-        setPhase({ type: "completed", result });
-      } else if (result.next_round) {
+    };
+    const onBlur = () => {
+      if (focusLostAtRef.current === null) {
+        focusLostAtRef.current = Date.now();
+        signalsRef.current.focus_loss_count += 1;
+      }
+    };
+    const onFocus = () => {
+      if (focusLostAtRef.current) {
+        const away = (Date.now() - focusLostAtRef.current) / 1000;
+        signalsRef.current.focus_loss_seconds += away;
+        focusLostAtRef.current = null;
+      }
+    };
+    document.addEventListener("visibilitychange", onHide);
+    window.addEventListener("blur", onBlur);
+    window.addEventListener("focus", onFocus);
+    return () => {
+      document.removeEventListener("visibilitychange", onHide);
+      window.removeEventListener("blur", onBlur);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [phase.type]);
+
+  // ── Cleanup camera on unmount ──
+  useEffect(() => {
+    return () => stopCamera();
+  }, [stopCamera]);
+
+  // ── Per-round helpers ──
+  const beginRound = (data: QaSessionStartResponse) => {
+    signalsRef.current = emptySignals();
+    signalsRef.current.time_per_question_seconds = new Array(
+      data.questions.length,
+    ).fill(0);
+    roundStartRef.current = Date.now();
+    focusLostAtRef.current = null;
+    questionFocusAtRef.current = null;
+    activeQuestionRef.current = null;
+    setAnswers(new Array(data.questions.length).fill(""));
+    setPhase({ type: "round", data });
+  };
+
+  const onQuestionFocus = (i: number) => {
+    questionFocusAtRef.current = Date.now();
+    activeQuestionRef.current = i;
+  };
+  const onQuestionBlur = () => {
+    if (
+      questionFocusAtRef.current !== null &&
+      activeQuestionRef.current !== null
+    ) {
+      const elapsed = (Date.now() - questionFocusAtRef.current) / 1000;
+      const idx = activeQuestionRef.current;
+      const arr = signalsRef.current.time_per_question_seconds;
+      if (idx < arr.length) arr[idx] = (arr[idx] ?? 0) + elapsed;
+    }
+    questionFocusAtRef.current = null;
+    activeQuestionRef.current = null;
+  };
+  const onQuestionPaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const text = e.clipboardData.getData("text") || "";
+    signalsRef.current.paste_count += 1;
+    signalsRef.current.paste_chars += text.length;
+  };
+
+  const submitRound = useCallback(
+    async (round: QaRound, currentAnswers: string[], data: QaSessionStartResponse) => {
+      // Finalise time tracking for the in-progress textarea
+      onQuestionBlur();
+      signalsRef.current.total_time_seconds =
+        (Date.now() - roundStartRef.current) / 1000;
+
+      setPhase({ type: "submitting" });
+      try {
+        const res = await fetch(`${API_BASE}/screening/qa/${token}/submit-round`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            round,
+            answers: currentAnswers,
+            signals: signalsRef.current,
+          }),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.detail || `Submit failed (status ${res.status})`);
+        }
+        const result: QaRoundSubmitResponse = await res.json();
+        if (result.completed) {
+          stopCamera();
+          setPhase({ type: "completed", result });
+        } else if (result.next_round) {
+          setPhase({
+            type: "round_done",
+            result,
+            nextRound: result.next_round,
+            nextQuestions: result.next_questions,
+            meta: {
+              jobTitle: data.job_title,
+              companyName: data.company_name,
+              firstName: data.candidate_first_name,
+              totalRounds: data.total_rounds,
+            },
+          });
+        }
+      } catch (e) {
         setPhase({
-          type: "round_done",
-          result,
-          nextRound: result.next_round,
-          nextQuestions: result.next_questions,
-          meta: {
-            jobTitle: data.job_title,
-            companyName: data.company_name,
-            firstName: data.candidate_first_name,
-            totalRounds: data.total_rounds,
-          },
+          type: "error",
+          message: e instanceof Error ? e.message : "Failed to submit round",
         });
       }
-    } catch (e) {
-      setPhase({
-        type: "error",
-        message: e instanceof Error ? e.message : "Failed to submit round",
-      });
-    }
-  };
+    },
+    [token, stopCamera],
+  );
 
   const advanceToNextRound = () => {
     if (phase.type !== "round_done") return;
@@ -121,11 +240,10 @@ export default function QaInterviewRoom({ token }: { token: string }) {
       total_rounds: phase.meta.totalRounds,
       questions: phase.nextQuestions,
     };
-    setAnswers(new Array(phase.nextQuestions.length).fill(""));
-    setPhase({ type: "round", data: newData });
+    beginRound(newData);
   };
 
-  // ── Render states ──
+  // ── Render ──
 
   if (phase.type === "loading") {
     return (
@@ -151,6 +269,81 @@ export default function QaInterviewRoom({ token }: { token: string }) {
     );
   }
 
+  if (phase.type === "camera_setup") {
+    const d = phase.data;
+    return (
+      <Centered wide>
+        <div className="text-left">
+          <p className="text-xs uppercase tracking-wide text-indigo-600 font-semibold mb-2">
+            Camera check
+          </p>
+          <h1 className="text-2xl font-bold text-slate-900 mb-2">
+            Enable your webcam
+          </h1>
+          <p className="text-sm text-slate-600 mb-5 leading-relaxed">
+            Your camera stays on during the interview for identity assurance.
+            We track face presence and attention only — no recordings are stored.
+          </p>
+
+          <div className="rounded-xl bg-slate-100 border border-slate-200 aspect-video overflow-hidden mb-4 flex items-center justify-center">
+            <video
+              ref={videoRef}
+              autoPlay
+              muted
+              playsInline
+              className={`w-full h-full object-cover ${
+                faceState.ready ? "block" : "hidden"
+              }`}
+            />
+            {!faceState.ready && (
+              <p className="text-sm text-slate-500 px-6 text-center">
+                {faceState.error
+                  ? faceState.error
+                  : "Camera off — click Enable Camera below."}
+              </p>
+            )}
+          </div>
+
+          {faceState.ready && (
+            <div className="flex items-center gap-2 mb-4">
+              <span
+                className={`inline-block w-2.5 h-2.5 rounded-full ${
+                  faceState.facePresent ? "bg-emerald-500" : "bg-amber-500"
+                }`}
+              />
+              <span className="text-xs text-slate-600">
+                {faceState.facePresent
+                  ? `Face detected (attention ${Math.round(faceState.attentionScore * 100)}%)`
+                  : "No face detected — please center yourself in frame"}
+              </span>
+            </div>
+          )}
+
+          <div className="flex gap-3">
+            {!faceState.ready ? (
+              <button
+                type="button"
+                onClick={startCamera}
+                className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-semibold rounded-lg text-white bg-indigo-600 hover:bg-indigo-700 transition-colors"
+              >
+                Enable Camera
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setPhase({ type: "intro", data: d })}
+                disabled={!faceState.facePresent}
+                className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-semibold rounded-lg text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                Continue
+              </button>
+            )}
+          </div>
+        </div>
+      </Centered>
+    );
+  }
+
   if (phase.type === "intro") {
     const d = phase.data;
     return (
@@ -167,24 +360,28 @@ export default function QaInterviewRoom({ token }: { token: string }) {
           </p>
 
           <div className="space-y-3 mb-6">
-            <RoundChip index={1} label="Aptitude" desc="Quick numerical & logic" active />
-            <RoundChip index={2} label="Reasoning" desc="Situational scenarios" />
-            <RoundChip index={3} label="Technical" desc="Tailored to your CV" />
+            <RoundChip index={1} label="Aptitude" desc="Multiple choice — numerical & logic" active />
+            <RoundChip index={2} label="Reasoning" desc="Multiple choice — situational scenarios" />
+            <RoundChip index={3} label="Technical" desc="Free-form — tailored to your CV" />
           </div>
 
           <div className="rounded-lg bg-slate-50 border border-slate-200 p-4 mb-6 text-sm text-slate-600 leading-relaxed">
-            <p className="font-medium text-slate-800 mb-1">How it works</p>
+            <p className="font-medium text-slate-800 mb-1">Ground rules</p>
             <ul className="list-disc pl-5 space-y-1">
               <li>3 rounds, 3 questions each. Untimed.</li>
+              <li>Rounds 1 &amp; 2 are multiple choice. Round 3 is free-form (CV-based).</li>
+              <li>Camera stays on for the full session.</li>
+              <li>
+                Switching tabs, leaving the window, or pasting answers are recorded.
+              </li>
               <li>You&apos;ll see your score and feedback after each round.</li>
-              <li>Answer in your own words — quality over length.</li>
               <li>Once submitted, a round can&apos;t be redone.</li>
             </ul>
           </div>
 
           <button
             type="button"
-            onClick={() => setPhase({ type: "round", data: d })}
+            onClick={() => beginRound(d)}
             className="w-full inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-semibold rounded-lg text-white bg-indigo-600 hover:bg-indigo-700 transition-colors"
           >
             Start Round 1: Aptitude
@@ -221,33 +418,81 @@ export default function QaInterviewRoom({ token }: { token: string }) {
 
           {/* Questions */}
           <div className="space-y-4">
-            {d.questions.map((q, i) => (
-              <div
-                key={i}
-                className="bg-white rounded-xl border border-slate-200 shadow-sm p-5"
-              >
-                <p className="text-sm font-medium text-slate-900 mb-3">
-                  <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 text-xs font-bold mr-2">
-                    {i + 1}
-                  </span>
-                  {q}
-                </p>
-                <textarea
-                  value={answers[i] ?? ""}
-                  onChange={(e) => {
-                    const next = [...answers];
-                    next[i] = e.target.value;
-                    setAnswers(next);
-                  }}
-                  rows={4}
-                  placeholder="Type your answer here..."
-                  className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-y"
-                />
-                <p className="mt-1 text-xs text-slate-400">
-                  {answers[i]?.trim().length ?? 0} characters
-                </p>
-              </div>
-            ))}
+            {d.questions.map((q, i) => {
+              const isMcq = Array.isArray(q.options) && q.options.length > 0;
+              return (
+                <div
+                  key={i}
+                  className="bg-white rounded-xl border border-slate-200 shadow-sm p-5"
+                  onFocus={() => onQuestionFocus(i)}
+                  onBlur={onQuestionBlur}
+                >
+                  <p className="text-sm font-medium text-slate-900 mb-3">
+                    <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 text-xs font-bold mr-2">
+                      {i + 1}
+                    </span>
+                    {q.text}
+                  </p>
+
+                  {isMcq ? (
+                    <div className="space-y-2">
+                      {q.options!.map((opt, j) => {
+                        const checked = answers[i] === String(j);
+                        return (
+                          <label
+                            key={j}
+                            className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                              checked
+                                ? "border-indigo-500 bg-indigo-50 ring-1 ring-indigo-500"
+                                : "border-slate-200 bg-white hover:border-slate-300"
+                            }`}
+                          >
+                            <input
+                              type="radio"
+                              name={`q-${i}`}
+                              value={String(j)}
+                              checked={checked}
+                              onChange={() => {
+                                const next = [...answers];
+                                next[i] = String(j);
+                                setAnswers(next);
+                              }}
+                              className="mt-0.5 text-indigo-600 focus:ring-indigo-500"
+                            />
+                            <span className="text-sm text-slate-800">
+                              <span className="font-semibold mr-1">
+                                {String.fromCharCode(65 + j)}.
+                              </span>
+                              {opt}
+                            </span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <>
+                      <textarea
+                        value={answers[i] ?? ""}
+                        onChange={(e) => {
+                          const next = [...answers];
+                          next[i] = e.target.value;
+                          setAnswers(next);
+                        }}
+                        onFocus={() => onQuestionFocus(i)}
+                        onBlur={onQuestionBlur}
+                        onPaste={onQuestionPaste}
+                        rows={4}
+                        placeholder="Type your answer here..."
+                        className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-y"
+                      />
+                      <p className="mt-1 text-xs text-slate-400">
+                        {answers[i]?.trim().length ?? 0} characters
+                      </p>
+                    </>
+                  )}
+                </div>
+              );
+            })}
           </div>
 
           {/* Submit */}
@@ -269,6 +514,13 @@ export default function QaInterviewRoom({ token }: { token: string }) {
             </button>
           </div>
         </div>
+
+        {/* Floating webcam preview */}
+        <FloatingWebcam
+          videoRef={videoRef}
+          ready={faceState.ready}
+          facePresent={faceState.facePresent}
+        />
       </div>
     );
   }
@@ -356,6 +608,17 @@ export default function QaInterviewRoom({ token }: { token: string }) {
 
 // ── Helpers ──
 
+function emptySignals(): RoundSignals {
+  return {
+    focus_loss_count: 0,
+    focus_loss_seconds: 0,
+    paste_count: 0,
+    paste_chars: 0,
+    time_per_question_seconds: [],
+    total_time_seconds: 0,
+  };
+}
+
 function Centered({
   children,
   wide,
@@ -423,6 +686,39 @@ function ProgressIndicator({
           }`}
         />
       ))}
+    </div>
+  );
+}
+
+function FloatingWebcam({
+  videoRef,
+  ready,
+  facePresent,
+}: {
+  videoRef: React.RefObject<HTMLVideoElement | null>;
+  ready: boolean;
+  facePresent: boolean;
+}) {
+  if (!ready) return null;
+  return (
+    <div className="fixed bottom-4 right-4 w-40 aspect-video rounded-lg overflow-hidden shadow-lg border-2 border-white bg-slate-900">
+      <video
+        ref={videoRef}
+        autoPlay
+        muted
+        playsInline
+        className="w-full h-full object-cover"
+      />
+      <div className="absolute top-1.5 left-1.5 flex items-center gap-1.5 bg-black/60 backdrop-blur-sm rounded-full px-2 py-0.5">
+        <span
+          className={`inline-block w-2 h-2 rounded-full ${
+            facePresent ? "bg-emerald-400" : "bg-amber-400"
+          }`}
+        />
+        <span className="text-[10px] text-white font-medium">
+          {facePresent ? "Live" : "No face"}
+        </span>
+      </div>
     </div>
   );
 }

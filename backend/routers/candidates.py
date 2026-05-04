@@ -8,6 +8,7 @@ from database import get_db
 from models import Candidate, Email
 from schemas import CandidateCreate, CandidateResponse, CandidateFromEmailResponse
 from services.resume_service import extract_resume_text, parse_contact_info
+from auth.dependencies import current_session, CurrentSession
 
 router = APIRouter(prefix="/api/v1/candidates", tags=["candidates"])
 
@@ -28,8 +29,13 @@ def _candidate_to_response(c: Candidate) -> dict:
 
 
 @router.post("")
-async def create_candidate(req: CandidateCreate, db: Session = Depends(get_db)):
+async def create_candidate(
+    req: CandidateCreate,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(current_session),
+):
     candidate = Candidate(
+        tenant_id=session.tenant.id,
         name=req.name,
         email=req.email,
         phone=req.phone,
@@ -43,8 +49,15 @@ async def create_candidate(req: CandidateCreate, db: Session = Depends(get_db)):
 
 
 @router.post("/from-email/{email_id}")
-async def create_from_email(email_id: int, db: Session = Depends(get_db)):
-    em = db.query(Email).filter(Email.id == email_id).first()
+async def create_from_email(
+    email_id: int,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(current_session),
+):
+    em = db.query(Email).filter(
+        Email.id == email_id,
+        Email.tenant_id == session.tenant.id,
+    ).first()
     if not em:
         raise HTTPException(status_code=404, detail="Email not found")
 
@@ -77,6 +90,7 @@ async def create_from_email(email_id: int, db: Session = Depends(get_db)):
             break
 
     candidate = Candidate(
+        tenant_id=session.tenant.id,
         name=name,
         email=candidate_email,
         phone=phone,
@@ -101,8 +115,12 @@ async def upload_resume(
     candidate_id: int,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
+    session: CurrentSession = Depends(current_session),
 ):
-    candidate = db.query(Candidate).filter(Candidate.id == candidate_id).first()
+    candidate = db.query(Candidate).filter(
+        Candidate.id == candidate_id,
+        Candidate.tenant_id == session.tenant.id,
+    ).first()
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")
 
@@ -134,8 +152,9 @@ async def list_candidates(
     page: int = 1,
     per_page: int = 20,
     db: Session = Depends(get_db),
+    session: CurrentSession = Depends(current_session),
 ):
-    query = db.query(Candidate)
+    query = db.query(Candidate).filter(Candidate.tenant_id == session.tenant.id)
     if search:
         query = query.filter(
             (Candidate.name.ilike(f"%{search}%")) |
@@ -154,16 +173,31 @@ async def list_candidates(
 
 
 @router.get("/{candidate_id}")
-async def get_candidate(candidate_id: int, db: Session = Depends(get_db)):
-    c = db.query(Candidate).filter(Candidate.id == candidate_id).first()
+async def get_candidate(
+    candidate_id: int,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(current_session),
+):
+    c = db.query(Candidate).filter(
+        Candidate.id == candidate_id,
+        Candidate.tenant_id == session.tenant.id,
+    ).first()
     if not c:
         raise HTTPException(status_code=404, detail="Candidate not found")
     return _candidate_to_response(c)
 
 
 @router.patch("/{candidate_id}/notes")
-async def update_notes(candidate_id: int, body: dict, db: Session = Depends(get_db)):
-    c = db.query(Candidate).filter(Candidate.id == candidate_id).first()
+async def update_notes(
+    candidate_id: int,
+    body: dict,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(current_session),
+):
+    c = db.query(Candidate).filter(
+        Candidate.id == candidate_id,
+        Candidate.tenant_id == session.tenant.id,
+    ).first()
     if not c:
         raise HTTPException(status_code=404, detail="Candidate not found")
     c.notes = body.get("notes", "")

@@ -1,15 +1,105 @@
 from datetime import datetime
 from sqlalchemy import (
-    Column, Integer, String, Text, Float, DateTime, ForeignKey, Index, UniqueConstraint
+    Column, Integer, String, Text, Float, DateTime, ForeignKey, Index, UniqueConstraint, Boolean
 )
 from sqlalchemy.orm import relationship
 from database import Base
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# AUTH + MULTI-TENANCY
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class Tenant(Base):
+    """A tenant = an organization signed up to HireOps. Each tenant has its
+    own jobs, candidates, applications, etc. — fully isolated by tenant_id."""
+    __tablename__ = "tenants"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    slug = Column(String, unique=True, nullable=False, index=True)
+    name = Column(String, nullable=False)
+    plan = Column(String, default="free", nullable=False)  # free/starter/pro
+
+    # Stripe (filled in Phase 3 — billing)
+    stripe_customer_id = Column(String, nullable=True)
+    stripe_subscription_id = Column(String, nullable=True)
+    subscription_status = Column(String, nullable=True)
+    current_period_end = Column(DateTime, nullable=True)
+
+    # Quota overrides — defaults defined in plans.py, persisted here when admin
+    # gives a specific tenant a custom limit
+    max_jobs = Column(Integer, nullable=True)
+    max_candidates = Column(Integer, nullable=True)
+    max_interviews_per_month = Column(Integer, nullable=True)
+
+    suspended = Column(Boolean, default=False, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    users = relationship("User", back_populates="tenant", foreign_keys="User.tenant_id")
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
+    email = Column(String, unique=True, nullable=False, index=True)
+    password_hash = Column(String, nullable=False)
+    name = Column(String, default="")
+
+    # Tenant-scoped role: owner (created the tenant) or member (invited)
+    role = Column(String, default="owner", nullable=False)
+    # Cross-tenant superadmin flag: only Symprio team members
+    is_superadmin = Column(Boolean, default=False, nullable=False)
+
+    email_verified_at = Column(DateTime, nullable=True)
+    last_login_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    tenant = relationship("Tenant", back_populates="users", foreign_keys=[tenant_id])
+
+    __table_args__ = (
+        Index("idx_users_tenant", "tenant_id"),
+    )
+
+
+class EmailVerification(Base):
+    """Single-use tokens emailed at signup. Expire after 24h."""
+    __tablename__ = "email_verifications"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    token = Column(String, unique=True, nullable=False, index=True)
+    expires_at = Column(DateTime, nullable=False)
+    used_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class PasswordReset(Base):
+    """Single-use tokens for password reset. Expire after 1h."""
+    __tablename__ = "password_resets"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    token = Column(String, unique=True, nullable=False, index=True)
+    expires_at = Column(DateTime, nullable=False)
+    used_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# TENANT-SCOPED RECRUITING DATA
+# ═══════════════════════════════════════════════════════════════════════════
 
 
 class Job(Base):
     __tablename__ = "jobs"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=True, index=True)
     job_id = Column(String, unique=True, nullable=False)  # JOB-YYYY-NNN
     title = Column(String, nullable=False)
     department = Column(String, default="")
@@ -39,6 +129,7 @@ class Email(Base):
     __tablename__ = "emails"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=True, index=True)
     message_id = Column(String, unique=True, nullable=True)
     from_address = Column(String, nullable=False)
     from_name = Column(String, default="")
@@ -64,6 +155,7 @@ class Candidate(Base):
     __tablename__ = "candidates"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=True, index=True)
     name = Column(String, nullable=False)
     email = Column(String, nullable=False)
     phone = Column(String, default="")
@@ -82,6 +174,7 @@ class Application(Base):
     __tablename__ = "applications"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=True, index=True)
     candidate_id = Column(Integer, ForeignKey("candidates.id"), nullable=False)
     job_id = Column(Integer, ForeignKey("jobs.id"), nullable=False)
     stage = Column(String, default="new")
@@ -132,6 +225,7 @@ class Event(Base):
     __tablename__ = "events"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=True, index=True)
     app_id = Column(Integer, ForeignKey("applications.id"), nullable=True)
     event_type = Column(String, nullable=False)
     payload = Column(Text, default="{}")  # JSON
@@ -145,19 +239,28 @@ class Event(Base):
 
 
 class Setting(Base):
-    """Key-value store for persistent app settings (e.g. Gmail credentials)."""
+    """Key-value store for persistent app settings (e.g. Gmail credentials).
+
+    Tenant-scoped: same key can exist for different tenants. tenant_id NULL
+    is reserved for global settings (set by superadmin)."""
     __tablename__ = "settings"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    key = Column(String, unique=True, nullable=False, index=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=True, index=True)
+    key = Column(String, nullable=False, index=True)
     value = Column(Text, default="")
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "key", name="uq_settings_tenant_key"),
+    )
 
 
 class InterviewLink(Base):
     __tablename__ = "interview_links"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=True, index=True)
     token = Column(String, unique=True, nullable=False, index=True)
     app_id = Column(Integer, ForeignKey("applications.id"), nullable=False)
     status = Column(String, default="generated")  # generated/sent/opened/interview_started/interview_completed/expired
@@ -188,16 +291,23 @@ class QaSession(Base):
     __tablename__ = "qa_sessions"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=True, index=True)
     app_id = Column(Integer, ForeignKey("applications.id"), nullable=False, unique=True)
     token = Column(String, ForeignKey("interview_links.token"), nullable=False, index=True)
 
     questions_json = Column(Text, nullable=False)  # {aptitude:[..], reasoning:[..], technical:[..]}
     answers_json = Column(Text, default="{}")      # {aptitude:[..], reasoning:[..], technical:[..]}
     scores_json = Column(Text, default="{}")       # {aptitude:{score,feedback}, reasoning:{...}, technical:{...}}
+    # Per-round behavioural signals: focus loss, paste events, time per question.
+    # Shape: {aptitude: {focus_loss_count, focus_loss_seconds, paste_count, paste_chars,
+    #                    time_per_question_seconds: [..], total_time_seconds}}
+    signals_json = Column(Text, default="{}")
 
     current_round = Column(String, default="aptitude")  # aptitude/reasoning/technical/completed
     final_score = Column(Float, nullable=True)
     final_summary = Column(Text, nullable=True)
+    # Aggregated fraud risk derived from signals + face tracking. 0 (clean) - 100 (high risk).
+    fraud_risk_score = Column(Float, nullable=True)
 
     started_at = Column(DateTime, default=datetime.utcnow)
     completed_at = Column(DateTime, nullable=True)

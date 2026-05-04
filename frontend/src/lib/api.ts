@@ -22,7 +22,18 @@ export async function api<T>(path: string, options: ApiOptions = {}): Promise<T>
     method,
     headers: body ? { "Content-Type": "application/json" } : {},
     body: body ? JSON.stringify(body) : undefined,
+    credentials: "include",
   });
+
+  // Auto-redirect to login on auth failure (only in browser, not SSR)
+  if (res.status === 401 && typeof window !== "undefined") {
+    const isAuthPage = /^\/(login|signup|forgot-password|reset-password|verify-email|$)/.test(
+      window.location.pathname,
+    );
+    if (!isAuthPage) {
+      window.location.href = "/login?next=" + encodeURIComponent(window.location.pathname);
+    }
+  }
 
   if (!res.ok) {
     const error = await res.json().catch(() => ({ detail: "Request failed" }));
