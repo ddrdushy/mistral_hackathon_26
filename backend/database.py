@@ -34,11 +34,12 @@ def get_db():
 def init_db():
     from models import (  # noqa: F401
         Job, Email, Candidate, Application, Event, InterviewLink, Setting, QaSession,
-        Tenant, User, EmailVerification, PasswordReset,
+        Tenant, User, EmailVerification, PasswordReset, TenantInvite,
     )
     Base.metadata.create_all(bind=engine)
     _run_migrations()
     _backfill_demo_tenant()
+    _apply_superadmin_emails()
 
 
 def _run_migrations():
@@ -135,6 +136,35 @@ def _run_migrations():
                 conn.execute(text(f"ALTER TABLE {tbl} ADD COLUMN tenant_id INTEGER"))
             except Exception:
                 pass
+
+
+def _apply_superadmin_emails():
+    """Promote any user listed in SUPERADMIN_EMAILS env var to is_superadmin=True.
+
+    Comma-separated list. Idempotent — runs on every startup. Users not yet signed up
+    are skipped silently (will be promoted next startup if they sign up).
+    """
+    raw = os.getenv("SUPERADMIN_EMAILS", "").strip()
+    if not raw:
+        return
+    emails = [e.strip().lower() for e in raw.split(",") if e.strip()]
+    if not emails:
+        return
+
+    from models import User
+    db = SessionLocal()
+    try:
+        promoted = []
+        for email in emails:
+            user = db.query(User).filter(User.email == email).first()
+            if user and not user.is_superadmin:
+                user.is_superadmin = True
+                promoted.append(email)
+        if promoted:
+            db.commit()
+            print(f"[auth] Promoted to superadmin: {', '.join(promoted)}")
+    finally:
+        db.close()
 
 
 def _backfill_demo_tenant():

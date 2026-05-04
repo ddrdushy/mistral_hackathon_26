@@ -8,7 +8,9 @@ import {
   BellIcon,
   QuestionMarkCircleIcon,
   ArrowRightOnRectangleIcon,
+  UsersIcon,
 } from "@heroicons/react/24/outline";
+import Link from "next/link";
 import { startTour } from "@/components/tour/tourEvents";
 import { useAuth } from "@/components/auth/AuthGate";
 
@@ -153,10 +155,18 @@ export default function Topbar({ onMenuToggle }: TopbarProps) {
                   </p>
                 )}
               </div>
+              <Link
+                href="/settings/team"
+                onClick={() => setMenuOpen(false)}
+                className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
+              >
+                <UsersIcon className="w-4 h-4" />
+                Team
+              </Link>
               <button
                 type="button"
                 onClick={logout}
-                className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
+                className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 transition-colors border-t border-slate-100"
               >
                 <ArrowRightOnRectangleIcon className="w-4 h-4" />
                 Sign out

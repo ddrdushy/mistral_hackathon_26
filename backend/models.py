@@ -90,6 +90,26 @@ class PasswordReset(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class TenantInvite(Base):
+    """Tenant owner invites a teammate by email. Single-use token, expires in 7 days."""
+    __tablename__ = "tenant_invites"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
+    invited_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    email = Column(String, nullable=False)
+    role = Column(String, default="member", nullable=False)
+    token = Column(String, unique=True, nullable=False, index=True)
+    expires_at = Column(DateTime, nullable=False)
+    accepted_at = Column(DateTime, nullable=True)
+    revoked_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        Index("idx_invites_tenant", "tenant_id"),
+    )
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # TENANT-SCOPED RECRUITING DATA
 # ═══════════════════════════════════════════════════════════════════════════

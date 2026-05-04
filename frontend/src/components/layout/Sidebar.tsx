@@ -11,7 +11,9 @@ import {
   Cog6ToothIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
+  ShieldCheckIcon,
 } from "@heroicons/react/24/outline";
+import { useAuth } from "@/components/auth/AuthGate";
 
 interface NavItem {
   label: string;
@@ -37,6 +39,10 @@ interface SidebarProps {
 
 export default function Sidebar({ isOpen, collapsed, onClose, onToggleCollapse }: SidebarProps) {
   const pathname = usePathname();
+  const { me } = useAuth();
+  const visibleNav = me?.user.is_superadmin
+    ? [...navItems, { label: "Admin", href: "/admin", icon: ShieldCheckIcon }]
+    : navItems;
 
   const isActive = (href: string): boolean => {
     if (href === "/dashboard") {
@@ -80,7 +86,7 @@ export default function Sidebar({ isOpen, collapsed, onClose, onToggleCollapse }
 
         {/* Navigation */}
         <nav className={`flex-1 ${collapsed ? "px-2" : "px-3"} py-4 space-y-1 overflow-y-auto`}>
-          {navItems.map((item) => {
+          {visibleNav.map((item) => {
             const active = isActive(item.href);
             const Icon = item.icon;
 

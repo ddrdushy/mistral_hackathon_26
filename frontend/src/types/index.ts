@@ -23,6 +23,49 @@ export interface MeResponse {
   tenant: AuthTenant;
 }
 
+export interface AdminTenantSummary {
+  id: number;
+  slug: string;
+  name: string;
+  plan: "free" | "starter" | "pro";
+  suspended: boolean;
+  owner_email: string | null;
+  member_count: number;
+  job_count: number;
+  candidate_count: number;
+  application_count: number;
+  interview_count: number;
+  created_at: string;
+  last_activity_at: string | null;
+}
+
+export interface TeamMember {
+  id: number;
+  email: string;
+  name: string;
+  role: "owner" | "member";
+  email_verified: boolean;
+  created_at: string;
+  last_login_at: string | null;
+}
+
+export interface TeamInvite {
+  id: number;
+  email: string;
+  role: string;
+  expires_at: string;
+  accepted_at: string | null;
+  created_at: string;
+}
+
+export interface AcceptInvitePeek {
+  valid: boolean;
+  email: string | null;
+  tenant_name: string | null;
+  inviter_name: string | null;
+  error: string | null;
+}
+
 // ═══════════════════════════════════════
 // JOBS
 // ═══════════════════════════════════════
