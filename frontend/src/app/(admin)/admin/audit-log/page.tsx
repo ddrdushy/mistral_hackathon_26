@@ -5,11 +5,9 @@ import Link from "next/link";
 import {
   ArrowLeftIcon,
   DocumentTextIcon,
-  ShieldCheckIcon,
 } from "@heroicons/react/24/outline";
 
 import { apiGet } from "@/lib/api";
-import { useAuth } from "@/components/auth/AuthGate";
 import type { AuditLogEntry } from "@/types/index";
 import { timeAgo } from "@/lib/constants";
 import LoadingSpinner from "@/components/ui/LoadingSpinner";
@@ -35,7 +33,6 @@ const ACTION_VARIANTS: Record<string, string> = {
 };
 
 export default function AuditLogPage() {
-  const { me } = useAuth();
   const [entries, setEntries] = useState<AuditLogEntry[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -71,16 +68,6 @@ export default function AuditLogPage() {
     const t = setTimeout(load, 200);
     return () => clearTimeout(t);
   }, [load]);
-
-  if (!me?.user.is_superadmin) {
-    return (
-      <EmptyState
-        icon={<ShieldCheckIcon />}
-        title="Superadmin only"
-        description="This page is restricted."
-      />
-    );
-  }
 
   const totalPages = Math.max(1, Math.ceil(total / perPage));
 

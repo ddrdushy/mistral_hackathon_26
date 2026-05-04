@@ -11,12 +11,9 @@ import {
   PauseCircleIcon,
   PlayCircleIcon,
   MagnifyingGlassIcon,
-  DocumentTextIcon,
-  ChartBarIcon,
 } from "@heroicons/react/24/outline";
 
 import { apiGet, apiPost } from "@/lib/api";
-import { useAuth } from "@/components/auth/AuthGate";
 import type { AdminTenantSummary } from "@/types/index";
 import { timeAgo } from "@/lib/constants";
 import LoadingSpinner from "@/components/ui/LoadingSpinner";
@@ -26,7 +23,6 @@ type StatusFilter = "all" | "active" | "suspended" | "deleted";
 type PlanFilter = "all" | "free" | "starter" | "pro";
 
 export default function AdminPage() {
-  const { me } = useAuth();
   const [tenants, setTenants] = useState<AdminTenantSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -56,16 +52,6 @@ export default function AdminPage() {
     const t = setTimeout(load, 250);  // debounce search
     return () => clearTimeout(t);
   }, [load]);
-
-  if (!me?.user.is_superadmin) {
-    return (
-      <EmptyState
-        icon={<ShieldCheckIcon />}
-        title="Superadmin only"
-        description="This page is restricted to the Symprio team."
-      />
-    );
-  }
 
   const handleSuspend = async (t: AdminTenantSummary) => {
     setPendingId(t.id);
@@ -116,32 +102,11 @@ export default function AdminPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between gap-3 flex-wrap">
-        <div>
-          <div className="flex items-center gap-2 mb-1">
-            <ShieldCheckIcon className="h-5 w-5 text-indigo-600" />
-            <h1 className="text-2xl font-semibold text-slate-900">Admin</h1>
-          </div>
-          <p className="text-sm text-slate-500">
-            All tenants on the platform. Suspend, impersonate, and inspect usage.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Link
-            href="/admin/analytics"
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100"
-          >
-            <ChartBarIcon className="w-3.5 h-3.5" />
-            Analytics
-          </Link>
-          <Link
-            href="/admin/audit-log"
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200"
-          >
-            <DocumentTextIcon className="w-3.5 h-3.5" />
-            Audit log
-          </Link>
-        </div>
+      <div>
+        <h1 className="text-2xl font-semibold text-slate-900 mb-1">Tenants</h1>
+        <p className="text-sm text-slate-500">
+          All tenants on the platform. Click a row to drill in, or use the actions on the right.
+        </p>
       </div>
 
       {/* Search + filter */}

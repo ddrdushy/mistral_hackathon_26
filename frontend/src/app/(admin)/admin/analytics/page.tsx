@@ -6,7 +6,6 @@ import {
   ArrowLeftIcon,
   ChartBarIcon,
   CurrencyDollarIcon,
-  ShieldCheckIcon,
   SparklesIcon,
   ExclamationTriangleIcon,
   UsersIcon,
@@ -26,7 +25,6 @@ import {
 } from "recharts";
 
 import { apiGet } from "@/lib/api";
-import { useAuth } from "@/components/auth/AuthGate";
 import type { AdminAnalytics } from "@/types/index";
 import LoadingSpinner from "@/components/ui/LoadingSpinner";
 import EmptyState from "@/components/ui/EmptyState";
@@ -39,7 +37,6 @@ const PLAN_COLORS: Record<string, string> = {
 };
 
 export default function AnalyticsPage() {
-  const { me } = useAuth();
   const [a, setA] = useState<AdminAnalytics | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -59,16 +56,6 @@ export default function AnalyticsPage() {
   useEffect(() => {
     load();
   }, [load]);
-
-  if (!me?.user.is_superadmin) {
-    return (
-      <EmptyState
-        icon={<ShieldCheckIcon />}
-        title="Superadmin only"
-        description="This page is restricted."
-      />
-    );
-  }
 
   if (loading) {
     return (

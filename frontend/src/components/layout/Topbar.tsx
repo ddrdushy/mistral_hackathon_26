@@ -10,6 +10,7 @@ import {
   ArrowRightOnRectangleIcon,
   UsersIcon,
   CreditCardIcon,
+  ShieldCheckIcon,
 } from "@heroicons/react/24/outline";
 import Link from "next/link";
 import { startTour } from "@/components/tour/tourEvents";
@@ -59,8 +60,6 @@ export default function Topbar({ onMenuToggle }: TopbarProps) {
   const pathname = usePathname();
   const pageTitle = getPageTitle(pathname);
   const { me, logout } = useAuth();
-  // Topbar is only rendered inside AuthGate which guarantees me is set
-  if (!me) return null;
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -74,6 +73,10 @@ export default function Topbar({ onMenuToggle }: TopbarProps) {
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
   }, [menuOpen]);
+
+  // Topbar is only rendered inside AuthGate which guarantees me is set,
+  // but guard for type-safety + render-during-redirect edge cases.
+  if (!me) return null;
 
   return (
     <header className="sticky top-0 z-20 flex items-center h-16 bg-white border-b border-slate-200 px-4 lg:px-6">
@@ -156,6 +159,16 @@ export default function Topbar({ onMenuToggle }: TopbarProps) {
                   </p>
                 )}
               </div>
+              {me.user.is_superadmin && (
+                <Link
+                  href="/admin"
+                  onClick={() => setMenuOpen(false)}
+                  className="w-full flex items-center gap-2 px-4 py-2.5 text-sm font-semibold text-indigo-700 bg-indigo-50/60 hover:bg-indigo-100 transition-colors border-b border-indigo-100"
+                >
+                  <ShieldCheckIcon className="w-4 h-4" />
+                  Platform Admin
+                </Link>
+              )}
               <Link
                 href="/settings/team"
                 onClick={() => setMenuOpen(false)}

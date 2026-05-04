@@ -9,7 +9,7 @@ import type { MeResponse } from "@/types/index";
 function LoginInner() {
   const router = useRouter();
   const params = useSearchParams();
-  const next = params.get("next") || "/dashboard";
+  const explicitNext = params.get("next");
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -21,8 +21,12 @@ function LoginInner() {
     setLoading(true);
     setError(null);
     try {
-      await apiPost<MeResponse>("/auth/login", { email, password });
-      router.push(next);
+      const me = await apiPost<MeResponse>("/auth/login", { email, password });
+      // If they were redirected from a specific page, send them back.
+      // Otherwise: superadmins land in the platform admin shell, everyone else
+      // lands in their tenant workspace.
+      const dest = explicitNext || (me.user.is_superadmin ? "/admin" : "/dashboard");
+      router.push(dest);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
     } finally {

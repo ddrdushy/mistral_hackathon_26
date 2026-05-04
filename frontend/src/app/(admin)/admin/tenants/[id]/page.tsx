@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useState, use } from "react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   ArrowLeftIcon,
@@ -11,9 +10,8 @@ import {
   TrashIcon,
   ArrowUturnLeftIcon,
   PencilSquareIcon,
-  CreditCardIcon,
   UsersIcon,
-  CurrencyDollarIcon,
+  ShieldCheckIcon,
 } from "@heroicons/react/24/outline";
 import {
   Bar,
@@ -26,14 +24,12 @@ import {
 } from "recharts";
 
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/lib/api";
-import { useAuth } from "@/components/auth/AuthGate";
 import type { AdminTenantDetail, PlanName } from "@/types/index";
 import { timeAgo } from "@/lib/constants";
 import LoadingSpinner from "@/components/ui/LoadingSpinner";
 import EmptyState from "@/components/ui/EmptyState";
 import Card from "@/components/ui/Card";
 import Badge from "@/components/ui/Badge";
-import { ShieldCheckIcon } from "@heroicons/react/24/outline";
 
 export default function TenantDetailPage({
   params,
@@ -41,8 +37,6 @@ export default function TenantDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = use(params);
-  const { me } = useAuth();
-  const router = useRouter();
   const [t, setT] = useState<AdminTenantDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -76,10 +70,6 @@ export default function TenantDetailPage({
   useEffect(() => {
     load();
   }, [load]);
-
-  if (!me?.user.is_superadmin) {
-    return <EmptyState icon={<ShieldCheckIcon />} title="Superadmin only" description="This page is restricted." />;
-  }
 
   if (loading) {
     return (
