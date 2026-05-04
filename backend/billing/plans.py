@@ -32,6 +32,7 @@ class Plan:
     max_jobs: int  # -1 for unlimited
     max_candidates: int
     max_interviews_per_month: int
+    daily_llm_budget_usd: float  # hard cap on Mistral spend per UTC day; -1 = unlimited
     features: list[str] = field(default_factory=list)
 
 
@@ -45,6 +46,7 @@ PLANS: dict[PlanName, Plan] = {
         max_jobs=5,
         max_candidates=25,
         max_interviews_per_month=10,
+        daily_llm_budget_usd=float(os.getenv("FREE_DAILY_LLM_BUDGET", "0.50")),
         features=[
             "5 active jobs",
             "25 candidates",
@@ -61,6 +63,7 @@ PLANS: dict[PlanName, Plan] = {
         max_jobs=25,
         max_candidates=250,
         max_interviews_per_month=100,
+        daily_llm_budget_usd=float(os.getenv("STARTER_DAILY_LLM_BUDGET", "5.00")),
         features=[
             "25 active jobs",
             "250 candidates",
@@ -77,6 +80,7 @@ PLANS: dict[PlanName, Plan] = {
         max_jobs=-1,
         max_candidates=-1,
         max_interviews_per_month=-1,
+        daily_llm_budget_usd=float(os.getenv("PRO_DAILY_LLM_BUDGET", "50.00")),
         features=[
             "Unlimited jobs",
             "Unlimited candidates",

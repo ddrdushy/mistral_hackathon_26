@@ -48,13 +48,19 @@ def current_session(
     hireops_session: str | None = Cookie(default=None, alias=COOKIE_NAME),
     db: Session = Depends(get_db),
 ) -> CurrentSession:
-    """Required: caller must be logged in. Raises 401 otherwise."""
+    """Required: caller must be logged in. Raises 401 otherwise.
+
+    Also publishes the tenant id to a contextvar so downstream LLM calls
+    can enforce per-tenant cost caps without threading it through.
+    """
     s = _resolve_session(hireops_session, db)
     if not s:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
         )
+    from billing.cost_guard import set_active_tenant
+    set_active_tenant(s.tenant.id)
     return s
 
 

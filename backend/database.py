@@ -34,7 +34,7 @@ def get_db():
 def init_db():
     from models import (  # noqa: F401
         Job, Email, Candidate, Application, Event, InterviewLink, Setting, QaSession,
-        Tenant, User, EmailVerification, PasswordReset, TenantInvite,
+        Tenant, User, EmailVerification, PasswordReset, TenantInvite, LlmUsage,
     )
     Base.metadata.create_all(bind=engine)
     _run_migrations()

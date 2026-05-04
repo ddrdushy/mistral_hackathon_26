@@ -7,16 +7,35 @@ load_dotenv()
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+
 from database import init_db
+from app_limiter import limiter
 from routers import inbox, jobs, candidates, applications, screening, reports, settings, auth, admin, team, billing
 
 logger = logging.getLogger("hireops")
+
+# ── Sentry ────────────────────────────────────────────────────────────────
+SENTRY_DSN = os.getenv("SENTRY_DSN", "")
+if SENTRY_DSN:
+    import sentry_sdk
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.1")),
+        environment=os.getenv("ENV", "development"),
+        send_default_pii=False,  # don't send IPs / cookies
+    )
+    logger.info("Sentry initialised")
+
 
 app = FastAPI(
     title="HireOps AI",
     description="Agentic HR Automation Platform API",
     version="1.0.0",
 )
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,
@@ -70,3 +89,31 @@ async def health():
 @app.get("/api/v1/health")
 async def api_health():
     return {"status": "ok", "version": "1.0.0", "service": "hireops-ai"}
+
+
+@app.get("/api/v1/health/db")
+async def api_health_db():
+    """Verify the DB connection is alive. Returns 503 on failure."""
+    from sqlalchemy import text
+    from database import engine
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        return {"status": "ok", "service": "db"}
+    except Exception as e:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=503, detail=f"db unhealthy: {e}")
+
+
+@app.get("/api/v1/health/llm")
+async def api_health_llm():
+    """Verify the Mistral API key is set and the SDK loads. Doesn't make a real call."""
+    if not os.getenv("MISTRAL_API_KEY"):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=503, detail="MISTRAL_API_KEY not configured")
+    try:
+        import mistralai  # noqa: F401
+        return {"status": "ok", "service": "llm", "key_configured": True}
+    except Exception as e:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=503, detail=f"mistral sdk error: {e}")

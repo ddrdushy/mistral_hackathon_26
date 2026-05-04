@@ -97,6 +97,11 @@ export interface UsageSummary {
   jobs: UsageItem;
   candidates: UsageItem;
   interviews_this_month: UsageItem;
+  llm_today: {
+    spent_usd: number;
+    budget_usd: number; // -1 for unlimited
+    remaining_usd: number;
+  };
 }
 
 // ═══════════════════════════════════════

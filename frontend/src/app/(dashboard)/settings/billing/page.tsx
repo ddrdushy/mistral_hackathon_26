@@ -159,6 +159,10 @@ function BillingInner() {
                 <UsageBar label="Jobs" item={usage.jobs} />
                 <UsageBar label="Candidates" item={usage.candidates} />
                 <UsageBar label="Interviews" item={usage.interviews_this_month} />
+                <LlmBudgetBar
+                  spent={usage.llm_today.spent_usd}
+                  budget={usage.llm_today.budget_usd}
+                />
               </>
             )}
           </div>
@@ -234,6 +238,33 @@ function BillingInner() {
             );
           })}
         </div>
+      </div>
+    </div>
+  );
+}
+
+function LlmBudgetBar({ spent, budget }: { spent: number; budget: number }) {
+  const unlimited = budget < 0;
+  const pct = unlimited ? 0 : Math.min(100, Math.round((spent / Math.max(0.01, budget)) * 100));
+  const tone = unlimited
+    ? "bg-emerald-500"
+    : pct >= 90 ? "bg-red-500" : pct >= 70 ? "bg-amber-500" : "bg-emerald-500";
+  return (
+    <div>
+      <div className="flex items-center justify-between text-xs mb-1">
+        <span className="font-medium text-slate-600">
+          AI spend today
+          <span className="ml-1 text-[10px] text-slate-400 uppercase tracking-wider">UTC</span>
+        </span>
+        <span className="font-semibold tabular-nums text-slate-700">
+          ${spent.toFixed(2)} {unlimited ? "/ ∞" : `/ $${budget.toFixed(2)}`}
+        </span>
+      </div>
+      <div className="h-2 rounded-full bg-slate-100 overflow-hidden">
+        <div
+          className={`h-full rounded-full ${tone}`}
+          style={{ width: unlimited ? "100%" : `${pct}%`, opacity: unlimited ? 0.4 : 1 }}
+        />
       </div>
     </div>
   );

@@ -9,12 +9,33 @@ from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Response, Request, status
 from pydantic import BaseModel, EmailStr, Field
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 from sqlalchemy.orm import Session
 
+from app_limiter import limiter
 from database import get_db
 from models import (
     User, Tenant, EmailVerification, PasswordReset,
 )
+
+
+def _ip_key(request: Request) -> str:
+    return f"ip:{get_remote_address(request)}"
+
+
+def _check_ip_rate(request: Request, limit_string: str, scope: str) -> None:
+    """Manual per-IP rate-limit check. We use this instead of @limiter.limit
+    because the decorator mangles FastAPI's body inference for Pydantic models.
+    """
+    from limits import parse
+    item = parse(limit_string)
+    key = _ip_key(request) + ":" + scope
+    if not limiter.limiter.hit(item, key):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Too many requests. Try again in a minute.",
+        )
 from auth.security import (
     hash_password, verify_password, issue_jwt, new_token, COOKIE_NAME, JWT_TTL_DAYS,
 )
@@ -136,7 +157,8 @@ def _user_to_response(user: User) -> UserResponse:
 
 
 @router.post("/signup")
-def signup(req: SignupRequest, response: Response, db: Session = Depends(get_db)):
+def signup(req: SignupRequest, request: Request, response: Response, db: Session = Depends(get_db)):
+    _check_ip_rate(request, "10/hour", "signup")
     """Create a new tenant + owner user, send verification email, return logged-in session.
 
     The user is logged in immediately (cookie set) but `email_verified` is false until
@@ -183,6 +205,15 @@ def signup(req: SignupRequest, response: Response, db: Session = Depends(get_db)
     verify_url = f"{_frontend_url()}/verify-email?token={token}"
     send_verification_email(user.email, user.name, verify_url)
 
+    # Seed demo data so the dashboard isn't empty on first login
+    try:
+        from services.demo_seed import seed_tenant
+        seed_tenant(db, tenant)
+    except Exception as e:
+        # Never fail signup because of seeding
+        import logging
+        logging.getLogger("hireops.auth").warning("Demo seeding failed: %s", e)
+
     # Log in immediately
     jwt_token = issue_jwt(user.id, tenant.id)
     _set_session_cookie(response, jwt_token)
@@ -194,7 +225,8 @@ def signup(req: SignupRequest, response: Response, db: Session = Depends(get_db)
 
 
 @router.post("/login")
-def login(req: LoginRequest, response: Response, db: Session = Depends(get_db)):
+def login(req: LoginRequest, request: Request, response: Response, db: Session = Depends(get_db)):
+    _check_ip_rate(request, "10/minute", "login")
     user = db.query(User).filter(User.email == req.email.lower()).first()
     if not user or not verify_password(req.password, user.password_hash):
         # Same response for "user not found" and "wrong password" so attackers
@@ -281,7 +313,8 @@ def resend_verification(
 
 
 @router.post("/forgot-password")
-def forgot_password(req: ForgotPasswordRequest, db: Session = Depends(get_db)):
+def forgot_password(req: ForgotPasswordRequest, request: Request, db: Session = Depends(get_db)):
+    _check_ip_rate(request, "3/minute", "forgot")
     """Always returns 200 — never reveals whether an email is registered."""
     user = db.query(User).filter(User.email == req.email.lower()).first()
     if user:

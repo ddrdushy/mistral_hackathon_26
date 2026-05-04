@@ -49,5 +49,26 @@ services:
       - backend
     restart: unless-stopped
 
+  backup:
+    image: postgres:16-alpine
+    container_name: hireops-backup
+    environment:
+      PGHOST: db
+      PGUSER: hireops
+      PGPASSWORD: hireops_secret
+      PGDATABASE: hireops
+      BACKUP_DIR: /backups
+    volumes:
+      - ./deploy/backup.sh:/usr/local/bin/backup.sh:ro
+      - pgbackups:/backups
+    depends_on:
+      db:
+        condition: service_healthy
+    # Run pg_dump every 24h. /usr/local/bin/backup.sh handles retention itself.
+    entrypoint: >
+      sh -c "while true; do /usr/local/bin/backup.sh || true; sleep 86400; done"
+    restart: unless-stopped
+
 volumes:
   pgdata:
+  pgbackups:

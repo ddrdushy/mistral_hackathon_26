@@ -17,6 +17,7 @@ from models import Tenant
 from auth.dependencies import current_session, require_owner, CurrentSession
 from billing.plans import PLANS, get_plan, usage_summary, PlanName
 from billing import stripe_service
+from billing.cost_guard import usage_today as llm_usage_today
 
 logger = logging.getLogger("hireops.billing")
 
@@ -48,10 +49,17 @@ class UsageItem(BaseModel):
     limit: int  # -1 for unlimited
 
 
+class LlmBudgetResponse(BaseModel):
+    spent_usd: float
+    budget_usd: float  # -1 for unlimited
+    remaining_usd: float
+
+
 class UsageResponse(BaseModel):
     jobs: UsageItem
     candidates: UsageItem
     interviews_this_month: UsageItem
+    llm_today: LlmBudgetResponse
 
 
 class CheckoutRequest(BaseModel):
@@ -97,7 +105,9 @@ def get_usage(
     db: Session = Depends(get_db),
     session: CurrentSession = Depends(current_session),
 ):
-    return usage_summary(db, session.tenant)
+    summary = usage_summary(db, session.tenant)
+    summary["llm_today"] = llm_usage_today(session.tenant.id)
+    return summary
 
 
 # ── Checkout + portal (owner-only mutations) ──────────────────────────────

@@ -90,6 +90,30 @@ class PasswordReset(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class LlmUsage(Base):
+    """Per-call LLM usage record. Used for tenant-level cost guards and reports.
+
+    tenant_id is nullable for legacy/system calls. Daily spend is computed by
+    summing cost_usd over (tenant_id, date).
+    """
+    __tablename__ = "llm_usage"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=True, index=True)
+    agent_name = Column(String, nullable=False)
+    model = Column(String, default="")
+    input_tokens = Column(Integer, default=0)
+    output_tokens = Column(Integer, default=0)
+    cost_usd = Column(Float, default=0.0)
+    latency_ms = Column(Integer, default=0)
+    status = Column(String, default="success")  # success / error / blocked
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+    __table_args__ = (
+        Index("idx_llm_usage_tenant_day", "tenant_id", "created_at"),
+    )
+
+
 class TenantInvite(Base):
     """Tenant owner invites a teammate by email. Single-use token, expires in 7 days."""
     __tablename__ = "tenant_invites"

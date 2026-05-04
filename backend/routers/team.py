@@ -109,6 +109,16 @@ def _send_invite_email(invite: TenantInvite, tenant: Tenant, inviter: User):
 # ── Endpoints ─────────────────────────────────────────────────────────────
 
 
+@router.post("/clear-demo")
+def clear_demo_data(
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(require_owner),
+):
+    """Owner action: remove all demo jobs/candidates/applications added at signup."""
+    from services.demo_seed import clear_demo
+    return clear_demo(db, session.tenant)
+
+
 @router.get("/members")
 def list_members(
     db: Session = Depends(get_db),

@@ -16,6 +16,7 @@ from schemas import (
 from agents.resume_scorer import score_resume, ResumeScorerInput
 from services.csv_service import generate_applications_csv
 from auth.dependencies import current_session, CurrentSession
+from billing.cost_guard import check_llm_budget
 
 router = APIRouter(prefix="/api/v1/applications", tags=["applications"])
 
@@ -123,6 +124,7 @@ async def match_candidate_to_job(
     db: Session = Depends(get_db),
     session: CurrentSession = Depends(current_session),
 ):
+    check_llm_budget()
     candidate = db.query(Candidate).filter(
         Candidate.id == req.candidate_id,
         Candidate.tenant_id == session.tenant.id,

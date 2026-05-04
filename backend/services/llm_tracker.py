@@ -89,6 +89,21 @@ def log_usage(
         f"${cost:.4f} | {latency_ms}ms | {status}"
     )
 
+    # Persist to DB for per-tenant cost guards (uses contextvar to find tenant)
+    try:
+        from billing.cost_guard import record_llm_usage
+        record_llm_usage(
+            agent_name=agent_name,
+            model=model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cost_usd=cost,
+            latency_ms=latency_ms,
+            status_str=status,
+        )
+    except Exception:
+        pass  # never fail the call because of metrics persistence
+
 
 def get_usage_report(days: int = 7) -> Dict:
     """Generate a usage report for the last N days."""

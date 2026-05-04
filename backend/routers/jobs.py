@@ -12,6 +12,7 @@ from schemas import JobCreate, JobUpdate, JobResponse, JobListResponse
 from agents.job_generator import generate_job_details
 from auth.dependencies import current_session, CurrentSession
 from billing.plans import check_quota
+from billing.cost_guard import check_llm_budget
 
 router = APIRouter(prefix="/api/v1/jobs", tags=["jobs"])
 
@@ -26,6 +27,7 @@ async def generate_job(
     _: CurrentSession = Depends(current_session),
 ):
     """Use Mistral AI to auto-generate job posting details from a title."""
+    check_llm_budget()
     if not req.title.strip():
         raise HTTPException(status_code=400, detail="Title is required")
     result = await generate_job_details(req.title.strip())
