@@ -60,6 +60,9 @@ class User(Base):
 
     email_verified_at = Column(DateTime, nullable=True)
     last_login_at = Column(DateTime, nullable=True)
+    # Set when a superadmin individually disables a user (without suspending
+    # the whole tenant). Disabled users can't log in but their data is kept.
+    disabled_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

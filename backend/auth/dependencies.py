@@ -36,6 +36,8 @@ def _resolve_session(token: str | None, db: Session) -> CurrentSession | None:
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         return None
+    if user.disabled_at is not None:
+        return None
     tenant = db.query(Tenant).filter(Tenant.id == user.tenant_id).first()
     if not tenant:
         return None

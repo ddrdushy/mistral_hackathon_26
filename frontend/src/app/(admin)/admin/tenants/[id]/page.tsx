@@ -12,6 +12,8 @@ import {
   PencilSquareIcon,
   UsersIcon,
   ShieldCheckIcon,
+  ArrowDownTrayIcon,
+  FireIcon,
 } from "@heroicons/react/24/outline";
 import {
   Bar,
@@ -143,6 +145,39 @@ export default function TenantDetailPage({
     }
   };
 
+  const handleExport = () => {
+    // Direct browser download — credentials: include is set by api.ts but
+    // for streaming downloads we just navigate the browser to the endpoint.
+    const apiBase = process.env.NEXT_PUBLIC_API_URL || "https://hireops.symprio.com/api/v1";
+    window.location.href = `${apiBase}/admin/tenants/${t.id}/export`;
+  };
+
+  const handleHardDelete = async () => {
+    if (!t.deleted_at) {
+      alert("Soft-delete first. Hard-delete is only available 30 days after soft-delete.");
+      return;
+    }
+    const ageDays = Math.floor(
+      (Date.now() - new Date(t.deleted_at).getTime()) / (1000 * 60 * 60 * 24),
+    );
+    const askConfirm = ageDays < 30;
+    const msg = askConfirm
+      ? `Soft-deleted only ${ageDays} days ago — normally we wait 30 days. Hard-delete anyway? This permanently removes ALL data and cannot be undone.`
+      : `Permanently delete ${t.name} and ALL their data? This cannot be undone.`;
+    if (!confirm(msg)) return;
+    if (!confirm(`FINAL CHECK — type-confirm by clicking OK to permanently delete "${t.name}".`)) return;
+
+    setPending("hard-delete");
+    try {
+      await apiDelete(`/admin/tenants/${t.id}/hard-delete${askConfirm ? "?confirm=true" : ""}`);
+      // Tenant no longer exists — bounce to the list
+      window.location.href = "/admin";
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Failed");
+      setPending(null);
+    }
+  };
+
   const handleSaveEdit = async () => {
     setPending("edit");
     try {
@@ -247,6 +282,15 @@ export default function TenantDetailPage({
                 </button>
                 <button
                   type="button"
+                  onClick={handleExport}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200"
+                  title="Download every row tagged with this tenant_id as JSON"
+                >
+                  <ArrowDownTrayIcon className="w-3.5 h-3.5" />
+                  Export data
+                </button>
+                <button
+                  type="button"
                   onClick={handleDelete}
                   disabled={pending !== null}
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold text-red-700 bg-red-50 hover:bg-red-100 disabled:opacity-50"
@@ -257,15 +301,35 @@ export default function TenantDetailPage({
               </>
             )}
             {isDeleted && (
-              <button
-                type="button"
-                onClick={handleRestore}
-                disabled={pending !== null}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-50"
-              >
-                <ArrowUturnLeftIcon className="w-3.5 h-3.5" />
-                Restore
-              </button>
+              <>
+                <button
+                  type="button"
+                  onClick={handleRestore}
+                  disabled={pending !== null}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-50"
+                >
+                  <ArrowUturnLeftIcon className="w-3.5 h-3.5" />
+                  Restore
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExport}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200"
+                >
+                  <ArrowDownTrayIcon className="w-3.5 h-3.5" />
+                  Export data
+                </button>
+                <button
+                  type="button"
+                  onClick={handleHardDelete}
+                  disabled={pending !== null}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-bold text-white bg-red-600 hover:bg-red-700 disabled:opacity-50"
+                  title="Permanently delete after 30-day window"
+                >
+                  <FireIcon className="w-3.5 h-3.5" />
+                  Hard delete
+                </button>
+              </>
             )}
           </div>
         </div>

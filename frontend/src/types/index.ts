@@ -99,6 +99,20 @@ export interface AdminAnalytics {
   }[];
 }
 
+export interface AdminUserItem {
+  id: number;
+  email: string;
+  name: string;
+  role: "owner" | "member";
+  is_superadmin: boolean;
+  email_verified: boolean;
+  disabled: boolean;
+  tenant_id: number;
+  tenant_name: string;
+  last_login_at: string | null;
+  created_at: string;
+}
+
 export interface AuditLogEntry {
   id: number;
   actor_email: string;

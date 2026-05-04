@@ -17,13 +17,17 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
+from fastapi.responses import StreamingResponse
+
 from database import get_db
 from models import (
     Tenant, User, Job, Candidate, Application, InterviewLink, LlmUsage, AuditLog,
+    Email, Event, QaSession, EmailVerification, PasswordReset, TenantInvite,
 )
-from auth.security import issue_jwt, COOKIE_NAME, JWT_TTL_DAYS
+from auth.security import issue_jwt, COOKIE_NAME, JWT_TTL_DAYS, hash_password, new_token
 from auth.dependencies import require_superadmin, CurrentSession
 from auth.audit import record_audit
+from auth.email_service import send_password_reset_email
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
 
@@ -677,6 +681,363 @@ def analytics(
         top_spenders_30d=top_spenders,
         per_agent_breakdown_30d=agent_breakdown,
     )
+
+
+# ── User management (Milestone 3) ─────────────────────────────────────────
+
+
+class AdminUserItem(BaseModel):
+    id: int
+    email: str
+    name: str
+    role: str
+    is_superadmin: bool
+    email_verified: bool
+    disabled: bool
+    tenant_id: int
+    tenant_name: str
+    last_login_at: Optional[datetime]
+    created_at: datetime
+
+
+class AdminUserListResponse(BaseModel):
+    users: list[AdminUserItem]
+    total: int
+
+
+def _user_to_item(u: User, t: Optional[Tenant]) -> AdminUserItem:
+    return AdminUserItem(
+        id=u.id,
+        email=u.email,
+        name=u.name or "",
+        role=u.role,
+        is_superadmin=bool(u.is_superadmin),
+        email_verified=u.email_verified_at is not None,
+        disabled=u.disabled_at is not None,
+        tenant_id=u.tenant_id,
+        tenant_name=t.name if t else "(deleted tenant)",
+        last_login_at=u.last_login_at,
+        created_at=u.created_at,
+    )
+
+
+@router.get("/users", response_model=AdminUserListResponse)
+def list_users(
+    search: Optional[str] = None,
+    tenant_id: Optional[int] = None,
+    role: Optional[str] = None,  # owner / member / superadmin
+    page: int = 1,
+    per_page: int = 50,
+    db: Session = Depends(get_db),
+    _: CurrentSession = Depends(require_superadmin),
+):
+    query = db.query(User)
+    if search:
+        ilike = f"%{search.lower()}%"
+        query = query.filter(
+            or_(
+                func.lower(User.email).like(ilike),
+                func.lower(User.name).like(ilike),
+            )
+        )
+    if tenant_id:
+        query = query.filter(User.tenant_id == tenant_id)
+    if role == "superadmin":
+        query = query.filter(User.is_superadmin.is_(True))
+    elif role in ("owner", "member"):
+        query = query.filter(User.role == role)
+
+    total = query.count()
+    users = (
+        query.order_by(User.created_at.desc())
+        .offset((page - 1) * per_page)
+        .limit(per_page)
+        .all()
+    )
+
+    tenant_ids = {u.tenant_id for u in users}
+    tenant_map = {
+        t.id: t
+        for t in db.query(Tenant).filter(Tenant.id.in_(tenant_ids)).all()
+    } if tenant_ids else {}
+
+    return AdminUserListResponse(
+        users=[_user_to_item(u, tenant_map.get(u.tenant_id)) for u in users],
+        total=total,
+    )
+
+
+@router.get("/users/{user_id}", response_model=AdminUserItem)
+def get_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    _: CurrentSession = Depends(require_superadmin),
+):
+    u = db.query(User).filter(User.id == user_id).first()
+    if not u:
+        raise HTTPException(status_code=404, detail="User not found")
+    t = db.query(Tenant).filter(Tenant.id == u.tenant_id).first()
+    return _user_to_item(u, t)
+
+
+class UserDisableRequest(BaseModel):
+    disabled: bool
+
+
+@router.post("/users/{user_id}/disable")
+def disable_user(
+    request: Request,
+    user_id: int,
+    req: UserDisableRequest,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(require_superadmin),
+):
+    u = db.query(User).filter(User.id == user_id).first()
+    if not u:
+        raise HTTPException(status_code=404, detail="User not found")
+    if u.id == session.user.id:
+        raise HTTPException(status_code=400, detail="You can't disable yourself")
+    before = u.disabled_at is not None
+    u.disabled_at = datetime.utcnow() if req.disabled else None
+    u.updated_at = datetime.utcnow()
+    db.commit()
+    record_audit(
+        db, actor=session.user,
+        action="user.disable" if req.disabled else "user.enable",
+        target_user_id=u.id, target_tenant_id=u.tenant_id,
+        request=request,
+        payload={"before": {"disabled": before}, "after": {"disabled": not before if req.disabled != before else before}},
+    )
+    return {"ok": True, "disabled": u.disabled_at is not None}
+
+
+@router.post("/users/{user_id}/reset-password")
+def reset_user_password(
+    request: Request,
+    user_id: int,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(require_superadmin),
+):
+    """Generate a fresh password-reset token and email it to the user."""
+    u = db.query(User).filter(User.id == user_id).first()
+    if not u:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    token = new_token()
+    db.add(PasswordReset(
+        user_id=u.id,
+        token=token,
+        expires_at=datetime.utcnow() + timedelta(hours=1),
+    ))
+    db.commit()
+
+    frontend = os.getenv("FRONTEND_URL", "http://localhost:3000").rstrip("/")
+    send_password_reset_email(u.email, u.name or u.email, f"{frontend}/reset-password?token={token}")
+
+    record_audit(
+        db, actor=session.user, action="user.password_reset",
+        target_user_id=u.id, target_tenant_id=u.tenant_id, request=request,
+        payload={"sent_to": u.email},
+    )
+    return {"ok": True}
+
+
+@router.post("/users/{user_id}/verify-email")
+def verify_user_email(
+    request: Request,
+    user_id: int,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(require_superadmin),
+):
+    """Manually mark a user's email as verified (support tool)."""
+    u = db.query(User).filter(User.id == user_id).first()
+    if not u:
+        raise HTTPException(status_code=404, detail="User not found")
+    if u.email_verified_at is not None:
+        return {"ok": True, "already_verified": True}
+    u.email_verified_at = datetime.utcnow()
+    u.updated_at = datetime.utcnow()
+    db.commit()
+    record_audit(
+        db, actor=session.user, action="user.verify_email",
+        target_user_id=u.id, target_tenant_id=u.tenant_id, request=request,
+        payload={"email": u.email},
+    )
+    return {"ok": True}
+
+
+class SuperadminToggleRequest(BaseModel):
+    grant: bool
+
+
+@router.post("/users/{user_id}/superadmin")
+def toggle_superadmin(
+    request: Request,
+    user_id: int,
+    req: SuperadminToggleRequest,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(require_superadmin),
+):
+    """Grant or revoke is_superadmin. Self-revoke is allowed but flagged."""
+    u = db.query(User).filter(User.id == user_id).first()
+    if not u:
+        raise HTTPException(status_code=404, detail="User not found")
+    before = bool(u.is_superadmin)
+    u.is_superadmin = bool(req.grant)
+    u.updated_at = datetime.utcnow()
+    db.commit()
+    record_audit(
+        db, actor=session.user,
+        action="superadmin.grant" if req.grant else "superadmin.revoke",
+        target_user_id=u.id, target_tenant_id=u.tenant_id, request=request,
+        payload={"before": {"is_superadmin": before}, "after": {"is_superadmin": bool(u.is_superadmin)},
+                 "self_revoke": (u.id == session.user.id and not req.grant)},
+    )
+    return {"ok": True, "is_superadmin": bool(u.is_superadmin)}
+
+
+# ── GDPR data export + hard-delete (Milestone 3) ──────────────────────────
+
+
+def _serialize_dt(dt) -> Optional[str]:
+    return dt.isoformat() if dt else None
+
+
+@router.get("/tenants/{tenant_id}/export")
+def export_tenant_data(
+    request: Request,
+    tenant_id: int,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(require_superadmin),
+):
+    """Single-JSON export of every row tied to this tenant.
+
+    Returned as a streaming response with Content-Disposition so the browser
+    saves it to disk. Safe to run on a deleted tenant — useful for fulfilling
+    GDPR data-portability requests.
+    """
+    t = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+    if not t:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    def _rows(model, **filters) -> list[dict]:
+        q = db.query(model).filter(model.tenant_id == t.id)
+        for k, v in filters.items():
+            q = q.filter(getattr(model, k) == v)
+        return [
+            {c.name: (_serialize_dt(getattr(r, c.name)) if hasattr(getattr(r, c.name), "isoformat") else getattr(r, c.name))
+             for c in model.__table__.columns}
+            for r in q.all()
+        ]
+
+    bundle = {
+        "exported_at": datetime.utcnow().isoformat(),
+        "exported_by": session.user.email,
+        "tenant": {
+            "id": t.id, "slug": t.slug, "name": t.name, "plan": t.plan,
+            "created_at": _serialize_dt(t.created_at),
+            "deleted_at": _serialize_dt(t.deleted_at),
+        },
+        "users": _rows(User),
+        "jobs": _rows(Job),
+        "emails": _rows(Email),
+        "candidates": _rows(Candidate),
+        "applications": _rows(Application),
+        "interview_links": _rows(InterviewLink),
+        "qa_sessions": _rows(QaSession),
+        "events": _rows(Event),
+        "llm_usage": _rows(LlmUsage),
+        "tenant_invites": _rows(TenantInvite),
+    }
+
+    record_audit(
+        db, actor=session.user, action="tenant.export",
+        target_tenant_id=t.id, request=request,
+        payload={
+            "row_counts": {k: len(v) for k, v in bundle.items() if isinstance(v, list)},
+        },
+    )
+
+    payload = json.dumps(bundle, indent=2, default=str)
+    filename = f"hireops-tenant-{t.slug}-{datetime.utcnow().strftime('%Y%m%d')}.json"
+    return StreamingResponse(
+        iter([payload]),
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.delete("/tenants/{tenant_id}/hard-delete")
+def hard_delete_tenant(
+    request: Request,
+    tenant_id: int,
+    confirm: bool = False,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(require_superadmin),
+):
+    """Permanently delete a tenant + every row tagged with its tenant_id.
+
+    Guard rails:
+      • Tenant must be soft-deleted first (deleted_at set).
+      • Tenant must have been soft-deleted at least 30 days ago, OR the
+        caller passes ?confirm=true to skip the wait (for support cases).
+      • Audit log is preserved (target_tenant_id stays set, name resolves
+        to '(deleted tenant)' in future queries).
+    """
+    t = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+    if not t:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    if t.deleted_at is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Soft-delete the tenant first (sets the 30-day window).",
+        )
+    age_days = (datetime.utcnow() - t.deleted_at).days
+    if age_days < 30 and not confirm:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Soft-deleted only {age_days} days ago. Wait until 30 days, or pass ?confirm=true.",
+        )
+
+    # Snapshot row counts before delete so the audit entry is informative
+    counts = {
+        "users": db.query(User).filter(User.tenant_id == t.id).count(),
+        "jobs": db.query(Job).filter(Job.tenant_id == t.id).count(),
+        "candidates": db.query(Candidate).filter(Candidate.tenant_id == t.id).count(),
+        "applications": db.query(Application).filter(Application.tenant_id == t.id).count(),
+        "events": db.query(Event).filter(Event.tenant_id == t.id).count(),
+        "interview_links": db.query(InterviewLink).filter(InterviewLink.tenant_id == t.id).count(),
+        "qa_sessions": db.query(QaSession).filter(QaSession.tenant_id == t.id).count(),
+        "emails": db.query(Email).filter(Email.tenant_id == t.id).count(),
+        "llm_usage": db.query(LlmUsage).filter(LlmUsage.tenant_id == t.id).count(),
+        "tenant_invites": db.query(TenantInvite).filter(TenantInvite.tenant_id == t.id).count(),
+    }
+
+    # Order matters: rows with FKs back to the tenant must go first
+    db.query(QaSession).filter(QaSession.tenant_id == t.id).delete(synchronize_session=False)
+    db.query(Event).filter(Event.tenant_id == t.id).delete(synchronize_session=False)
+    db.query(InterviewLink).filter(InterviewLink.tenant_id == t.id).delete(synchronize_session=False)
+    db.query(Application).filter(Application.tenant_id == t.id).delete(synchronize_session=False)
+    db.query(Candidate).filter(Candidate.tenant_id == t.id).delete(synchronize_session=False)
+    db.query(Job).filter(Job.tenant_id == t.id).delete(synchronize_session=False)
+    db.query(Email).filter(Email.tenant_id == t.id).delete(synchronize_session=False)
+    db.query(LlmUsage).filter(LlmUsage.tenant_id == t.id).delete(synchronize_session=False)
+    db.query(TenantInvite).filter(TenantInvite.tenant_id == t.id).delete(synchronize_session=False)
+    # Email verification + password reset tokens reference user_id, so collect users first
+    user_ids = [u.id for u in db.query(User).filter(User.tenant_id == t.id).all()]
+    if user_ids:
+        db.query(EmailVerification).filter(EmailVerification.user_id.in_(user_ids)).delete(synchronize_session=False)
+        db.query(PasswordReset).filter(PasswordReset.user_id.in_(user_ids)).delete(synchronize_session=False)
+    db.query(User).filter(User.tenant_id == t.id).delete(synchronize_session=False)
+    db.delete(t)
+    db.commit()
+
+    record_audit(
+        db, actor=session.user, action="tenant.hard_delete",
+        target_tenant_id=tenant_id, request=request,
+        payload={"row_counts": counts, "soft_deleted_age_days": age_days, "confirmed": confirm},
+    )
+    return {"ok": True, "deleted_rows": counts}
 
 
 # ── Audit log ─────────────────────────────────────────────────────────────

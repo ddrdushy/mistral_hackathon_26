@@ -148,6 +148,16 @@ def _run_migrations():
                 except Exception:
                     pass
 
+    # Milestone 3: per-user disable
+    if "users" in insp.get_table_names():
+        existing = {c["name"] for c in insp.get_columns("users")}
+        if "disabled_at" not in existing:
+            with engine.begin() as conn:
+                try:
+                    conn.execute(text("ALTER TABLE users ADD COLUMN disabled_at TIMESTAMP"))
+                except Exception:
+                    pass
+
 
 def _apply_superadmin_emails():
     """Promote any user listed in SUPERADMIN_EMAILS env var to is_superadmin=True.
