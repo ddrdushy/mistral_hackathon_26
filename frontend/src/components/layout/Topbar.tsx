@@ -9,6 +9,7 @@ import {
   QuestionMarkCircleIcon,
   ArrowRightOnRectangleIcon,
   UsersIcon,
+  CreditCardIcon,
 } from "@heroicons/react/24/outline";
 import Link from "next/link";
 import { startTour } from "@/components/tour/tourEvents";
@@ -162,6 +163,14 @@ export default function Topbar({ onMenuToggle }: TopbarProps) {
               >
                 <UsersIcon className="w-4 h-4" />
                 Team
+              </Link>
+              <Link
+                href="/settings/billing"
+                onClick={() => setMenuOpen(false)}
+                className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
+              >
+                <CreditCardIcon className="w-4 h-4" />
+                Billing & usage
               </Link>
               <button
                 type="button"

@@ -67,6 +67,39 @@ export interface AcceptInvitePeek {
 }
 
 // ═══════════════════════════════════════
+// BILLING
+// ═══════════════════════════════════════
+
+export type PlanName = "free" | "starter" | "pro";
+
+export interface Plan {
+  name: PlanName;
+  display_name: string;
+  price_monthly_usd: number;
+  features: string[];
+  available: boolean; // false if not configured in Stripe
+}
+
+export interface CurrentPlan {
+  plan: PlanName;
+  display_name: string;
+  subscription_status: string | null;
+  current_period_end: string | null;
+  cancel_url_available: boolean;
+}
+
+export interface UsageItem {
+  used: number;
+  limit: number; // -1 for unlimited
+}
+
+export interface UsageSummary {
+  jobs: UsageItem;
+  candidates: UsageItem;
+  interviews_this_month: UsageItem;
+}
+
+// ═══════════════════════════════════════
 // JOBS
 // ═══════════════════════════════════════
 export type InterviewMode = "voice" | "qa";

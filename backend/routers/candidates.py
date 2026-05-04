@@ -9,6 +9,7 @@ from models import Candidate, Email
 from schemas import CandidateCreate, CandidateResponse, CandidateFromEmailResponse
 from services.resume_service import extract_resume_text, parse_contact_info
 from auth.dependencies import current_session, CurrentSession
+from billing.plans import check_quota
 
 router = APIRouter(prefix="/api/v1/candidates", tags=["candidates"])
 
@@ -34,6 +35,7 @@ async def create_candidate(
     db: Session = Depends(get_db),
     session: CurrentSession = Depends(current_session),
 ):
+    check_quota(db, session.tenant, "candidates")
     candidate = Candidate(
         tenant_id=session.tenant.id,
         name=req.name,
@@ -54,6 +56,7 @@ async def create_from_email(
     db: Session = Depends(get_db),
     session: CurrentSession = Depends(current_session),
 ):
+    check_quota(db, session.tenant, "candidates")
     em = db.query(Email).filter(
         Email.id == email_id,
         Email.tenant_id == session.tenant.id,

@@ -11,6 +11,7 @@ from models import Job, Application
 from schemas import JobCreate, JobUpdate, JobResponse, JobListResponse
 from agents.job_generator import generate_job_details
 from auth.dependencies import current_session, CurrentSession
+from billing.plans import check_quota
 
 router = APIRouter(prefix="/api/v1/jobs", tags=["jobs"])
 
@@ -68,6 +69,7 @@ async def create_job(
     db: Session = Depends(get_db),
     session: CurrentSession = Depends(current_session),
 ):
+    check_quota(db, session.tenant, "jobs")
     job = Job(
         tenant_id=session.tenant.id,
         job_id=_generate_job_id(db, session.tenant.id),

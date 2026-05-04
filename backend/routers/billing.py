@@ -1,0 +1,172 @@
+"""
+Billing endpoints: list plans, current usage, start checkout, open customer portal,
+Stripe webhook receiver.
+"""
+from __future__ import annotations
+
+import json
+import logging
+
+import stripe as stripe_sdk
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from pydantic import BaseModel
+from sqlalchemy.orm import Session
+
+from database import get_db
+from models import Tenant
+from auth.dependencies import current_session, require_owner, CurrentSession
+from billing.plans import PLANS, get_plan, usage_summary, PlanName
+from billing import stripe_service
+
+logger = logging.getLogger("hireops.billing")
+
+router = APIRouter(prefix="/api/v1/billing", tags=["billing"])
+public_router = APIRouter(prefix="/api/v1/billing", tags=["billing"])
+
+
+# ── Request / response models ─────────────────────────────────────────────
+
+
+class PlanResponse(BaseModel):
+    name: PlanName
+    display_name: str
+    price_monthly_usd: int
+    features: list[str]
+    available: bool  # false if plan has no Stripe price configured
+
+
+class CurrentPlanResponse(BaseModel):
+    plan: PlanName
+    display_name: str
+    subscription_status: str | None
+    current_period_end: str | None
+    cancel_url_available: bool  # true if tenant has a stripe customer (portal works)
+
+
+class UsageItem(BaseModel):
+    used: int
+    limit: int  # -1 for unlimited
+
+
+class UsageResponse(BaseModel):
+    jobs: UsageItem
+    candidates: UsageItem
+    interviews_this_month: UsageItem
+
+
+class CheckoutRequest(BaseModel):
+    plan: PlanName
+
+
+class CheckoutResponse(BaseModel):
+    url: str
+
+
+# ── Plans + usage ─────────────────────────────────────────────────────────
+
+
+@router.get("/plans", response_model=list[PlanResponse])
+def list_plans(_: CurrentSession = Depends(current_session)):
+    out = []
+    for p in PLANS.values():
+        out.append(PlanResponse(
+            name=p.name,
+            display_name=p.display_name,
+            price_monthly_usd=p.price_monthly_usd,
+            features=p.features,
+            available=(p.name == "free") or bool(p.stripe_price_id),
+        ))
+    return out
+
+
+@router.get("/me", response_model=CurrentPlanResponse)
+def current_plan(session: CurrentSession = Depends(current_session)):
+    t = session.tenant
+    p = get_plan(t.plan)
+    return CurrentPlanResponse(
+        plan=p.name,
+        display_name=p.display_name,
+        subscription_status=t.subscription_status,
+        current_period_end=t.current_period_end.isoformat() if t.current_period_end else None,
+        cancel_url_available=bool(t.stripe_customer_id) and stripe_service.configured(),
+    )
+
+
+@router.get("/usage", response_model=UsageResponse)
+def get_usage(
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(current_session),
+):
+    return usage_summary(db, session.tenant)
+
+
+# ── Checkout + portal (owner-only mutations) ──────────────────────────────
+
+
+@router.post("/checkout", response_model=CheckoutResponse)
+def start_checkout(
+    req: CheckoutRequest,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(require_owner),
+):
+    if not stripe_service.configured():
+        raise HTTPException(
+            status_code=503,
+            detail="Billing is not configured on this server. Contact support.",
+        )
+    try:
+        url = stripe_service.create_checkout_session(
+            db, session.tenant, session.user, req.plan,
+        )
+        return CheckoutResponse(url=url)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except stripe_sdk.error.StripeError as e:  # type: ignore[attr-defined]
+        logger.error("Stripe checkout error: %s", e)
+        raise HTTPException(status_code=502, detail=f"Stripe error: {e}")
+
+
+@router.post("/portal", response_model=CheckoutResponse)
+def open_portal(
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(require_owner),
+):
+    if not stripe_service.configured():
+        raise HTTPException(
+            status_code=503,
+            detail="Billing is not configured on this server.",
+        )
+    if not session.tenant.stripe_customer_id:
+        raise HTTPException(
+            status_code=400,
+            detail="No billing account yet — upgrade to a paid plan first.",
+        )
+    try:
+        url = stripe_service.create_portal_session(db, session.tenant, session.user)
+        return CheckoutResponse(url=url)
+    except stripe_sdk.error.StripeError as e:  # type: ignore[attr-defined]
+        logger.error("Stripe portal error: %s", e)
+        raise HTTPException(status_code=502, detail=f"Stripe error: {e}")
+
+
+# ── Webhook (public, signature-verified) ──────────────────────────────────
+
+
+@public_router.post("/webhook")
+async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
+    payload = await request.body()
+    signature = request.headers.get("stripe-signature", "")
+    try:
+        event = stripe_service.verify_webhook(payload, signature)
+    except stripe_sdk.error.SignatureVerificationError:  # type: ignore[attr-defined]
+        raise HTTPException(status_code=400, detail="Invalid signature")
+    except Exception as e:
+        logger.warning("Webhook verify failed: %s", e)
+        raise HTTPException(status_code=400, detail="Webhook verification failed")
+
+    try:
+        result = stripe_service.handle_event(db, event)
+        return {"received": True, **result}
+    except Exception as e:
+        logger.exception("Webhook handler error")
+        raise HTTPException(status_code=500, detail=str(e))

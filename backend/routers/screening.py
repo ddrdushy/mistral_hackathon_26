@@ -24,6 +24,7 @@ from agents.qa_interview import (
     generate_question_set, score_round, aggregate_final,
 )
 from auth.dependencies import current_session, CurrentSession
+from billing.plans import check_quota
 
 router = APIRouter(prefix="/api/v1/screening", tags=["screening"])
 
@@ -172,6 +173,7 @@ async def generate_interview_link(
     session: CurrentSession = Depends(current_session),
 ):
     """Generate a unique interview link for an application."""
+    check_quota(db, session.tenant, "interviews")
     app = db.query(Application).filter(
         Application.id == req.app_id,
         Application.tenant_id == session.tenant.id,
