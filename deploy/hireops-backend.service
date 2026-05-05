@@ -1,0 +1,26 @@
+[Unit]
+Description=HireOps AI backend (FastAPI + uvicorn)
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=hireops
+Group=hireops
+WorkingDirectory=/opt/hireops/backend
+EnvironmentFile=/opt/hireops/backend/.env
+ExecStart=/opt/hireops/backend/.venv/bin/uvicorn main:app --host 127.0.0.1 --port 8017 --workers 2
+Restart=on-failure
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/opt/hireops/backend /var/lib/hireops
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,29 @@
+[Unit]
+Description=HireOps AI frontend (Next.js standalone)
+After=network.target hireops-backend.service
+Wants=hireops-backend.service
+
+[Service]
+Type=simple
+User=hireops
+Group=hireops
+WorkingDirectory=/opt/hireops/frontend/.next/standalone
+EnvironmentFile=/opt/hireops/frontend/.env.production
+Environment=PORT=3017
+Environment=HOSTNAME=127.0.0.1
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node server.js
+Restart=on-failure
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/opt/hireops/frontend
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
