@@ -23,6 +23,7 @@ from database import get_db
 from models import (
     Tenant, User, Job, Candidate, Application, InterviewLink, LlmUsage, AuditLog,
     Email, Event, QaSession, EmailVerification, PasswordReset, TenantInvite,
+    Testimonial,
 )
 from auth.security import issue_jwt, COOKIE_NAME, JWT_TTL_DAYS, hash_password, new_token
 from auth.dependencies import require_superadmin, CurrentSession
@@ -1190,3 +1191,127 @@ async def clear_platform_secret(
         payload={"key": key},
     )
     return {"status": "cleared", "key": key}
+
+
+# ── Testimonial management (superadmin only) ──────────────────────────────
+
+class TestimonialAdminItem(BaseModel):
+    id: int
+    quote: str
+    author_name: str
+    author_role: str
+    avatar_url: str
+    is_active: bool
+    display_order: int
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class TestimonialListAdminResponse(BaseModel):
+    testimonials: list[TestimonialAdminItem]
+
+
+class TestimonialCreateRequest(BaseModel):
+    quote: str = Field(min_length=1, max_length=2000)
+    author_name: str = Field(min_length=1, max_length=120)
+    author_role: str = Field(default="", max_length=120)
+    avatar_url: str = Field(default="", max_length=500)
+    is_active: bool = True
+    display_order: int = 0
+
+
+class TestimonialUpdateRequest(BaseModel):
+    quote: Optional[str] = Field(default=None, min_length=1, max_length=2000)
+    author_name: Optional[str] = Field(default=None, min_length=1, max_length=120)
+    author_role: Optional[str] = Field(default=None, max_length=120)
+    avatar_url: Optional[str] = Field(default=None, max_length=500)
+    is_active: Optional[bool] = None
+    display_order: Optional[int] = None
+
+
+@router.get("/testimonials", response_model=TestimonialListAdminResponse)
+async def list_all_testimonials(
+    db: Session = Depends(get_db),
+    _: CurrentSession = Depends(require_superadmin),
+):
+    """All testimonials (active + inactive), ordered for the admin table."""
+    rows = (
+        db.query(Testimonial)
+        .order_by(Testimonial.display_order.asc(), Testimonial.id.asc())
+        .all()
+    )
+    return TestimonialListAdminResponse(
+        testimonials=[TestimonialAdminItem.model_validate(r) for r in rows]
+    )
+
+
+@router.post("/testimonials", response_model=TestimonialAdminItem)
+async def create_testimonial(
+    req: TestimonialCreateRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(require_superadmin),
+):
+    row = Testimonial(
+        quote=req.quote,
+        author_name=req.author_name,
+        author_role=req.author_role,
+        avatar_url=req.avatar_url,
+        is_active=req.is_active,
+        display_order=req.display_order,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    record_audit(
+        db, actor=session.user, action="testimonial.create",
+        request=request, payload={"id": row.id, "author": row.author_name},
+    )
+    return TestimonialAdminItem.model_validate(row)
+
+
+@router.patch("/testimonials/{testimonial_id}", response_model=TestimonialAdminItem)
+async def update_testimonial(
+    testimonial_id: int,
+    req: TestimonialUpdateRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(require_superadmin),
+):
+    row = db.query(Testimonial).filter(Testimonial.id == testimonial_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Testimonial not found")
+
+    fields = req.model_dump(exclude_unset=True)
+    for k, v in fields.items():
+        setattr(row, k, v)
+    db.commit()
+    db.refresh(row)
+    record_audit(
+        db, actor=session.user, action="testimonial.update",
+        request=request, payload={"id": row.id, "fields": list(fields.keys())},
+    )
+    return TestimonialAdminItem.model_validate(row)
+
+
+@router.delete("/testimonials/{testimonial_id}")
+async def delete_testimonial(
+    testimonial_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(require_superadmin),
+):
+    row = db.query(Testimonial).filter(Testimonial.id == testimonial_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Testimonial not found")
+    author = row.author_name
+    db.delete(row)
+    db.commit()
+    record_audit(
+        db, actor=session.user, action="testimonial.delete",
+        request=request, payload={"id": testimonial_id, "author": author},
+    )
+    return {"status": "deleted", "id": testimonial_id}

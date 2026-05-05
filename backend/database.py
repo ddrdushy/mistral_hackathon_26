@@ -35,12 +35,13 @@ def init_db():
     from models import (  # noqa: F401
         Job, Email, Candidate, Application, Event, InterviewLink, Setting, QaSession,
         Tenant, User, EmailVerification, PasswordReset, TenantInvite, LlmUsage,
-        AuditLog,
+        AuditLog, Testimonial,
     )
     Base.metadata.create_all(bind=engine)
     _run_migrations()
     _backfill_demo_tenant()
     _apply_superadmin_emails()
+    _seed_default_testimonials()
 
 
 def _run_migrations():
@@ -224,5 +225,33 @@ def _backfill_demo_tenant():
                     )
                 except Exception:
                     pass
+    finally:
+        db.close()
+
+
+def _seed_default_testimonials():
+    """Insert the 4 default testimonials on first boot. Idempotent — only
+    seeds when the table is empty so superadmin edits aren't overwritten."""
+    from models import Testimonial
+    db = SessionLocal()
+    try:
+        if db.query(Testimonial).count() > 0:
+            return
+        defaults = [
+            ("We used to spend Mondays clearing the inbox. HireOps did it before our coffee was cold.",
+             "Priya Anand", "Head of Talent", "/landing/avatar-asian-woman.webp", 1),
+            ("The voice interview catches things a phone screen never would. Fraud signals are gold.",
+             "Marcus Thompson", "Recruiting Lead", "/landing/avatar-black-man.webp", 2),
+            ("Set thresholds once, watch the queue self-organize. We hired three engineers in two weeks.",
+             "James Reeves", "VP People", "/landing/avatar-man-40s.webp", 3),
+            ("It actually feels like a teammate. The shortlist it surfaces is the shortlist I'd build.",
+             "Sara Mitchell", "Senior Recruiter", "/landing/avatar-woman-30s.webp", 4),
+        ]
+        for quote, name, role, avatar, order in defaults:
+            db.add(Testimonial(
+                quote=quote, author_name=name, author_role=role,
+                avatar_url=avatar, display_order=order, is_active=True,
+            ))
+        db.commit()
     finally:
         db.close()

@@ -8,9 +8,9 @@ export default function MarketingShell({
   children: React.ReactNode;
 }) {
   return (
-    <div className="bg-white min-h-screen flex flex-col">
-      {/* Floating pill navigation, Symprio-style */}
-      <header className="sticky top-4 z-30 px-4">
+    <div className="min-h-screen flex flex-col bg-blue-50">
+      {/* Floating pill navigation — fixed so it overlays the hero with no top gap */}
+      <header className="fixed top-4 left-0 right-0 z-30 px-4">
         <div className="max-w-6xl mx-auto bg-white/85 backdrop-blur-md rounded-full shadow-sm ring-1 ring-slate-200/70">
           <div className="px-4 sm:px-6 h-14 flex items-center justify-between gap-4">
             <Link href="/" className="inline-flex items-center gap-2.5 shrink-0">
@@ -20,15 +20,18 @@ export default function MarketingShell({
               <span className="font-bold text-slate-900 tracking-tight">HireOps AI</span>
             </Link>
 
-            <nav className="hidden md:flex items-center gap-7 text-sm font-medium text-slate-600">
-              <Link href="/#how-it-works" className="hover:text-slate-900 transition-colors">How it works</Link>
+            <nav className="hidden md:flex items-center gap-6 text-sm font-medium text-slate-600">
+              <Link href="/features" className="hover:text-slate-900 transition-colors">Features</Link>
+              <Link href="/solutions" className="hover:text-slate-900 transition-colors">Solutions</Link>
               <Link href="/pricing" className="hover:text-slate-900 transition-colors">Pricing</Link>
+              <Link href="/about" className="hover:text-slate-900 transition-colors">About</Link>
+              <Link href="/contact" className="hover:text-slate-900 transition-colors">Contact</Link>
               <Link href="/login" className="hover:text-slate-900 transition-colors">Sign in</Link>
             </nav>
 
             <Link
               href="/signup"
-              className="group inline-flex items-center gap-1.5 pl-4 pr-3 py-2 rounded-full bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition-colors"
+              className="group inline-flex items-center gap-1.5 pl-4 pr-3 py-2 rounded-full bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition-colors whitespace-nowrap"
             >
               Start free
               <ArrowRightIcon className="w-3.5 h-3.5 transition-transform group-hover:translate-x-0.5" />
@@ -37,7 +40,9 @@ export default function MarketingShell({
         </div>
       </header>
 
-      <main className="flex-1">{children}</main>
+      {/* pt-20 reserves vertical space for the fixed pill nav so the first
+          section starts cleanly below it (no overlap on first paint). */}
+      <main className="flex-1 pt-20">{children}</main>
 
       <footer className="border-t border-slate-200 py-10 mt-10">
         <div className="max-w-6xl mx-auto px-6 flex flex-col sm:flex-row items-center justify-between gap-4">

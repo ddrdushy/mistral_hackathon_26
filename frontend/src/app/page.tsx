@@ -18,7 +18,40 @@ export const metadata = {
     "The AI recruiting OS that auto-classifies applications, scores resumes, runs Q&A or voice interviews, and surfaces the best candidates — all from a single dashboard.",
 };
 
-export default function LandingPage() {
+// ISR: re-fetch testimonials every 60s so admin edits propagate without a redeploy.
+export const revalidate = 60;
+
+interface ApiTestimonial {
+  id: number;
+  quote: string;
+  author_name: string;
+  author_role: string;
+  avatar_url: string;
+  display_order: number;
+}
+
+const FALLBACK_TESTIMONIALS: ApiTestimonial[] = [
+  { id: 1, quote: "We used to spend Mondays clearing the inbox. HireOps did it before our coffee was cold.", author_name: "Priya Anand", author_role: "Head of Talent", avatar_url: "/landing/avatar-asian-woman.webp", display_order: 1 },
+  { id: 2, quote: "The voice interview catches things a phone screen never would. Fraud signals are gold.", author_name: "Marcus Thompson", author_role: "Recruiting Lead", avatar_url: "/landing/avatar-black-man.webp", display_order: 2 },
+  { id: 3, quote: "Set thresholds once, watch the queue self-organize. We hired three engineers in two weeks.", author_name: "James Reeves", author_role: "VP People", avatar_url: "/landing/avatar-man-40s.webp", display_order: 3 },
+  { id: 4, quote: "It actually feels like a teammate. The shortlist it surfaces is the shortlist I'd build.", author_name: "Sara Mitchell", author_role: "Senior Recruiter", avatar_url: "/landing/avatar-woman-30s.webp", display_order: 4 },
+];
+
+async function fetchTestimonials(): Promise<ApiTestimonial[]> {
+  const base = process.env.NEXT_PUBLIC_API_URL || "https://hireops.symprio.com/api/v1";
+  try {
+    const res = await fetch(`${base}/testimonials`, { next: { revalidate: 60 } });
+    if (!res.ok) return FALLBACK_TESTIMONIALS;
+    const data = (await res.json()) as { testimonials: ApiTestimonial[] };
+    return data.testimonials.length > 0 ? data.testimonials : FALLBACK_TESTIMONIALS;
+  } catch {
+    // Build-time or transient failure — render with seed data so the page still works.
+    return FALLBACK_TESTIMONIALS;
+  }
+}
+
+export default async function LandingPage() {
+  const testimonials = await fetchTestimonials();
   return (
     <MarketingShell>
       {/* ──────────────────────────────────────────────────────────────
@@ -68,19 +101,19 @@ export default function LandingPage() {
                 href="/signup"
                 className="group inline-flex items-center justify-center gap-2 px-7 py-3.5 rounded-full bg-blue-600 text-white font-semibold shadow-lg shadow-blue-600/25 hover:bg-blue-700 hover:shadow-blue-600/40 transition-all"
               >
-                Start free
+                Start free trial
                 <ArrowRightIcon className="w-4 h-4 transition-transform group-hover:translate-x-0.5" />
               </Link>
               <Link
-                href="#how-it-works"
+                href="/contact"
                 className="inline-flex items-center justify-center px-7 py-3.5 rounded-full bg-white text-slate-900 font-semibold border border-slate-200 hover:border-slate-300 hover:shadow-sm transition-all"
               >
-                See how it works
+                Book a demo
               </Link>
             </div>
 
             <p className="mt-4 text-xs text-slate-500">
-              Free forever for up to 25 candidates · No card required
+              Free forever for up to 25 candidates · No credit card required
             </p>
 
             {/* Stats row */}
@@ -103,24 +136,6 @@ export default function LandingPage() {
                 className="object-contain drop-shadow-[0_30px_60px_rgba(37,99,235,0.18)]"
               />
             </div>
-          </div>
-        </div>
-      </section>
-
-      {/* ──────────────────────────────────────────────────────────────
-         TRUST STRIP — "Powered by"
-         ────────────────────────────────────────────────────────────── */}
-      <section className="py-10 lg:py-14 bg-white border-y border-slate-100">
-        <div className="max-w-7xl mx-auto px-6">
-          <p className="text-center text-[11px] font-bold tracking-widest text-slate-400 uppercase mb-7">
-            Built on the AI stack the leaders use
-          </p>
-          <div className="flex flex-wrap items-center justify-center gap-x-12 gap-y-6 text-slate-400 font-semibold tracking-tight">
-            <span className="text-2xl">Mistral AI</span>
-            <span className="text-2xl">ElevenLabs</span>
-            <span className="text-2xl">Stripe</span>
-            <span className="text-2xl">PostgreSQL</span>
-            <span className="text-2xl">Next.js</span>
           </div>
         </div>
       </section>
@@ -300,31 +315,20 @@ export default function LandingPage() {
             </h2>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-            <Testimonial
-              quote="We used to spend Mondays clearing the inbox. HireOps did it before our coffee was cold."
-              name="Priya Anand"
-              role="Head of Talent"
-              avatarSrc="/landing/avatar-asian-woman.webp"
-            />
-            <Testimonial
-              quote="The voice interview catches things a phone screen never would. Fraud signals are gold."
-              name="Marcus Thompson"
-              role="Recruiting Lead"
-              avatarSrc="/landing/avatar-black-man.webp"
-            />
-            <Testimonial
-              quote="Set thresholds once, watch the queue self-organize. We hired three engineers in two weeks."
-              name="James Reeves"
-              role="VP People"
-              avatarSrc="/landing/avatar-man-40s.webp"
-            />
-            <Testimonial
-              quote="It actually feels like a teammate. The shortlist it surfaces is the shortlist I'd build."
-              name="Sara Mitchell"
-              role="Senior Recruiter"
-              avatarSrc="/landing/avatar-woman-30s.webp"
-            />
+          <div
+            className={`grid grid-cols-1 sm:grid-cols-2 gap-5 ${
+              testimonials.length >= 4 ? "lg:grid-cols-4" : testimonials.length === 3 ? "lg:grid-cols-3" : ""
+            }`}
+          >
+            {testimonials.map((t) => (
+              <Testimonial
+                key={t.id}
+                quote={t.quote}
+                name={t.author_name}
+                role={t.author_role}
+                avatarSrc={t.avatar_url || "/landing/avatar-woman-30s.webp"}
+              />
+            ))}
           </div>
         </div>
       </section>
@@ -410,13 +414,24 @@ export default function LandingPage() {
           <p className="mt-5 text-lg text-blue-100">
             Set up your workspace in 60 seconds. Your inbox does the rest.
           </p>
-          <Link
-            href="/signup"
-            className="mt-9 inline-flex items-center gap-2 px-8 py-3.5 rounded-full bg-white text-blue-700 font-semibold hover:bg-blue-50 transition-all shadow-xl shadow-blue-900/20"
-          >
-            Create your workspace
-            <ArrowRightIcon className="w-4 h-4" />
-          </Link>
+          <div className="mt-9 flex flex-col sm:flex-row gap-3 justify-center">
+            <Link
+              href="/signup"
+              className="inline-flex items-center justify-center gap-2 px-8 py-3.5 rounded-full bg-white text-blue-700 font-semibold hover:bg-blue-50 transition-all shadow-xl shadow-blue-900/20"
+            >
+              Start free trial
+              <ArrowRightIcon className="w-4 h-4" />
+            </Link>
+            <Link
+              href="/contact"
+              className="inline-flex items-center justify-center px-8 py-3.5 rounded-full bg-white/10 text-white font-semibold ring-1 ring-white/30 hover:bg-white/20 transition-all backdrop-blur-sm"
+            >
+              Book a demo
+            </Link>
+          </div>
+          <p className="mt-4 text-xs text-blue-200">
+            Free forever for up to 25 candidates · No credit card required
+          </p>
         </div>
       </section>
     </MarketingShell>

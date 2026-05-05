@@ -124,7 +124,7 @@ export default function PricingPage() {
     <MarketingShell>
       {/* Hero */}
       <section className="relative">
-        <div className="absolute inset-0 bg-gradient-to-br from-indigo-50 via-white to-violet-50 -z-10" />
+        <div className="absolute inset-0 bg-gradient-to-br from-blue-50 via-white to-blue-50 -z-10" />
         <div className="max-w-6xl mx-auto px-6 pt-16 pb-12 text-center">
           <h1 className="text-4xl sm:text-5xl font-bold text-slate-900 tracking-tight">
             Simple, fair pricing
@@ -143,17 +143,17 @@ export default function PricingPage() {
               key={p.name}
               className={`rounded-2xl p-6 ${
                 p.highlighted
-                  ? "bg-slate-900 text-white shadow-2xl shadow-indigo-900/10"
+                  ? "bg-slate-900 text-white shadow-2xl shadow-blue-900/10"
                   : "bg-white border border-slate-200 shadow-sm"
               }`}
             >
               {p.highlighted && (
-                <span className="inline-block text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded-full bg-indigo-500 text-white mb-2">
+                <span className="inline-block text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded-full bg-blue-500 text-white mb-2">
                   Recommended
                 </span>
               )}
               <p
-                className={`text-sm font-semibold ${p.highlighted ? "text-indigo-300" : "text-slate-500"}`}
+                className={`text-sm font-semibold ${p.highlighted ? "text-blue-300" : "text-slate-500"}`}
               >
                 {p.name}
               </p>
@@ -164,22 +164,22 @@ export default function PricingPage() {
                   {p.price}
                 </span>
                 <span
-                  className={`text-sm ${p.highlighted ? "text-indigo-200" : "text-slate-500"}`}
+                  className={`text-sm ${p.highlighted ? "text-blue-200" : "text-slate-500"}`}
                 >
                   {p.cadence}
                 </span>
               </p>
               <p
-                className={`mt-2 text-sm ${p.highlighted ? "text-indigo-100" : "text-slate-600"}`}
+                className={`mt-2 text-sm ${p.highlighted ? "text-blue-100" : "text-slate-600"}`}
               >
                 {p.blurb}
               </p>
               <Link
                 href={p.ctaHref}
-                className={`mt-5 w-full inline-flex items-center justify-center px-4 py-2.5 rounded-lg font-semibold text-sm transition-colors ${
+                className={`mt-5 w-full inline-flex items-center justify-center px-4 py-2.5 rounded-full font-semibold text-sm transition-colors ${
                   p.highlighted
                     ? "bg-white text-slate-900 hover:bg-slate-100"
-                    : "bg-indigo-600 text-white hover:bg-indigo-700"
+                    : "bg-blue-600 text-white hover:bg-blue-700"
                 }`}
               >
                 {p.cta}
@@ -200,7 +200,7 @@ export default function PricingPage() {
               <tr>
                 <th className="text-left font-semibold text-slate-700 px-6 py-4 w-1/3"></th>
                 <th className="text-center font-semibold text-slate-700 px-6 py-4">Free</th>
-                <th className="text-center font-semibold text-slate-700 px-6 py-4 bg-indigo-50/50">Starter</th>
+                <th className="text-center font-semibold text-slate-700 px-6 py-4 bg-blue-50/50">Starter</th>
                 <th className="text-center font-semibold text-slate-700 px-6 py-4">Pro</th>
               </tr>
             </thead>
@@ -221,7 +221,7 @@ export default function PricingPage() {
                       <td
                         key={j}
                         className={`px-6 py-3 text-center ${
-                          j === 1 ? "bg-indigo-50/30" : ""
+                          j === 1 ? "bg-blue-50/30" : ""
                         }`}
                       >
                         {typeof v === "boolean" ? (
@@ -262,17 +262,17 @@ export default function PricingPage() {
       </section>
 
       {/* CTA */}
-      <section className="bg-gradient-to-br from-indigo-600 to-violet-700 py-14">
+      <section className="bg-gradient-to-br from-blue-600 via-blue-700 to-slate-900 py-14">
         <div className="max-w-3xl mx-auto px-6 text-center">
           <h2 className="text-3xl font-bold text-white tracking-tight">
             Try it free for as long as you like
           </h2>
-          <p className="mt-3 text-indigo-100">
-            No card. No commitment. Upgrade only when it's worth it.
+          <p className="mt-3 text-blue-100">
+            No card. No commitment. Upgrade only when it&apos;s worth it.
           </p>
           <Link
             href="/signup"
-            className="mt-6 inline-flex items-center justify-center px-6 py-3 rounded-lg bg-white text-indigo-700 font-semibold hover:bg-indigo-50 transition-colors shadow-sm"
+            className="mt-6 inline-flex items-center justify-center px-6 py-3 rounded-full bg-white text-blue-700 font-semibold hover:bg-blue-50 transition-colors shadow-sm"
           >
             Start free
           </Link>

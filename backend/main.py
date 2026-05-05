@@ -19,7 +19,7 @@ from services.secrets import apply_db_secrets_to_env
 _secret_sources = apply_db_secrets_to_env()
 
 from app_limiter import limiter
-from routers import inbox, jobs, candidates, applications, screening, reports, settings, auth, admin, team, billing
+from routers import inbox, jobs, candidates, applications, screening, reports, settings, auth, admin, team, billing, testimonials
 
 logger = logging.getLogger("hireops")
 logger.info("Global secrets sources: %s", _secret_sources)
@@ -77,6 +77,7 @@ app.include_router(applications.router)
 app.include_router(screening.router)
 app.include_router(reports.router)
 app.include_router(settings.router)
+app.include_router(testimonials.router)
 
 
 @app.on_event("startup")

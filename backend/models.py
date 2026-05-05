@@ -391,3 +391,27 @@ class QaSession(Base):
     __table_args__ = (
         Index("idx_qa_sessions_app", "app_id"),
     )
+
+
+class Testimonial(Base):
+    """Marketing testimonials shown on the public landing page.
+
+    Global (no tenant_id). Only superadmins can create/edit/delete via the
+    admin UI. The public landing page fetches active rows ordered by
+    display_order.
+    """
+    __tablename__ = "testimonials"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    quote = Column(Text, nullable=False)
+    author_name = Column(String, nullable=False)
+    author_role = Column(String, nullable=False, default="")
+    avatar_url = Column(String, nullable=False, default="")  # path under /landing/ or full URL
+    is_active = Column(Boolean, nullable=False, default=True)
+    display_order = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        Index("idx_testimonials_active_order", "is_active", "display_order"),
+    )
