@@ -7,6 +7,7 @@ import {
   LockClosedIcon,
 } from "@heroicons/react/24/outline";
 import MarketingShell from "@/components/marketing/MarketingShell";
+import Reveal from "@/components/marketing/Reveal";
 
 export const metadata = {
   title: "About — HireOps AI",
@@ -55,7 +56,7 @@ export default function AboutPage() {
           </span>
           <h1 className="mt-6 text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight text-slate-900 leading-[1.05]">
             Hiring shouldn&apos;t be a full-time job{" "}
-            <span className="bg-gradient-to-br from-blue-500 to-blue-700 bg-clip-text text-transparent">
+            <span className="bg-gradient-to-br from-blue-500 via-blue-600 to-blue-800 bg-clip-text text-transparent animate-gradient-sweep">
               for everyone in the room
             </span>
           </h1>
@@ -107,14 +108,16 @@ export default function AboutPage() {
             </h2>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-            {PRINCIPLES.map((p) => (
-              <div key={p.title} className="bg-white rounded-2xl border border-slate-200 p-7">
-                <div className="w-12 h-12 rounded-2xl bg-blue-100 text-blue-700 flex items-center justify-center mb-4">
-                  {p.icon}
+            {PRINCIPLES.map((p, i) => (
+              <Reveal key={p.title} delay={i * 100}>
+                <div className="bg-white rounded-2xl border border-slate-200 p-7 h-full transition-all hover:shadow-lg hover:shadow-blue-100/50 hover:border-blue-200">
+                  <div className="w-12 h-12 rounded-2xl bg-blue-100 text-blue-700 flex items-center justify-center mb-4">
+                    {p.icon}
+                  </div>
+                  <h3 className="text-lg font-bold text-slate-900 tracking-tight">{p.title}</h3>
+                  <p className="mt-2 text-sm text-slate-600 leading-relaxed">{p.body}</p>
                 </div>
-                <h3 className="text-lg font-bold text-slate-900 tracking-tight">{p.title}</h3>
-                <p className="mt-2 text-sm text-slate-600 leading-relaxed">{p.body}</p>
-              </div>
+              </Reveal>
             ))}
           </div>
         </div>

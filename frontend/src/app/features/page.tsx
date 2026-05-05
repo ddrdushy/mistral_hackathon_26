@@ -11,6 +11,7 @@ import {
   CheckIcon,
 } from "@heroicons/react/24/outline";
 import MarketingShell from "@/components/marketing/MarketingShell";
+import Reveal from "@/components/marketing/Reveal";
 
 export const metadata = {
   title: "Features — HireOps AI",
@@ -121,7 +122,7 @@ export default function FeaturesPage() {
           </span>
           <h1 className="mt-6 text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight text-slate-900 leading-[1.05]">
             Every part of the funnel,{" "}
-            <span className="bg-gradient-to-br from-blue-500 to-blue-700 bg-clip-text text-transparent">
+            <span className="bg-gradient-to-br from-blue-500 via-blue-600 to-blue-800 bg-clip-text text-transparent animate-gradient-sweep">
               covered
             </span>
           </h1>
@@ -136,8 +137,9 @@ export default function FeaturesPage() {
       <section className="py-16 lg:py-24 bg-white">
         <div className="max-w-6xl mx-auto px-6 space-y-20 lg:space-y-28">
           {FEATURES.map((f, i) => (
-            <div
+            <Reveal
               key={f.title}
+              direction={i % 2 === 0 ? "left" : "right"}
               className={`grid grid-cols-1 lg:grid-cols-2 gap-10 lg:gap-16 items-center ${
                 i % 2 === 1 ? "lg:[&>*:first-child]:order-2" : ""
               }`}
@@ -182,7 +184,7 @@ export default function FeaturesPage() {
                   <div className="text-9xl font-bold text-blue-200/60 select-none">{String(i + 1).padStart(2, "0")}</div>
                 )}
               </div>
-            </div>
+            </Reveal>
           ))}
         </div>
       </section>

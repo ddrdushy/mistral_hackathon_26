@@ -7,6 +7,7 @@ import {
   CheckIcon,
 } from "@heroicons/react/24/outline";
 import MarketingShell from "@/components/marketing/MarketingShell";
+import Reveal from "@/components/marketing/Reveal";
 
 export const metadata = {
   title: "Solutions — HireOps AI",
@@ -82,7 +83,7 @@ export default function SolutionsPage() {
           </span>
           <h1 className="mt-6 text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight text-slate-900 leading-[1.05]">
             Built for the way{" "}
-            <span className="bg-gradient-to-br from-blue-500 to-blue-700 bg-clip-text text-transparent">
+            <span className="bg-gradient-to-br from-blue-500 via-blue-600 to-blue-800 bg-clip-text text-transparent animate-gradient-sweep">
               you hire
             </span>
           </h1>
@@ -97,8 +98,7 @@ export default function SolutionsPage() {
       <section className="py-16 lg:py-24 bg-white">
         <div className="max-w-6xl mx-auto px-6 space-y-12">
           {SOLUTIONS.map((s, i) => (
-            <article
-              key={s.audience}
+            <Reveal key={s.audience} delay={i * 100} as="article"
               className={`rounded-3xl p-8 lg:p-12 ${
                 i === 1
                   ? "bg-gradient-to-br from-blue-500 to-blue-700 text-white shadow-2xl shadow-blue-900/20"
@@ -173,7 +173,7 @@ export default function SolutionsPage() {
                   </ul>
                 </div>
               </div>
-            </article>
+            </Reveal>
           ))}
         </div>
       </section>

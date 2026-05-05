@@ -11,6 +11,7 @@ import {
   BriefcaseIcon,
 } from "@heroicons/react/24/outline";
 import MarketingShell from "@/components/marketing/MarketingShell";
+import Reveal from "@/components/marketing/Reveal";
 
 export const metadata = {
   title: "HireOps AI — From inbox to hired, on autopilot",
@@ -124,8 +125,8 @@ export default async function LandingPage() {
         />
 
         <div className="relative max-w-7xl mx-auto px-6 pt-16 pb-20 lg:pt-24 lg:pb-28 grid grid-cols-1 lg:grid-cols-2 gap-12 lg:gap-16 items-center">
-          {/* Left column */}
-          <div>
+          {/* Left column — staggered fade-in for badge → headline → body → CTAs → stats */}
+          <Reveal direction="left" duration={800}>
             <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-bold tracking-widest uppercase text-blue-700 bg-white/60 ring-1 ring-blue-200 backdrop-blur-sm">
               <SparklesIcon className="w-3.5 h-3.5" />
               Powered by Mistral &amp; ElevenLabs
@@ -133,7 +134,7 @@ export default async function LandingPage() {
 
             <h1 className="mt-6 text-5xl sm:text-6xl lg:text-7xl font-bold tracking-tight text-slate-900 leading-[1.02]">
               From inbox to{" "}
-              <span className="bg-gradient-to-br from-blue-500 to-blue-700 bg-clip-text text-transparent">
+              <span className="bg-gradient-to-br from-blue-500 via-blue-600 to-blue-800 bg-clip-text text-transparent animate-gradient-sweep">
                 hired
               </span>
               ,<br className="hidden sm:block" /> on autopilot
@@ -171,11 +172,11 @@ export default async function LandingPage() {
               <Stat value={stats.scoreValue} label={stats.scoreLabel} />
               <Stat value={stats.interviewsValue} label={stats.interviewsLabel} />
             </dl>
-          </div>
+          </Reveal>
 
-          {/* Right column — 3D hero illustration */}
-          <div className="relative">
-            <div className="relative aspect-[16/10] w-full">
+          {/* Right column — 3D hero illustration with gentle float */}
+          <Reveal direction="scale" delay={150}>
+            <div className="relative aspect-[16/10] w-full animate-float">
               <Image
                 src="/landing/hero-illustration.webp"
                 alt="Resume stack flowing into a glowing AI orb that produces approved candidate cards"
@@ -185,7 +186,7 @@ export default async function LandingPage() {
                 className="object-contain drop-shadow-[0_30px_60px_rgba(37,99,235,0.18)]"
               />
             </div>
-          </div>
+          </Reveal>
         </div>
       </section>
 
@@ -240,48 +241,56 @@ export default async function LandingPage() {
       <section id="how-it-works" className="py-20 lg:py-28 relative">
         <div className="absolute inset-0 bg-dot-grid opacity-60 -z-10" />
         <div className="max-w-7xl mx-auto px-6">
-          <div className="text-center max-w-2xl mx-auto mb-16">
-            <span className="text-[11px] font-bold tracking-widest text-blue-600 uppercase">
-              How it works
-            </span>
-            <h2 className="mt-3 text-4xl sm:text-5xl font-bold tracking-tight text-slate-900">
-              The full hiring loop, automated
-            </h2>
-            <p className="mt-5 text-slate-600 text-lg">
-              Three big jobs HireOps does so your team can stop reading resumes and start
-              talking to humans.
-            </p>
-          </div>
+          <Reveal>
+            <div className="text-center max-w-2xl mx-auto mb-16">
+              <span className="text-[11px] font-bold tracking-widest text-blue-600 uppercase">
+                How it works
+              </span>
+              <h2 className="mt-3 text-4xl sm:text-5xl font-bold tracking-tight text-slate-900">
+                The full hiring loop, automated
+              </h2>
+              <p className="mt-5 text-slate-600 text-lg">
+                Three big jobs HireOps does so your team can stop reading resumes and start
+                talking to humans.
+              </p>
+            </div>
+          </Reveal>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <PillarCard
-              variant="white"
-              eyebrow="Step 01"
-              title={<>Automated<br />intake</>}
-              body="Every inbound application is parsed, deduped, and converted into a candidate record — no manual triage, no missed inboxes."
-              imageSrc="/landing/pillar-1.webp"
-              imageAlt="Paper airplane lifting off from an inbox tray"
-              href="/signup"
-              cta="Try it free"
-            />
-            <PillarCard
-              variant="blue"
-              eyebrow="Step 02"
-              title={<>AI evaluation<br />at scale</>}
-              body="Resumes scored 0–100 with evidence and gaps. Run AI Q&A interviews or live ElevenLabs voice screens — each candidate gets unique questions."
-              href="/signup"
-              cta="See the agents"
-            />
-            <PillarCard
-              variant="dark"
-              eyebrow="Step 03"
-              title={<>Decisions on<br />autopilot</>}
-              body="Threshold-based auto-advance, hold, or reject — tuned per job. HR only sees the cases that need a human. Every decision is logged."
-              imageSrc="/landing/pillar-2.webp"
-              imageAlt="Magnifying glass over a rising bar chart"
-              href="/signup"
-              cta="Open dashboard"
-            />
+            <Reveal delay={0}>
+              <PillarCard
+                variant="white"
+                eyebrow="Step 01"
+                title={<>Automated<br />intake</>}
+                body="Every inbound application is parsed, deduped, and converted into a candidate record — no manual triage, no missed inboxes."
+                imageSrc="/landing/pillar-1.webp"
+                imageAlt="Paper airplane lifting off from an inbox tray"
+                href="/signup"
+                cta="Try it free"
+              />
+            </Reveal>
+            <Reveal delay={120}>
+              <PillarCard
+                variant="blue"
+                eyebrow="Step 02"
+                title={<>AI evaluation<br />at scale</>}
+                body="Resumes scored 0–100 with evidence and gaps. Run AI Q&A interviews or live ElevenLabs voice screens — each candidate gets unique questions."
+                href="/signup"
+                cta="See the agents"
+              />
+            </Reveal>
+            <Reveal delay={240}>
+              <PillarCard
+                variant="dark"
+                eyebrow="Step 03"
+                title={<>Decisions on<br />autopilot</>}
+                body="Threshold-based auto-advance, hold, or reject — tuned per job. HR only sees the cases that need a human. Every decision is logged."
+                imageSrc="/landing/pillar-2.webp"
+                imageAlt="Magnifying glass over a rising bar chart"
+                href="/signup"
+                cta="Open dashboard"
+              />
+            </Reveal>
           </div>
         </div>
       </section>
@@ -291,46 +300,30 @@ export default async function LandingPage() {
          ────────────────────────────────────────────────────────────── */}
       <section className="py-20 lg:py-24 bg-slate-50">
         <div className="max-w-6xl mx-auto px-6">
-          <div className="text-center max-w-2xl mx-auto mb-12">
-            <span className="text-[11px] font-bold tracking-widest text-blue-600 uppercase">
-              Capabilities
-            </span>
-            <h2 className="mt-3 text-3xl sm:text-4xl font-bold tracking-tight text-slate-900">
-              Every part of the funnel, covered
-            </h2>
-          </div>
+          <Reveal>
+            <div className="text-center max-w-2xl mx-auto mb-12">
+              <span className="text-[11px] font-bold tracking-widest text-blue-600 uppercase">
+                Capabilities
+              </span>
+              <h2 className="mt-3 text-3xl sm:text-4xl font-bold tracking-tight text-slate-900">
+                Every part of the funnel, covered
+              </h2>
+            </div>
+          </Reveal>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-            <MiniFeature
-              icon={<EnvelopeIcon className="w-5 h-5" />}
-              title="Email auto-classification"
-              body="Inbound applications detected, parsed, and turned into candidate records — no manual intake."
-            />
-            <MiniFeature
-              icon={<SparklesIcon className="w-5 h-5" />}
-              title="Resume scoring"
-              body="Every resume scored 0–100 against the job, with evidence, gaps, and a recommended next action."
-            />
-            <MiniFeature
-              icon={<PhoneIcon className="w-5 h-5" />}
-              title="Q&A or voice interviews"
-              body="Pick written multi-round Q&A or live AI voice interviews. Each candidate gets unique questions."
-            />
-            <MiniFeature
-              icon={<ShieldCheckIcon className="w-5 h-5" />}
-              title="Anti-fraud signals"
-              body="Webcam face tracking, tab-switch detection, and paste alerts surface integrity issues before you decide."
-            />
-            <MiniFeature
-              icon={<ChartBarIcon className="w-5 h-5" />}
-              title="Decision dashboard"
-              body="Score gauges, fraud risk, pipeline funnel, and a 'needs HR action' queue — at a glance."
-            />
-            <MiniFeature
-              icon={<BriefcaseIcon className="w-5 h-5" />}
-              title="Threshold automation"
-              body="Auto-advance, auto-reject, or hold — tuned per job. HR only sees the cases that need a human."
-            />
+            {[
+              { icon: <EnvelopeIcon className="w-5 h-5" />, title: "Email auto-classification", body: "Inbound applications detected, parsed, and turned into candidate records — no manual intake." },
+              { icon: <SparklesIcon className="w-5 h-5" />, title: "Resume scoring", body: "Every resume scored 0–100 against the job, with evidence, gaps, and a recommended next action." },
+              { icon: <PhoneIcon className="w-5 h-5" />, title: "Q&A or voice interviews", body: "Pick written multi-round Q&A or live AI voice interviews. Each candidate gets unique questions." },
+              { icon: <ShieldCheckIcon className="w-5 h-5" />, title: "Anti-fraud signals", body: "Webcam face tracking, tab-switch detection, and paste alerts surface integrity issues before you decide." },
+              { icon: <ChartBarIcon className="w-5 h-5" />, title: "Decision dashboard", body: "Score gauges, fraud risk, pipeline funnel, and a 'needs HR action' queue — at a glance." },
+              { icon: <BriefcaseIcon className="w-5 h-5" />, title: "Threshold automation", body: "Auto-advance, auto-reject, or hold — tuned per job. HR only sees the cases that need a human." },
+            ].map((f, i) => (
+              <Reveal key={f.title} delay={i * 80}>
+                <MiniFeature icon={f.icon} title={f.title} body={f.body} />
+              </Reveal>
+            ))}
           </div>
         </div>
       </section>
@@ -341,8 +334,8 @@ export default async function LandingPage() {
       <section className="py-20 lg:py-28 bg-white relative overflow-hidden">
         <div className="absolute inset-0 bg-dot-grid opacity-50 -z-10" />
         <div className="max-w-7xl mx-auto px-6 grid grid-cols-1 lg:grid-cols-2 gap-12 lg:gap-16 items-center">
-          <div className="order-2 lg:order-1 relative">
-            <div className="relative aspect-square w-full max-w-lg mx-auto">
+          <Reveal direction="left" className="order-2 lg:order-1 relative">
+            <div className="relative aspect-square w-full max-w-lg mx-auto animate-float">
               <Image
                 src="/landing/hero-mockup.webp"
                 alt="HireOps dashboard composite: analytics, candidate list, pipeline funnel, and live interview"
@@ -351,8 +344,8 @@ export default async function LandingPage() {
                 className="object-contain drop-shadow-[0_25px_50px_rgba(37,99,235,0.15)]"
               />
             </div>
-          </div>
-          <div className="order-1 lg:order-2">
+          </Reveal>
+          <Reveal direction="right" className="order-1 lg:order-2">
             <span className="text-[11px] font-bold tracking-widest text-blue-600 uppercase">
               Inside HireOps
             </span>
@@ -388,7 +381,7 @@ export default async function LandingPage() {
               Open the dashboard
               <ArrowRightIcon className="w-4 h-4" />
             </Link>
-          </div>
+          </Reveal>
         </div>
       </section>
 
@@ -414,14 +407,15 @@ export default async function LandingPage() {
               testimonials.length >= 4 ? "lg:grid-cols-4" : testimonials.length === 3 ? "lg:grid-cols-3" : ""
             }`}
           >
-            {testimonials.map((t) => (
-              <Testimonial
-                key={t.id}
-                quote={t.quote}
-                name={t.author_name}
-                role={t.author_role}
-                avatarSrc={t.avatar_url || "/landing/avatar-woman-30s.webp"}
-              />
+            {testimonials.map((t, i) => (
+              <Reveal key={t.id} delay={i * 100}>
+                <Testimonial
+                  quote={t.quote}
+                  name={t.author_name}
+                  role={t.author_role}
+                  avatarSrc={t.avatar_url || "/landing/avatar-woman-30s.webp"}
+                />
+              </Reveal>
             ))}
           </div>
         </div>
@@ -445,49 +439,55 @@ export default async function LandingPage() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-            <PricingCard
-              name="Free"
-              price="$0"
-              cadence="forever"
-              cta="Start free"
-              ctaHref="/signup"
-              features={[
-                "5 active jobs",
-                "25 candidates",
-                "10 interviews / month",
-                "Q&A + voice modes",
-                "AI fraud detection",
-              ]}
-            />
-            <PricingCard
-              name="Starter"
-              price="Coming soon"
-              cadence=""
-              cta="Get notified"
-              ctaHref="/signup"
-              features={[
-                "25 active jobs",
-                "250 candidates",
-                "100 interviews / month",
-                "Branded interview emails",
-                "Priority support",
-              ]}
-              highlighted
-            />
-            <PricingCard
-              name="Pro"
-              price="Coming soon"
-              cadence=""
-              cta="Talk to us"
-              ctaHref="/signup"
-              features={[
-                "Unlimited jobs",
-                "Unlimited candidates",
-                "Unlimited interviews",
-                "Team seats",
-                "SSO + audit logs",
-              ]}
-            />
+            <Reveal delay={0}>
+              <PricingCard
+                name="Free"
+                price="$0"
+                cadence="forever"
+                cta="Start free"
+                ctaHref="/signup"
+                features={[
+                  "5 active jobs",
+                  "25 candidates",
+                  "10 interviews / month",
+                  "Q&A + voice modes",
+                  "AI fraud detection",
+                ]}
+              />
+            </Reveal>
+            <Reveal delay={120}>
+              <PricingCard
+                name="Starter"
+                price="Coming soon"
+                cadence=""
+                cta="Get notified"
+                ctaHref="/signup"
+                features={[
+                  "25 active jobs",
+                  "250 candidates",
+                  "100 interviews / month",
+                  "Branded interview emails",
+                  "Priority support",
+                ]}
+                highlighted
+              />
+            </Reveal>
+            <Reveal delay={240}>
+              <PricingCard
+                name="Pro"
+                price="Coming soon"
+                cadence=""
+                cta="Talk to us"
+                ctaHref="/signup"
+                features={[
+                  "Unlimited jobs",
+                  "Unlimited candidates",
+                  "Unlimited interviews",
+                  "Team seats",
+                  "SSO + audit logs",
+                ]}
+              />
+            </Reveal>
           </div>
         </div>
       </section>

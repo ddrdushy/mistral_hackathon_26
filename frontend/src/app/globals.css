@@ -112,12 +112,58 @@ body {
   animation: marquee 38s linear infinite;
 }
 
-/* Reduced motion: stop all animations */
+/* ─────────────────────────────────────────────────────────────────────
+   Decorative motion for landing pages — gentle, premium.
+   ───────────────────────────────────────────────────────────────────── */
+
+/* Hero illustration: gentle vertical bob, ~6s cycle. */
+@keyframes float-bob {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-10px); }
+}
+.animate-float {
+  animation: float-bob 6s ease-in-out infinite;
+}
+
+/* Highlight gradient sweep — for the accent word in headlines. */
+@keyframes gradient-sweep {
+  0%, 100% { background-position: 0% 50%; }
+  50%      { background-position: 100% 50%; }
+}
+.animate-gradient-sweep {
+  background-size: 200% 200%;
+  animation: gradient-sweep 6s ease-in-out infinite;
+}
+
+/* Subtle pulse for status dots / badges. */
+@keyframes soft-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.55; }
+}
+.animate-soft-pulse {
+  animation: soft-pulse 2.4s ease-in-out infinite;
+}
+
+/* Card hover-lift utility — pair with `transition-all` on the element. */
+.hover-lift:hover {
+  transform: translateY(-4px);
+}
+
+/* Reveal-on-scroll: handled by the Reveal client component. globals just
+   needs to honour reduced-motion for it. */
 @media (prefers-reduced-motion: reduce) {
   .bg-blobs::before,
   .bg-blobs::after,
   .bg-blobs > .blob-extra,
-  .animate-marquee {
+  .animate-marquee,
+  .animate-float,
+  .animate-gradient-sweep,
+  .animate-soft-pulse {
     animation: none !important;
+  }
+  .motion-element {
+    transition: none !important;
+    opacity: 1 !important;
+    transform: none !important;
   }
 }
