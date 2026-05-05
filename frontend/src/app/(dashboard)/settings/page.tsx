@@ -1,621 +1,285 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import { apiGet, apiPatch, apiPut, apiDelete } from "@/lib/api";
+import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { apiGet } from "@/lib/api";
+import { useAuth } from "@/components/auth/AuthGate";
+import JobBoardIntegrations from "@/components/talent/JobBoardIntegrations";
 
-interface AgentInfo {
-  key: string;
-  display_name: string;
-  description: string;
-  model: string;
-  agent_id: string;
-  use_mock: boolean;
-  status: string;
-}
-
-interface AgentBreakdown {
-  calls: number;
-  tokens: number;
-  cost_usd: number;
-  errors: number;
-  avg_latency_ms: number;
-}
-
-interface UsageReport {
-  period_days: number;
+interface TenantUsageReport {
+  scope: "tenant";
+  days: number;
   total_calls: number;
-  total_tokens: number;
   total_input_tokens: number;
   total_output_tokens: number;
+  total_tokens: number;
   total_cost_usd: number;
-  avg_latency_ms: number;
-  error_count: number;
-  error_rate: number;
-  agent_breakdown: Record<string, AgentBreakdown>;
-  model_breakdown: Record<string, { calls: number; tokens: number; cost_usd: number }>;
-  hourly_trend: Array<{ hour: string; calls: number; tokens: number; cost_usd: number }>;
-  recent_calls: Array<{
-    timestamp: string;
-    agent_name: string;
-    model: string;
-    total_tokens: number;
-    cost_usd: number;
-    latency_ms: number;
-    status: string;
-  }>;
+  by_agent: Record<
+    string,
+    {
+      calls: number;
+      input_tokens: number;
+      output_tokens: number;
+      total_tokens: number;
+      cost_usd: number;
+      avg_latency_ms: number;
+    }
+  >;
 }
 
-interface EnvCheck {
-  MISTRAL_API_KEY: string;
-  ELEVENLABS_API_KEY: string;
-  ELEVENLABS_WEBHOOK_SECRET: string;
-  DATABASE_URL: string;
-}
-
-interface PlatformSecret {
-  key: string;
-  source: "db" | "env" | "unset";
-  has_value: boolean;
-  masked_value: string;
-  updated_at: string | null;
-}
-
-interface PlatformSecretsResponse {
-  secrets: PlatformSecret[];
-  keys: string[];
-}
-
-interface MeResponseLite {
-  user: { is_superadmin: boolean };
-}
-
-const STATUS_BADGES: Record<string, string> = {
-  active: "bg-green-100 text-green-800",
-  mock: "bg-yellow-100 text-yellow-800",
-  unconfigured: "bg-red-100 text-red-800",
-  error: "bg-red-100 text-red-800",
+const fmtMoney = (n: number) => {
+  if (n >= 1) return `$${n.toFixed(2)}`;
+  if (n >= 0.01) return `$${n.toFixed(3)}`;
+  return `$${n.toFixed(4)}`;
 };
 
-const AGENT_ICONS: Record<string, string> = {
-  email_classifier: "M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z",
-  resume_scorer: "M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z",
-  interview_evaluator: "M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z",
-  voice_screener: "M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z",
-  job_generator: "M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z",
+const fmtTokens = (n: number) => {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return String(n);
 };
 
-export default function SettingsPage() {
-  const [agents, setAgents] = useState<AgentInfo[]>([]);
-  const [usage, setUsage] = useState<UsageReport | null>(null);
-  const [envCheck, setEnvCheck] = useState<EnvCheck | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [editingAgent, setEditingAgent] = useState<string | null>(null);
-  const [editForm, setEditForm] = useState({ agent_id: "", use_mock: true });
-  const [saving, setSaving] = useState(false);
-  const [usageDays, setUsageDays] = useState(7);
-  const [activeTab, setActiveTab] = useState<"agents" | "usage" | "system">("agents");
-  const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
-  const [isSuperadmin, setIsSuperadmin] = useState(false);
-  const [secrets, setSecrets] = useState<PlatformSecret[]>([]);
-  const [secretDrafts, setSecretDrafts] = useState<Record<string, string>>({});
-  const [secretSaving, setSecretSaving] = useState<string | null>(null);
+export default function TenantSettingsPage() {
+  const router = useRouter();
+  const { me } = useAuth();
+  const [usage, setUsage] = useState<TenantUsageReport | null>(null);
+  const [usageLoading, setUsageLoading] = useState(true);
+  const [days, setDays] = useState(7);
 
-  const showToast = useCallback((message: string, type: "success" | "error" = "success") => {
-    setToast({ message, type });
-    setTimeout(() => setToast(null), 4000);
-  }, []);
-
-  const fetchData = useCallback(async () => {
-    setLoading(true);
+  const fetchUsage = useCallback(async () => {
+    setUsageLoading(true);
     try {
-      const [agentsRes, usageRes, envRes, meRes] = await Promise.all([
-        apiGet<{ agents: AgentInfo[] }>("/settings/agents"),
-        apiGet<UsageReport>("/settings/llm/usage", { days: String(usageDays) }),
-        apiGet<EnvCheck>("/settings/env-check"),
-        apiGet<MeResponseLite>("/auth/me"),
-      ]);
-      setAgents(agentsRes.agents);
-      setUsage(usageRes);
-      setEnvCheck(envRes);
-      setIsSuperadmin(meRes.user.is_superadmin);
-      if (meRes.user.is_superadmin) {
-        try {
-          const sec = await apiGet<PlatformSecretsResponse>("/admin/secrets");
-          setSecrets(sec.secrets);
-        } catch {
-          // non-fatal
-        }
-      }
+      const data = await apiGet<TenantUsageReport>("/settings/llm/usage", {
+        days: String(days),
+      });
+      setUsage(data);
     } catch {
-      showToast("Failed to load settings", "error");
+      // tenant has no usage yet — leave null
     } finally {
-      setLoading(false);
+      setUsageLoading(false);
     }
-  }, [usageDays, showToast]);
-
-  const handleSaveSecret = async (key: string) => {
-    const value = (secretDrafts[key] || "").trim();
-    if (!value) {
-      showToast("Enter a value before saving", "error");
-      return;
-    }
-    setSecretSaving(key);
-    try {
-      await apiPut(`/admin/secrets/${key}`, { value });
-      const sec = await apiGet<PlatformSecretsResponse>("/admin/secrets");
-      setSecrets(sec.secrets);
-      setSecretDrafts((d) => ({ ...d, [key]: "" }));
-      showToast(`${key} updated`);
-    } catch (e) {
-      showToast(e instanceof Error ? e.message : "Failed to save", "error");
-    } finally {
-      setSecretSaving(null);
-    }
-  };
-
-  const handleClearSecret = async (key: string) => {
-    if (!confirm(`Remove DB override for ${key}? It will fall back to the .env file value.`)) return;
-    setSecretSaving(key);
-    try {
-      await apiDelete(`/admin/secrets/${key}`);
-      const sec = await apiGet<PlatformSecretsResponse>("/admin/secrets");
-      setSecrets(sec.secrets);
-      showToast(`${key} override cleared`);
-    } catch (e) {
-      showToast(e instanceof Error ? e.message : "Failed to clear", "error");
-    } finally {
-      setSecretSaving(null);
-    }
-  };
+  }, [days]);
 
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    fetchUsage();
+  }, [fetchUsage]);
 
-  const handleEdit = (agent: AgentInfo) => {
-    setEditingAgent(agent.key);
-    setEditForm({ agent_id: agent.agent_id, use_mock: agent.use_mock });
-  };
-
-  const handleSave = async () => {
-    if (!editingAgent) return;
-    setSaving(true);
-    try {
-      await apiPatch(`/settings/agents/${editingAgent}`, editForm);
-      showToast("Agent configuration updated");
-      setEditingAgent(null);
-      fetchData();
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Save failed";
-      showToast(message, "error");
-    } finally {
-      setSaving(false);
+  // Redirect superadmins to the platform-scoped settings page so they don't
+  // see a tenant-only view by accident.
+  useEffect(() => {
+    if (me?.user.is_superadmin) {
+      router.replace("/admin/settings");
     }
-  };
+  }, [me, router]);
 
-  const tabs = [
-    { key: "agents" as const, label: "Agent Configuration" },
-    { key: "usage" as const, label: "LLM Usage Report" },
-    { key: "system" as const, label: "System" },
-  ];
-
-  if (loading) {
+  if (me?.user.is_superadmin) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <svg className="animate-spin h-8 w-8 text-indigo-600" fill="none" viewBox="0 0 24 24">
-          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-        </svg>
-      </div>
+      <div className="p-6 text-sm text-slate-500">Redirecting to platform settings…</div>
     );
   }
 
   return (
     <div>
-      {/* Toast */}
-      {toast && (
-        <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-lg shadow-lg text-sm font-medium ${
-          toast.type === "success" ? "bg-green-50 text-green-800 border border-green-200" : "bg-red-50 text-red-800 border border-red-200"
-        }`}>
-          {toast.message}
-        </div>
-      )}
+      <div className="mb-6">
+        <h1 className="text-2xl font-semibold text-slate-900">Settings</h1>
+        <p className="text-sm text-slate-500 mt-1">
+          Workspace details, your team, billing, and your AI usage. Platform-wide
+          configuration (agent IDs, API keys) lives in the platform admin console.
+        </p>
+      </div>
 
-      <h1 className="text-2xl font-semibold text-slate-900 mb-6">Settings</h1>
-
-      {/* Tabs */}
-      <div className="border-b border-slate-200 mb-6">
-        <div className="flex gap-1">
-          {tabs.map((tab) => (
-            <button
-              key={tab.key}
-              onClick={() => setActiveTab(tab.key)}
-              className={`px-5 py-3 text-sm font-medium rounded-t-lg transition-colors ${
-                activeTab === tab.key
-                  ? "bg-white text-indigo-700 border-b-2 border-indigo-600"
-                  : "text-slate-500 hover:text-slate-700 hover:bg-slate-50"
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
+      {/* ── Workspace card ──────────────────────────────────────────────── */}
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 mb-6">
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div>
+            <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1">
+              Workspace
+            </div>
+            <h2 className="text-lg font-semibold text-slate-900">{me?.tenant.name ?? "—"}</h2>
+            <div className="text-sm text-slate-500">
+              Plan:{" "}
+              <span className="font-medium text-slate-700 capitalize">{me?.tenant.plan}</span>
+              {" · "}
+              Slug: <span className="font-mono text-slate-600">{me?.tenant.slug}</span>
+            </div>
+          </div>
+          <Link
+            href="/settings/billing"
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg text-indigo-700 bg-indigo-50 hover:bg-indigo-100 transition-colors"
+          >
+            Manage plan & billing
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M14 5l7 7m0 0l-7 7m7-7H3" />
+            </svg>
+          </Link>
         </div>
       </div>
 
-      {/* ═══ Agent Configuration Tab ═══ */}
-      {activeTab === "agents" && (
-        <div className="space-y-4">
-          {agents.map((agent) => (
-            <div key={agent.key} className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
-              <div className="flex items-start justify-between">
-                <div className="flex items-start gap-4">
-                  <div className="w-10 h-10 rounded-lg bg-indigo-100 flex items-center justify-center flex-shrink-0">
-                    <svg className="w-5 h-5 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d={AGENT_ICONS[agent.key] || "M13 10V3L4 14h7v7l9-11h-7z"} />
-                    </svg>
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <h3 className="text-base font-semibold text-slate-900">{agent.display_name}</h3>
-                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${STATUS_BADGES[agent.status] || STATUS_BADGES.error}`}>
-                        {agent.status === "active" ? "Live" : agent.status === "mock" ? "Mock Mode" : agent.status.charAt(0).toUpperCase() + agent.status.slice(1)}
-                      </span>
-                    </div>
-                    <p className="text-sm text-slate-500 mt-1">{agent.description}</p>
-                    <div className="flex items-center gap-4 mt-2 text-xs text-slate-400">
-                      <span>Model: <span className="font-mono text-slate-600">{agent.model}</span></span>
-                      {agent.agent_id && (
-                        <span>Agent ID: <span className="font-mono text-slate-600">{agent.agent_id.slice(0, 20)}...</span></span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-                <button
-                  onClick={() => handleEdit(agent)}
-                  className="px-3 py-1.5 text-xs font-medium rounded-md text-indigo-700 bg-indigo-50 hover:bg-indigo-100 transition-colors"
-                >
-                  Configure
-                </button>
-              </div>
-
-              {/* Edit Form */}
-              {editingAgent === agent.key && (
-                <div className="mt-4 pt-4 border-t border-slate-200">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-sm font-medium text-slate-700 mb-1">Agent ID</label>
-                      <input
-                        type="text"
-                        value={editForm.agent_id}
-                        onChange={(e) => setEditForm((prev) => ({ ...prev, agent_id: e.target.value }))}
-                        placeholder="ag_xxxxxxxxxxxxx"
-                        className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm text-slate-900 font-mono placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-slate-700 mb-1">Mode</label>
-                      <div className="flex items-center gap-4 mt-2">
-                        <label className="flex items-center gap-2 cursor-pointer">
-                          <input
-                            type="radio"
-                            checked={!editForm.use_mock}
-                            onChange={() => setEditForm((prev) => ({ ...prev, use_mock: false }))}
-                            className="text-indigo-600 focus:ring-indigo-500"
-                          />
-                          <span className="text-sm text-slate-700">Live (Real API)</span>
-                        </label>
-                        <label className="flex items-center gap-2 cursor-pointer">
-                          <input
-                            type="radio"
-                            checked={editForm.use_mock}
-                            onChange={() => setEditForm((prev) => ({ ...prev, use_mock: true }))}
-                            className="text-indigo-600 focus:ring-indigo-500"
-                          />
-                          <span className="text-sm text-slate-700">Mock (Demo)</span>
-                        </label>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-3 mt-4">
-                    <button
-                      onClick={handleSave}
-                      disabled={saving}
-                      className="px-4 py-2 text-sm font-medium rounded-lg text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 transition-colors"
-                    >
-                      {saving ? "Saving..." : "Save"}
-                    </button>
-                    <button
-                      onClick={() => setEditingAgent(null)}
-                      className="px-4 py-2 text-sm font-medium rounded-lg text-slate-700 hover:bg-slate-100 transition-colors"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-              )}
+      {/* ── Quick links grid ────────────────────────────────────────────── */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
+        <Link
+          href="/settings/team"
+          className="block bg-white rounded-xl shadow-sm border border-slate-200 p-5 hover:border-indigo-300 hover:shadow-md transition-all"
+        >
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center flex-shrink-0">
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a4 4 0 00-3-3.87M9 20H4v-2a4 4 0 013-3.87m6-6a4 4 0 11-8 0 4 4 0 018 0zm6 0a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
             </div>
-          ))}
-        </div>
-      )}
+            <div className="min-w-0">
+              <div className="text-sm font-semibold text-slate-900">Team & Roles</div>
+              <div className="text-xs text-slate-500 mt-0.5">
+                Invite recruiters, manage permissions, and remove members.
+              </div>
+            </div>
+          </div>
+        </Link>
 
-      {/* ═══ LLM Usage Report Tab ═══ */}
-      {activeTab === "usage" && usage && (
-        <div className="space-y-6">
-          {/* Period Selector */}
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-slate-500">Period:</span>
+        <Link
+          href="/settings/billing"
+          className="block bg-white rounded-xl shadow-sm border border-slate-200 p-5 hover:border-indigo-300 hover:shadow-md transition-all"
+        >
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center flex-shrink-0">
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </div>
+            <div className="min-w-0">
+              <div className="text-sm font-semibold text-slate-900">Billing & Plan</div>
+              <div className="text-xs text-slate-500 mt-0.5">
+                Upgrade, manage payment methods, and view invoices.
+              </div>
+            </div>
+          </div>
+        </Link>
+
+        <Link
+          href="/inbox"
+          className="block bg-white rounded-xl shadow-sm border border-slate-200 p-5 hover:border-indigo-300 hover:shadow-md transition-all"
+        >
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 rounded-lg bg-rose-50 text-rose-600 flex items-center justify-center flex-shrink-0">
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+              </svg>
+            </div>
+            <div className="min-w-0">
+              <div className="text-sm font-semibold text-slate-900">Email Integrations</div>
+              <div className="text-xs text-slate-500 mt-0.5">
+                Connect Gmail, Outlook, Yahoo and other inboxes for HR triage.
+              </div>
+            </div>
+          </div>
+        </Link>
+
+        <div className="bg-slate-50 rounded-xl border border-dashed border-slate-300 p-5">
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 rounded-lg bg-slate-200 text-slate-500 flex items-center justify-center flex-shrink-0">
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+              </svg>
+            </div>
+            <div className="min-w-0">
+              <div className="text-sm font-semibold text-slate-700">Profile & Notifications</div>
+              <div className="text-xs text-slate-500 mt-0.5">Coming soon — email preferences and signature.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Job board integrations (Apollo platform-default + BYO) ────── */}
+      <div className="mb-6">
+        <JobBoardIntegrations
+          onShowToast={(msg, type) => {
+            // Lightweight toast — wire into a real toast lib if/when settings grows one.
+            if (type === "error") console.error(msg);
+            else console.log(msg);
+          }}
+        />
+      </div>
+
+      {/* ── Tenant LLM usage ────────────────────────────────────────────── */}
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 mb-6">
+        <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">Your AI Usage</h2>
+            <p className="text-sm text-slate-500">
+              Mistral / ElevenLabs spend attributed to this tenant. Updated in real time.
+            </p>
+          </div>
+          <div className="flex gap-1">
             {[1, 7, 30].map((d) => (
               <button
                 key={d}
-                onClick={() => setUsageDays(d)}
-                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                  usageDays === d ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                onClick={() => setDays(d)}
+                className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${
+                  days === d
+                    ? "bg-indigo-600 text-white"
+                    : "bg-slate-100 text-slate-600 hover:bg-slate-200"
                 }`}
               >
                 {d === 1 ? "24h" : `${d}d`}
               </button>
             ))}
           </div>
+        </div>
 
-          {/* KPI Cards */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
-              <p className="text-xs font-medium text-slate-500 uppercase tracking-wider">Total API Calls</p>
-              <p className="text-2xl font-bold text-slate-900 mt-1">{usage.total_calls}</p>
+        {usageLoading && !usage ? (
+          <div className="text-sm text-slate-500 italic">Loading usage…</div>
+        ) : usage && usage.total_calls > 0 ? (
+          <>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
+              <Stat label="Calls" value={usage.total_calls.toLocaleString()} />
+              <Stat label="Tokens" value={fmtTokens(usage.total_tokens)} />
+              <Stat label="Cost" value={fmtMoney(usage.total_cost_usd)} accent />
+              <Stat label="Window" value={`${usage.days}d`} />
             </div>
-            <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
-              <p className="text-xs font-medium text-slate-500 uppercase tracking-wider">Total Tokens</p>
-              <p className="text-2xl font-bold text-slate-900 mt-1">{usage.total_tokens.toLocaleString()}</p>
-              <p className="text-xs text-slate-400 mt-1">
-                {usage.total_input_tokens.toLocaleString()} in / {usage.total_output_tokens.toLocaleString()} out
-              </p>
-            </div>
-            <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
-              <p className="text-xs font-medium text-slate-500 uppercase tracking-wider">Total Cost</p>
-              <p className="text-2xl font-bold text-slate-900 mt-1">${usage.total_cost_usd.toFixed(4)}</p>
-            </div>
-            <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
-              <p className="text-xs font-medium text-slate-500 uppercase tracking-wider">Avg Latency</p>
-              <p className="text-2xl font-bold text-slate-900 mt-1">{usage.avg_latency_ms}ms</p>
-              <p className="text-xs mt-1">
-                {usage.error_count > 0 ? (
-                  <span className="text-red-600">{usage.error_rate}% error rate</span>
-                ) : (
-                  <span className="text-green-600">0% errors</span>
-                )}
-              </p>
-            </div>
-          </div>
 
-          {/* Agent Breakdown */}
-          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
-            <h3 className="text-base font-semibold text-slate-900 mb-4">Usage by Agent</h3>
-            {Object.keys(usage.agent_breakdown).length === 0 ? (
-              <p className="text-sm text-slate-400 italic">No API calls recorded yet. Use the agents to see usage data.</p>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead>
-                    <tr className="border-b border-slate-100">
-                      <th className="text-left text-xs font-medium text-slate-500 uppercase tracking-wider pb-3">Agent</th>
-                      <th className="text-right text-xs font-medium text-slate-500 uppercase tracking-wider pb-3">Calls</th>
-                      <th className="text-right text-xs font-medium text-slate-500 uppercase tracking-wider pb-3">Tokens</th>
-                      <th className="text-right text-xs font-medium text-slate-500 uppercase tracking-wider pb-3">Cost</th>
-                      <th className="text-right text-xs font-medium text-slate-500 uppercase tracking-wider pb-3">Avg Latency</th>
-                      <th className="text-right text-xs font-medium text-slate-500 uppercase tracking-wider pb-3">Errors</th>
+            <div className="rounded-lg border border-slate-200 overflow-hidden">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-slate-50 text-left">
+                    <th className="px-3 py-2 text-xs font-semibold uppercase tracking-wider text-slate-500">Agent</th>
+                    <th className="px-3 py-2 text-xs font-semibold uppercase tracking-wider text-slate-500 text-right">Calls</th>
+                    <th className="px-3 py-2 text-xs font-semibold uppercase tracking-wider text-slate-500 text-right">Tokens</th>
+                    <th className="px-3 py-2 text-xs font-semibold uppercase tracking-wider text-slate-500 text-right">Cost</th>
+                    <th className="px-3 py-2 text-xs font-semibold uppercase tracking-wider text-slate-500 text-right">Avg latency</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {Object.entries(usage.by_agent).map(([name, row]) => (
+                    <tr key={name} className="hover:bg-slate-50/60">
+                      <td className="px-3 py-2 font-medium text-slate-900">{name}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{row.calls.toLocaleString()}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{fmtTokens(row.total_tokens)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums font-medium text-slate-900">{fmtMoney(row.cost_usd)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums text-slate-500">{row.avg_latency_ms}ms</td>
                     </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-50">
-                    {Object.entries(usage.agent_breakdown).map(([name, data]) => (
-                      <tr key={name} className="hover:bg-slate-50">
-                        <td className="py-3 text-sm font-medium text-slate-900">{name}</td>
-                        <td className="py-3 text-sm text-slate-700 text-right">{data.calls}</td>
-                        <td className="py-3 text-sm text-slate-700 text-right">{data.tokens.toLocaleString()}</td>
-                        <td className="py-3 text-sm text-slate-700 text-right">${data.cost_usd.toFixed(4)}</td>
-                        <td className="py-3 text-sm text-slate-700 text-right">{data.avg_latency_ms}ms</td>
-                        <td className="py-3 text-sm text-right">
-                          {data.errors > 0 ? (
-                            <span className="text-red-600 font-medium">{data.errors}</span>
-                          ) : (
-                            <span className="text-green-600">0</span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-
-          {/* Model Breakdown */}
-          {Object.keys(usage.model_breakdown).length > 0 && (
-            <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
-              <h3 className="text-base font-semibold text-slate-900 mb-4">Usage by Model</h3>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                {Object.entries(usage.model_breakdown).map(([model, data]) => (
-                  <div key={model} className="border border-slate-200 rounded-lg p-4">
-                    <p className="text-xs font-mono text-slate-500">{model}</p>
-                    <div className="flex items-baseline gap-3 mt-1">
-                      <span className="text-lg font-bold text-slate-900">{data.calls}</span>
-                      <span className="text-xs text-slate-400">calls</span>
-                      <span className="text-sm text-slate-600">{data.tokens.toLocaleString()} tokens</span>
-                    </div>
-                    <p className="text-xs text-slate-500 mt-1">${data.cost_usd.toFixed(4)}</p>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </tbody>
+              </table>
             </div>
-          )}
-
-          {/* Recent Calls Log */}
-          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
-            <h3 className="text-base font-semibold text-slate-900 mb-4">Recent API Calls</h3>
-            {usage.recent_calls.length === 0 ? (
-              <p className="text-sm text-slate-400 italic">No recent calls.</p>
-            ) : (
-              <div className="space-y-2 max-h-96 overflow-y-auto">
-                {usage.recent_calls.slice().reverse().map((call, i) => (
-                  <div
-                    key={i}
-                    className={`flex items-center justify-between px-3 py-2 rounded-lg text-xs ${
-                      call.status === "error" ? "bg-red-50" : "bg-slate-50"
-                    }`}
-                  >
-                    <div className="flex items-center gap-3">
-                      <span className={`w-2 h-2 rounded-full ${call.status === "error" ? "bg-red-500" : "bg-green-500"}`} />
-                      <span className="font-medium text-slate-700">{call.agent_name}</span>
-                      <span className="font-mono text-slate-400">{call.model}</span>
-                    </div>
-                    <div className="flex items-center gap-4 text-slate-500">
-                      <span>{call.total_tokens} tokens</span>
-                      <span>${call.cost_usd.toFixed(4)}</span>
-                      <span>{call.latency_ms}ms</span>
-                      <span className="text-slate-400">{new Date(call.timestamp).toLocaleTimeString()}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
+          </>
+        ) : (
+          <div className="text-sm text-slate-500 italic">
+            No AI usage in the last {days} day{days === 1 ? "" : "s"}. Connect an inbox or run a workflow to see numbers here.
           </div>
-        </div>
-      )}
+        )}
+      </div>
+    </div>
+  );
+}
 
-      {/* ═══ System Tab ═══ */}
-      {activeTab === "system" && envCheck && (
-        <div className="space-y-6">
-          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
-            <div className="flex items-start justify-between mb-1">
-              <div>
-                <h3 className="text-base font-semibold text-slate-900">Platform Secrets</h3>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  Mistral &amp; ElevenLabs credentials are platform-wide — every tenant uses these and is billed for usage.
-                  {isSuperadmin
-                    ? " Edit values below; changes take effect immediately."
-                    : " Only superadmins can edit these values."}
-                </p>
-              </div>
-            </div>
-
-            <div className="mt-4 space-y-4">
-              {(isSuperadmin ? secrets : []).map((s) => {
-                const draft = secretDrafts[s.key] ?? "";
-                const sourceBadge =
-                  s.source === "db"
-                    ? "bg-emerald-100 text-emerald-700"
-                    : s.source === "env"
-                    ? "bg-slate-100 text-slate-600"
-                    : "bg-rose-100 text-rose-700";
-                const sourceLabel =
-                  s.source === "db" ? "from DB" : s.source === "env" ? "from .env" : "not set";
-                return (
-                  <div key={s.key} className="border border-slate-200 rounded-lg p-4">
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-mono text-slate-800">{s.key}</span>
-                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${sourceBadge}`}>
-                          {sourceLabel}
-                        </span>
-                      </div>
-                      <span className="text-xs font-mono text-slate-400">
-                        {s.has_value ? s.masked_value : "(empty)"}
-                      </span>
-                    </div>
-                    <div className="flex gap-2">
-                      <input
-                        type="password"
-                        value={draft}
-                        onChange={(e) =>
-                          setSecretDrafts((d) => ({ ...d, [s.key]: e.target.value }))
-                        }
-                        placeholder="Enter new value to overwrite…"
-                        autoComplete="off"
-                        className="flex-1 px-3 py-2 text-sm border border-slate-300 rounded-md font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                      />
-                      <button
-                        onClick={() => handleSaveSecret(s.key)}
-                        disabled={!draft.trim() || secretSaving === s.key}
-                        className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700 disabled:bg-slate-300 disabled:cursor-not-allowed"
-                      >
-                        {secretSaving === s.key ? "Saving…" : "Save"}
-                      </button>
-                      {s.source === "db" && (
-                        <button
-                          onClick={() => handleClearSecret(s.key)}
-                          disabled={secretSaving === s.key}
-                          className="px-3 py-2 text-sm font-medium text-slate-600 bg-white border border-slate-300 rounded-md hover:bg-slate-50 disabled:opacity-50"
-                          title="Remove DB override; revert to .env value"
-                        >
-                          Clear
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-
-              {!isSuperadmin && (
-                <div className="text-sm text-slate-500 italic py-4">
-                  You don&apos;t have permission to manage platform secrets.
-                </div>
-              )}
-
-              {/* DATABASE_URL is always read-only — bootstrap secret, can't live in DB */}
-              <div className="border border-slate-200 rounded-lg p-4 bg-slate-50">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-mono text-slate-800">DATABASE_URL</span>
-                    <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-slate-200 text-slate-700">
-                      server-managed
-                    </span>
-                  </div>
-                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">
-                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                    </svg>
-                    {envCheck.DATABASE_URL === "set" ? "Configured" : "Missing"}
-                  </span>
-                </div>
-                <p className="text-xs text-slate-500 mt-2">
-                  Bootstrap secret — managed via the server&apos;s .env file.
-                </p>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
-            <h3 className="text-base font-semibold text-slate-900 mb-4">Workflow Pipeline</h3>
-            <div className="flex items-center gap-2 flex-wrap">
-              {["New Email", "Classify", "Create Candidate", "Match to Job", "Score Resume", "Voice Screen", "Evaluate", "Decision"].map((step, i) => (
-                <div key={step} className="flex items-center gap-2">
-                  <span className="px-3 py-1.5 rounded-lg text-xs font-medium bg-indigo-50 text-indigo-700 border border-indigo-200">
-                    {step}
-                  </span>
-                  {i < 7 && (
-                    <svg className="w-4 h-4 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                    </svg>
-                  )}
-                </div>
-              ))}
-            </div>
-            <p className="text-xs text-slate-400 mt-3">
-              Auto-workflow triggers automatically when Gmail polling is active. Each step uses the configured agent (mock or live).
-            </p>
-          </div>
-
-          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
-            <h3 className="text-base font-semibold text-slate-900 mb-2">System Info</h3>
-            <div className="text-sm text-slate-600 space-y-1">
-              <p>Version: <span className="font-mono">1.0.0</span></p>
-              <p>Backend: <span className="font-mono">FastAPI + PostgreSQL</span></p>
-              <p>Frontend: <span className="font-mono">Next.js 15 + TypeScript</span></p>
-              <p>LLM: <span className="font-mono">Mistral AI</span></p>
-              <p>Voice: <span className="font-mono">ElevenLabs</span></p>
-            </div>
-          </div>
-        </div>
-      )}
+function Stat({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white p-3">
+      <div className="text-[11px] font-medium uppercase tracking-wider text-slate-500 mb-1">{label}</div>
+      <div className={`text-lg font-semibold tabular-nums ${accent ? "text-indigo-700" : "text-slate-900"}`}>
+        {value}
+      </div>
     </div>
   );
 }

@@ -19,3 +19,4 @@ email-validator==2.2.0
 stripe==11.4.1
 slowapi==0.1.9
 sentry-sdk[fastapi]==2.19.2
+cryptography==46.0.4

@@ -393,6 +393,102 @@ class QaSession(Base):
     )
 
 
+class MailAccount(Base):
+    """Per-tenant inbound mailbox connection.
+
+    A tenant can connect any number of mailboxes (jobs@, hr@, careers@, …).
+    Each row stores the IMAP/POP3 configuration plus an encrypted credential
+    (Fernet via services.secrets_crypto). The classifier reads from these
+    accounts on a schedule or via the on-demand sync endpoint.
+
+    Auth methods supported:
+      - imap_password   : IMAP host + app password (Outlook, Yahoo, iCloud, AOL,
+                          Gmail-via-app-password, Exchange, generic IMAP).
+      - pop3_password   : POP3 host + app password (legacy, rarely used).
+
+    Gmail OAuth lives in services/gmail_service.py and is platform-managed (env
+    vars) — not stored here. Future: per-tenant OAuth refresh tokens land here
+    with auth_method="gmail_oauth" / "ms_oauth".
+    """
+    __tablename__ = "mail_accounts"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
+
+    provider = Column(String, nullable=False)             # gmail|outlook|yahoo|icloud|exchange|aol|imap|pop3
+    auth_method = Column(String, nullable=False)          # imap_password|pop3_password|gmail_oauth|ms_oauth
+    email_address = Column(String, nullable=False)        # display label & login user
+
+    imap_host = Column(String, nullable=False, default="")
+    imap_port = Column(Integer, nullable=False, default=993)
+    imap_ssl = Column(Boolean, nullable=False, default=True)
+    imap_user = Column(String, nullable=False, default="")  # often == email_address
+
+    secret_encrypted = Column(Text, nullable=False, default="")  # Fernet ciphertext
+
+    status = Column(String, nullable=False, default="connected")  # connected|error|disconnected
+    last_error = Column(Text, nullable=True)
+    last_sync_at = Column(DateTime, nullable=True)
+    last_synced_count = Column(Integer, nullable=False, default=0)
+
+    # When False the auto-pickup listener skips this mailbox — used by the
+    # tenant-facing pause toggle so they can stop classifier LLM spend on a
+    # noisy mailbox without disconnecting the credentials.
+    listener_enabled = Column(Boolean, nullable=False, default=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "email_address", name="uq_mail_accounts_tenant_email"),
+        Index("idx_mail_accounts_tenant", "tenant_id"),
+    )
+
+
+class JobBoardAccount(Base):
+    """Per-tenant job-board / talent-source connection.
+
+    The product story is the same as MailAccount:
+      - Apollo is platform-managed (one APOLLO_API_KEY env var, every tenant
+        can search through it; we don't store a row per tenant for Apollo).
+      - LinkedIn / Indeed / JobStreet (SEEK) require partner agreements that
+        most tenants don't have. But many *do* have their own paid recruiter
+        seats — they BYO their API key / OAuth refresh token here, encrypted
+        at rest with services.secrets_crypto, and search runs through their
+        own subscription quota.
+
+    capabilities tracks what the connected account can actually do, which
+    differs by provider tier (e.g. LinkedIn Recruiter Lite ≠ Talent Solutions).
+    """
+    __tablename__ = "job_board_accounts"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
+
+    provider = Column(String, nullable=False)         # indeed | linkedin | jobstreet | apollo (BYO override)
+    auth_method = Column(String, nullable=False)       # api_key | oauth
+    account_label = Column(String, nullable=False, default="")  # "ACME LinkedIn Recruiter"
+    external_user_id = Column(String, nullable=False, default="")
+
+    # JSON array of capability flags: search_candidates | post_job | inbound_apply
+    capabilities = Column(Text, nullable=False, default="[]")
+
+    secret_encrypted = Column(Text, nullable=False, default="")  # Fernet ciphertext
+
+    status = Column(String, nullable=False, default="connected")  # connected|error|disconnected
+    last_error = Column(Text, nullable=True)
+    last_used_at = Column(DateTime, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "provider", "external_user_id",
+                         name="uq_job_board_accounts_tenant_provider_user"),
+        Index("idx_job_board_accounts_tenant", "tenant_id"),
+    )
+
+
 class Testimonial(Base):
     """Marketing testimonials shown on the public landing page.
 

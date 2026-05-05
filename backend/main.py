@@ -19,7 +19,7 @@ from services.secrets import apply_db_secrets_to_env
 _secret_sources = apply_db_secrets_to_env()
 
 from app_limiter import limiter
-from routers import inbox, jobs, candidates, applications, screening, reports, settings, auth, admin, team, billing, testimonials, metrics
+from routers import inbox, jobs, candidates, applications, screening, reports, settings, auth, admin, team, billing, testimonials, metrics, talent
 
 logger = logging.getLogger("hireops")
 logger.info("Global secrets sources: %s", _secret_sources)
@@ -79,23 +79,51 @@ app.include_router(reports.router)
 app.include_router(settings.router)
 app.include_router(testimonials.router)
 app.include_router(metrics.router)
+app.include_router(talent.router)
+app.include_router(talent.jobs_router)
 
 
 @app.on_event("startup")
 async def on_startup():
     init_db()
 
-    # Auto-restore Gmail connection from saved credentials
+    # Auto-restore Gmail OAuth connection (legacy single-account path)
     try:
         from services.gmail_service import gmail_manager
         restored = gmail_manager.restore_from_db()
         if restored and gmail_manager._auto_start_listener:
-            # Small delay to let the event loop fully initialize
             await asyncio.sleep(1)
             gmail_manager.start_idle_listener()
             logger.info("Gmail IDLE listener auto-started on boot")
     except Exception as e:
         logger.warning(f"Gmail auto-restore failed: {e}")
+
+    # Spawn a per-MailAccount poller for every connected tenant mailbox.
+    # New emails get pulled + classified automatically every ~20s — no manual
+    # Sync clicks needed.
+    try:
+        from services import mailbox_listener
+        await mailbox_listener.start_all_existing()
+    except Exception as e:
+        logger.warning(f"Mailbox listener startup failed: {e}")
+
+    # One-shot backfill: classify any pre-existing unprocessed emails (e.g.
+    # mail that arrived via the legacy Gmail listener before this code shipped).
+    # Runs in background so startup isn't blocked by classifier latency.
+    try:
+        from services import mailbox_listener
+        asyncio.create_task(mailbox_listener.backfill_unclassified(limit=200))
+    except Exception as e:
+        logger.warning(f"Backfill kickoff failed: {e}")
+
+
+@app.on_event("shutdown")
+async def on_shutdown():
+    try:
+        from services import mailbox_listener
+        await mailbox_listener.stop_all()
+    except Exception as e:
+        logger.warning(f"Mailbox listener shutdown failed: {e}")
 
 
 @app.get("/health")

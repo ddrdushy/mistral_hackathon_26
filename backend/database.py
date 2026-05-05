@@ -35,7 +35,7 @@ def init_db():
     from models import (  # noqa: F401
         Job, Email, Candidate, Application, Event, InterviewLink, Setting, QaSession,
         Tenant, User, EmailVerification, PasswordReset, TenantInvite, LlmUsage,
-        AuditLog, Testimonial,
+        AuditLog, Testimonial, MailAccount, JobBoardAccount,
     )
     Base.metadata.create_all(bind=engine)
     _run_migrations()
@@ -121,6 +121,19 @@ def _run_migrations():
                         ))
                     except Exception:
                         pass
+
+    # MailAccount listener_enabled — added in the auto-pickup work. Defaults
+    # to true so existing rows continue to behave as before.
+    if "mail_accounts" in insp.get_table_names():
+        existing = {c["name"] for c in insp.get_columns("mail_accounts")}
+        if "listener_enabled" not in existing:
+            with engine.begin() as conn:
+                try:
+                    conn.execute(text(
+                        "ALTER TABLE mail_accounts ADD COLUMN listener_enabled BOOLEAN NOT NULL DEFAULT TRUE"
+                    ))
+                except Exception:
+                    pass
 
     # Multi-tenancy: add tenant_id to every tenant-scoped table
     tenant_scoped_tables = [

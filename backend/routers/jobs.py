@@ -36,12 +36,32 @@ async def generate_job(
 
 
 def _generate_job_id(db: Session, tenant_id: int) -> str:
+    """Build the next JOB-YYYY-NNN id.
+
+    job_id has a TABLE-WIDE unique constraint, so we cannot scope by tenant
+    when computing the next number — the previous per-tenant count caused
+    duplicates whenever the demo seeder or another tenant got there first.
+
+    We scan the max existing JOB-YYYY-* id globally, parse the trailing
+    integer, and increment. The format `JOB-YYYY-NNN` sorts lexically the
+    same as numerically up to 999, after which we fall back to numeric parse.
+    """
     year = datetime.utcnow().year
-    count = db.query(Job).filter(
-        Job.tenant_id == tenant_id,
-        Job.job_id.like(f"JOB-{year}-%"),
-    ).count()
-    return f"JOB-{year}-{count + 1:03d}"
+    prefix = f"JOB-{year}-"
+    rows = (
+        db.query(Job.job_id)
+        .filter(Job.job_id.like(f"{prefix}%"))
+        .all()
+    )
+    max_n = 0
+    for (jid,) in rows:
+        try:
+            n = int(jid[len(prefix):])
+        except (ValueError, TypeError):
+            continue
+        if n > max_n:
+            max_n = n
+    return f"{prefix}{max_n + 1:03d}"
 
 
 def _job_to_response(job: Job, db: Session) -> dict:
@@ -72,23 +92,38 @@ async def create_job(
     session: CurrentSession = Depends(current_session),
 ):
     check_quota(db, session.tenant, "jobs")
-    job = Job(
-        tenant_id=session.tenant.id,
-        job_id=_generate_job_id(db, session.tenant.id),
-        title=req.title,
-        department=req.department,
-        location=req.location,
-        seniority=req.seniority,
-        skills=json.dumps(req.skills),
-        responsibilities=json.dumps(req.responsibilities),
-        qualifications=json.dumps(req.qualifications),
-        description=req.description,
-        interview_mode=req.interview_mode,
-    )
-    db.add(job)
-    db.commit()
-    db.refresh(job)
-    return _job_to_response(job, db)
+
+    # Race-safe insert: if two creates compute the same next id at the same
+    # millisecond we'd hit the unique constraint and crash. Retry with a
+    # fresh max-scan on IntegrityError.
+    from sqlalchemy.exc import IntegrityError
+    for attempt in range(5):
+        job = Job(
+            tenant_id=session.tenant.id,
+            job_id=_generate_job_id(db, session.tenant.id),
+            title=req.title,
+            department=req.department,
+            location=req.location,
+            seniority=req.seniority,
+            skills=json.dumps(req.skills),
+            responsibilities=json.dumps(req.responsibilities),
+            qualifications=json.dumps(req.qualifications),
+            description=req.description,
+            interview_mode=req.interview_mode,
+        )
+        db.add(job)
+        try:
+            db.commit()
+            db.refresh(job)
+            return _job_to_response(job, db)
+        except IntegrityError:
+            db.rollback()
+            if attempt == 4:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Could not allocate a job id — try again",
+                )
+            continue
 
 
 @router.get("")

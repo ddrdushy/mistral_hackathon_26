@@ -7,14 +7,12 @@ import {
   BuildingOffice2Icon,
   ChartBarIcon,
   DocumentTextIcon,
-  ArrowRightOnRectangleIcon,
-  ArrowsRightLeftIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   UsersIcon,
   ChatBubbleLeftRightIcon,
+  Cog6ToothIcon,
 } from "@heroicons/react/24/outline";
-import { useAdmin } from "./AdminGate";
 
 const navItems = [
   { label: "Tenants", href: "/admin", icon: BuildingOffice2Icon, match: /^\/admin(\/tenants(\/.*)?)?$/ },
@@ -22,6 +20,7 @@ const navItems = [
   { label: "Analytics", href: "/admin/analytics", icon: ChartBarIcon, match: /^\/admin\/analytics/ },
   { label: "Testimonials", href: "/admin/testimonials", icon: ChatBubbleLeftRightIcon, match: /^\/admin\/testimonials/ },
   { label: "Audit log", href: "/admin/audit-log", icon: DocumentTextIcon, match: /^\/admin\/audit-log/ },
+  { label: "Settings", href: "/admin/settings", icon: Cog6ToothIcon, match: /^\/admin\/settings/ },
 ];
 
 interface AdminSidebarProps {
@@ -38,7 +37,6 @@ export default function AdminSidebar({
   onToggleCollapse,
 }: AdminSidebarProps) {
   const pathname = usePathname();
-  const { me, logout } = useAdmin();
 
   return (
     <>
@@ -102,37 +100,7 @@ export default function AdminSidebar({
           })}
         </nav>
 
-        {/* Switch to my workspace */}
-        <div className={`${collapsed ? "px-2" : "px-3"} py-3 border-t border-slate-800 space-y-1`}>
-          <Link
-            href="/dashboard"
-            title={collapsed ? "View my workspace" : undefined}
-            className={`flex items-center ${collapsed ? "justify-center" : "gap-3"} ${collapsed ? "px-0 py-2" : "px-3 py-2"} rounded-lg text-xs font-medium text-slate-400 hover:text-white hover:bg-slate-800/50 transition-colors`}
-          >
-            <ArrowsRightLeftIcon className="w-4 h-4 flex-shrink-0" />
-            {!collapsed && <span>View my workspace</span>}
-          </Link>
-
-          <button
-            type="button"
-            onClick={logout}
-            title={collapsed ? "Sign out" : undefined}
-            className={`flex w-full items-center ${collapsed ? "justify-center" : "gap-3"} ${collapsed ? "px-0 py-2" : "px-3 py-2"} rounded-lg text-xs font-medium text-slate-400 hover:text-white hover:bg-slate-800/50 transition-colors`}
-          >
-            <ArrowRightOnRectangleIcon className="w-4 h-4 flex-shrink-0" />
-            {!collapsed && <span>Sign out</span>}
-          </button>
-        </div>
-
-        {/* User identity strip */}
-        {!collapsed && (
-          <div className="px-6 py-3 border-t border-slate-800">
-            <p className="text-xs text-slate-500 truncate">{me.user.email}</p>
-            <p className="text-[10px] text-slate-600 mt-0.5">superadmin · v1.0.0</p>
-          </div>
-        )}
-
-        {/* Collapse toggle */}
+        {/* Collapse toggle (sign-out + identity now live in the topbar avatar menu) */}
         <div className={`hidden lg:block ${collapsed ? "px-2" : "px-3"} pb-3`}>
           <button
             onClick={onToggleCollapse}

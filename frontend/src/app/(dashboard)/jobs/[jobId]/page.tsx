@@ -5,6 +5,7 @@ import { useRouter, useParams } from "next/navigation";
 import { apiGet, apiDelete } from "@/lib/api";
 import { timeAgo, STAGE_COLORS, STAGE_LABELS } from "@/lib/constants";
 import type { Job, Application, ApplicationListResponse } from "@/types/index";
+import TalentSearchPanel from "@/components/talent/TalentSearchPanel";
 
 const STATUS_BADGE: Record<string, string> = {
   open: "bg-green-100 text-green-800",
@@ -200,6 +201,15 @@ export default function JobDetailPage() {
           {/* Action buttons */}
           <div className="flex gap-2">
             <button
+              onClick={() => router.push(`/jobs/${jobId}/edit`)}
+              className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg text-indigo-700 bg-indigo-50 hover:bg-indigo-100 transition-colors"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+              </svg>
+              Edit
+            </button>
+            <button
               onClick={handleDelete}
               disabled={deleting}
               className="inline-flex items-center px-3 py-2 text-sm font-medium rounded-lg text-red-700 bg-red-50 hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
@@ -278,6 +288,11 @@ export default function JobDetailPage() {
           </div>
         </div>
       )}
+
+      {/* AI Talent Search — source candidates without waiting for inbound applications */}
+      <div className="mb-6">
+        <TalentSearchPanel jobId={jobId} onShowToast={showToast} />
+      </div>
 
       {/* Candidates / Applications Section */}
       <div className="bg-white rounded-xl shadow-sm border border-slate-200">

@@ -1,11 +1,29 @@
-"""Settings endpoints: Agent configuration, LLM usage reports, system config."""
+"""Settings endpoints: Agent configuration, LLM usage reports, system config.
+
+AUTH MODEL:
+  - Agent config (read + write), system info, env-check → SUPERADMIN ONLY.
+    These are platform-wide controls; one tenant flipping `use_mock` would
+    break classification for everyone.
+  - LLM usage report → tenant-scoped (a regular owner sees their tenant's
+    usage; a superadmin sees the global aggregate via include_all=true).
+"""
 import os
 import importlib
+from datetime import datetime, timedelta
 from typing import Optional
 from pydantic import BaseModel
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func
+from sqlalchemy.orm import Session
 
+from database import get_db
+from models import LlmUsage
 from services.llm_tracker import get_usage_report, get_all_logs
+from auth.dependencies import (
+    CurrentSession,
+    current_session,
+    require_superadmin,
+)
 
 router = APIRouter(prefix="/api/v1/settings", tags=["settings"])
 
@@ -79,7 +97,7 @@ def _get_agent_module(agent_key: str):
 
 
 @router.get("/agents")
-async def list_agents():
+async def list_agents(_: CurrentSession = Depends(require_superadmin)):
     """List all configured agents with their current status."""
     agents = []
     for key, info in AGENT_MODULES.items():
@@ -115,7 +133,10 @@ async def list_agents():
 
 
 @router.get("/agents/{agent_key}")
-async def get_agent_config(agent_key: str):
+async def get_agent_config(
+    agent_key: str,
+    _: CurrentSession = Depends(require_superadmin),
+):
     """Get a specific agent's configuration."""
     mod, info = _get_agent_module(agent_key)
 
@@ -134,8 +155,12 @@ async def get_agent_config(agent_key: str):
 
 
 @router.patch("/agents/{agent_key}")
-async def update_agent_config(agent_key: str, req: AgentConfigUpdate):
-    """Update an agent's configuration (agent_id, use_mock)."""
+async def update_agent_config(
+    agent_key: str,
+    req: AgentConfigUpdate,
+    _: CurrentSession = Depends(require_superadmin),
+):
+    """Update an agent's configuration (agent_id, use_mock). Platform-wide."""
     mod, info = _get_agent_module(agent_key)
 
     if req.agent_id is not None and info["agent_id_var"]:
@@ -162,14 +187,78 @@ async def update_agent_config(agent_key: str, req: AgentConfigUpdate):
 # ═══════════════════════════════════════
 
 @router.get("/llm/usage")
-async def llm_usage_report(days: int = 7):
-    """Get LLM usage report for the last N days."""
-    return get_usage_report(days)
+async def llm_usage_report(
+    days: int = 7,
+    include_all: bool = False,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(current_session),
+):
+    """LLM usage report. By default scoped to the caller's tenant. A superadmin
+    may pass include_all=true to see the global aggregate (every tenant)."""
+    if include_all and not session.user.is_superadmin:
+        raise HTTPException(status_code=403, detail="Superadmin required")
+
+    if include_all:
+        # Global view — superadmin only. Use the in-memory tracker (already aggregated).
+        return get_usage_report(days)
+
+    # Tenant view — read directly from the LlmUsage table filtered by tenant_id.
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    rows = (
+        db.query(
+            LlmUsage.agent_name,
+            func.count(LlmUsage.id),
+            func.coalesce(func.sum(LlmUsage.input_tokens), 0),
+            func.coalesce(func.sum(LlmUsage.output_tokens), 0),
+            func.coalesce(func.sum(LlmUsage.cost_usd), 0.0),
+            func.coalesce(func.avg(LlmUsage.latency_ms), 0),
+        )
+        .filter(
+            LlmUsage.tenant_id == session.tenant.id,
+            LlmUsage.created_at >= cutoff,
+        )
+        .group_by(LlmUsage.agent_name)
+        .all()
+    )
+
+    by_agent = {}
+    total_calls = 0
+    total_in = 0
+    total_out = 0
+    total_cost = 0.0
+    for name, calls, in_tokens, out_tokens, cost, avg_latency in rows:
+        by_agent[name] = {
+            "calls": int(calls or 0),
+            "input_tokens": int(in_tokens or 0),
+            "output_tokens": int(out_tokens or 0),
+            "total_tokens": int((in_tokens or 0) + (out_tokens or 0)),
+            "cost_usd": round(float(cost or 0.0), 4),
+            "avg_latency_ms": int(avg_latency or 0),
+        }
+        total_calls += int(calls or 0)
+        total_in += int(in_tokens or 0)
+        total_out += int(out_tokens or 0)
+        total_cost += float(cost or 0.0)
+
+    return {
+        "scope": "tenant",
+        "days": days,
+        "total_calls": total_calls,
+        "total_input_tokens": total_in,
+        "total_output_tokens": total_out,
+        "total_tokens": total_in + total_out,
+        "total_cost_usd": round(total_cost, 4),
+        "by_agent": by_agent,
+    }
 
 
 @router.get("/llm/logs")
-async def llm_usage_logs(limit: int = 100):
-    """Get raw LLM usage logs."""
+async def llm_usage_logs(
+    limit: int = 100,
+    _: CurrentSession = Depends(require_superadmin),
+):
+    """Raw LLM usage logs across the platform. Superadmin-only — contains
+    cross-tenant data."""
     return {"logs": get_all_logs(limit)}
 
 
@@ -178,8 +267,8 @@ async def llm_usage_logs(limit: int = 100):
 # ═══════════════════════════════════════
 
 @router.get("/system")
-async def system_config():
-    """Get system configuration and environment info."""
+async def system_config(_: CurrentSession = Depends(require_superadmin)):
+    """Get system configuration and environment info. Superadmin-only."""
     return {
         "mistral_api_key_set": bool(os.environ.get("MISTRAL_API_KEY")),
         "elevenlabs_api_key_set": bool(os.environ.get("ELEVENLABS_API_KEY")),
@@ -191,8 +280,8 @@ async def system_config():
 
 
 @router.get("/env-check")
-async def env_check():
-    """Quick environment variable check for setup validation."""
+async def env_check(_: CurrentSession = Depends(require_superadmin)):
+    """Quick environment variable check for setup validation. Superadmin-only."""
     keys = [
         "MISTRAL_API_KEY",
         "ELEVENLABS_API_KEY",

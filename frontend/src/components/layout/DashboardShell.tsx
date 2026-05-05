@@ -4,6 +4,7 @@ import { useState, useCallback, useEffect } from "react";
 import Sidebar from "./Sidebar";
 import Topbar from "./Topbar";
 import OnboardingTour from "@/components/tour/OnboardingTour";
+import VerificationBanner from "@/components/auth/VerificationBanner";
 
 interface DashboardShellProps {
   children: React.ReactNode;
@@ -52,6 +53,7 @@ export default function DashboardShell({ children }: DashboardShellProps) {
 
         {/* Main content */}
         <main className="flex-1 overflow-auto p-6">
+          <VerificationBanner />
           {children}
         </main>
       </div>
