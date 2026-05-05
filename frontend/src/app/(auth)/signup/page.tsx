@@ -20,13 +20,16 @@ export default function SignupPage() {
     setLoading(true);
     setError(null);
     try {
-      await apiPost<MeResponse>("/auth/signup", {
+      const me = await apiPost<MeResponse>("/auth/signup", {
         name,
         company_name: companyName,
         email,
         password,
       });
-      router.push("/dashboard?welcome=1");
+      // Superadmins (matching SUPERADMIN_EMAILS) drop straight into the
+      // platform admin shell on first login. Everyone else lands in their
+      // tenant workspace with the welcome state.
+      router.push(me.user.is_superadmin ? "/admin" : "/dashboard?welcome=1");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Signup failed");
     } finally {
