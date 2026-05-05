@@ -181,12 +181,22 @@ def signup(req: SignupRequest, request: Request, response: Response, db: Session
     db.flush()  # get tenant.id without committing
 
     # Create owner user
+    # If this email is in SUPERADMIN_EMAILS, promote on creation so the
+    # platform-admin shell is reachable on first login (no backend restart needed).
+    superadmin_emails = {
+        e.strip().lower()
+        for e in os.getenv("SUPERADMIN_EMAILS", "").split(",")
+        if e.strip()
+    }
+    is_super = req.email.lower() in superadmin_emails
+
     user = User(
         tenant_id=tenant.id,
         email=req.email.lower(),
         password_hash=hash_password(req.password),
         name=req.name.strip(),
         role="owner",
+        is_superadmin=is_super,
     )
     db.add(user)
     db.flush()
