@@ -139,13 +139,14 @@ def seed_tenant(db: Session, tenant: Tenant) -> dict:
     if existing > 0:
         return {"seeded": False, "reason": "tenant already has jobs"}
 
-    # Insert jobs
+    # Insert jobs. Job ids include tenant.id so they don't collide across
+    # tenants on a Postgres unique-constraint level.
     jobs: List[Job] = []
     year = datetime.utcnow().year
     for i, jdata in enumerate(SAMPLE_JOBS):
         job = Job(
             tenant_id=tenant.id,
-            job_id=f"DEMO-{year}-{i+1:03d}",
+            job_id=f"DEMO-{year}-T{tenant.id:03d}-{i+1:03d}",
             title=jdata["title"],
             department=jdata["department"],
             location=jdata["location"],
