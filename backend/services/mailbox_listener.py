@@ -29,6 +29,7 @@ import asyncio
 import logging
 from typing import Dict
 
+from billing.cost_guard import set_active_tenant
 from database import SessionLocal
 from models import Email, MailAccount
 from services import mail_account_service
@@ -65,6 +66,13 @@ async def _poll_loop(account_id: int) -> None:
                 await asyncio.sleep(POLL_INTERVAL_SECONDS)
                 continue
 
+            # Tag every LLM call made inside this iteration with the tenant
+            # so cost_guard.record_llm_usage attributes it correctly. Without
+            # this, the mailbox listener (which runs outside an HTTP request)
+            # would produce LlmUsage rows with tenant_id=NULL — and the tenant
+            # usage meter would always read $0 for auto-pickup work.
+            set_active_tenant(account.tenant_id)
+
             # 1) Pull new emails. sync_account already commits and tags tenant_id.
             try:
                 new_emails = mail_account_service.sync_account(
@@ -91,9 +99,10 @@ async def _poll_loop(account_id: int) -> None:
                     )
 
             if new_emails:
-                logger.info(
-                    "Auto-classified %d new emails for %s",
-                    len(new_emails), account.email_address,
+                print(
+                    f"[mailbox_listener] Auto-classified {len(new_emails)} new "
+                    f"emails for {account.email_address}",
+                    flush=True,
                 )
 
             backoff = POLL_INTERVAL_SECONDS  # reset on success
@@ -110,14 +119,16 @@ def start_for_account(account_id: int) -> None:
         return
 
     try:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
     except RuntimeError:
-        # No loop yet — startup hasn't run. Caller should retry from lifespan.
+        # No running loop yet (called outside a request/startup context).
+        # Caller should retry from the FastAPI lifespan.
+        logger.warning("start_for_account(%s) called with no running loop", account_id)
         return
 
     task = loop.create_task(_poll_loop(account_id), name=f"mailbox-{account_id}")
     _tasks[account_id] = task
-    logger.info("Started listener for MailAccount %s", account_id)
+    print(f"[mailbox_listener] Started loop for account {account_id}", flush=True)
 
 
 def stop_for_account(account_id: int) -> None:
@@ -166,6 +177,9 @@ async def backfill_unclassified(tenant_id: int | None = None, limit: int = 100) 
 
     Useful for the user's case where mail arrived via the legacy Gmail OAuth
     path before the listener existed. Filters by tenant_id when provided.
+
+    Sets the cost_guard active-tenant context per email so the resulting
+    LlmUsage rows attribute to the right tenant (mirrors the listener fix).
     """
     db = SessionLocal()
     try:
@@ -175,9 +189,11 @@ async def backfill_unclassified(tenant_id: int | None = None, limit: int = 100) 
         rows = q.order_by(Email.created_at.desc()).limit(limit).all()
         for em in rows:
             try:
+                set_active_tenant(em.tenant_id)
                 await run_email_workflow(em.id, db)
             except Exception as e:
                 logger.warning("Backfill workflow failed for email %s: %s", em.id, e)
         return len(rows)
     finally:
+        set_active_tenant(None)
         db.close()
