@@ -45,13 +45,62 @@ async function fetchTestimonials(): Promise<ApiTestimonial[]> {
     const data = (await res.json()) as { testimonials: ApiTestimonial[] };
     return data.testimonials.length > 0 ? data.testimonials : FALLBACK_TESTIMONIALS;
   } catch {
-    // Build-time or transient failure — render with seed data so the page still works.
     return FALLBACK_TESTIMONIALS;
   }
 }
 
+interface HeroStats {
+  appsLabel: string;
+  appsValue: string;
+  scoreLabel: string;
+  scoreValue: string;
+  interviewsLabel: string;
+  interviewsValue: string;
+}
+
+const FALLBACK_STATS: HeroStats = {
+  appsLabel: "Apps processed",
+  appsValue: "284+",
+  scoreLabel: "Avg resume score",
+  scoreValue: "74",
+  interviewsLabel: "Faster shortlist",
+  interviewsValue: "8×",
+};
+
+async function fetchHeroStats(): Promise<HeroStats> {
+  const base = process.env.NEXT_PUBLIC_API_URL || "https://hireops.symprio.com/api/v1";
+  try {
+    const res = await fetch(`${base}/metrics/public`, { next: { revalidate: 60 } });
+    if (!res.ok) return FALLBACK_STATS;
+    const data = (await res.json()) as {
+      apps_processed: number;
+      avg_score: number | null;
+      interviews_completed: number;
+    };
+    // While the platform is fresh, use the marketing fallback. Once real volume kicks in,
+    // switch to live numbers automatically.
+    if (data.apps_processed < 10) return FALLBACK_STATS;
+    return {
+      appsLabel: "Apps processed",
+      appsValue: formatCount(data.apps_processed),
+      scoreLabel: "Avg resume score",
+      scoreValue: data.avg_score !== null ? String(data.avg_score) : "—",
+      interviewsLabel: "AI interviews completed",
+      interviewsValue: formatCount(data.interviews_completed),
+    };
+  } catch {
+    return FALLBACK_STATS;
+  }
+}
+
+function formatCount(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return String(n);
+}
+
 export default async function LandingPage() {
-  const testimonials = await fetchTestimonials();
+  const [testimonials, stats] = await Promise.all([fetchTestimonials(), fetchHeroStats()]);
   return (
     <MarketingShell>
       {/* ──────────────────────────────────────────────────────────────
@@ -105,7 +154,7 @@ export default async function LandingPage() {
                 <ArrowRightIcon className="w-4 h-4 transition-transform group-hover:translate-x-0.5" />
               </Link>
               <Link
-                href="/contact"
+                href="https://symprio.com/contact" target="_blank" rel="noopener noreferrer"
                 className="inline-flex items-center justify-center px-7 py-3.5 rounded-full bg-white text-slate-900 font-semibold border border-slate-200 hover:border-slate-300 hover:shadow-sm transition-all"
               >
                 Book a demo
@@ -118,9 +167,9 @@ export default async function LandingPage() {
 
             {/* Stats row */}
             <dl className="mt-12 grid grid-cols-3 gap-6 max-w-md border-t border-slate-200 pt-7">
-              <Stat value="284" label="Apps processed / day" />
-              <Stat value="74" label="Avg resume score" />
-              <Stat value="8×" label="Faster shortlist" />
+              <Stat value={stats.appsValue} label={stats.appsLabel} />
+              <Stat value={stats.scoreValue} label={stats.scoreLabel} />
+              <Stat value={stats.interviewsValue} label={stats.interviewsLabel} />
             </dl>
           </div>
 
@@ -136,6 +185,51 @@ export default async function LandingPage() {
                 className="object-contain drop-shadow-[0_30px_60px_rgba(37,99,235,0.18)]"
               />
             </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ──────────────────────────────────────────────────────────────
+         POWERED BY — Mistral + ElevenLabs partner strip
+         TODO: when official SVG logos are available, drop them in
+         /public/landing/ and replace the inline wordmarks below.
+         ────────────────────────────────────────────────────────────── */}
+      <section className="py-12 lg:py-16 bg-white border-y border-slate-100">
+        <div className="max-w-5xl mx-auto px-6 text-center">
+          <p className="text-[11px] font-bold tracking-widest text-slate-400 uppercase mb-7">
+            Powered by
+          </p>
+          <div className="flex flex-wrap items-center justify-center gap-6 sm:gap-12">
+            {/* Mistral AI wordmark — orange triangular accent + brand text */}
+            <a
+              href="https://mistral.ai"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="group inline-flex items-center gap-3 px-6 py-4 rounded-2xl bg-white border border-slate-200 hover:border-orange-300 hover:shadow-md transition-all"
+            >
+              <span className="relative inline-block w-7 h-7">
+                <svg viewBox="0 0 32 32" className="w-full h-full">
+                  <path d="M4 4h6v6H4zM10 10h6v6h-6zM16 4h6v6h-6zM4 16h6v6H4zM16 16h6v6h-6zM22 22h6v6h-6zM4 22h6v6H4zM22 4h6v6h-6z" fill="#FA520F" />
+                </svg>
+              </span>
+              <span className="text-2xl font-bold tracking-tight text-slate-900">Mistral AI</span>
+            </a>
+
+            {/* ElevenLabs wordmark — stacked-bars accent + brand text */}
+            <a
+              href="https://elevenlabs.io"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="group inline-flex items-center gap-3 px-6 py-4 rounded-2xl bg-white border border-slate-200 hover:border-slate-400 hover:shadow-md transition-all"
+            >
+              <span className="relative inline-block w-7 h-7">
+                <svg viewBox="0 0 32 32" className="w-full h-full">
+                  <rect x="9" y="6" width="4" height="20" rx="1" fill="#0F172A" />
+                  <rect x="19" y="6" width="4" height="20" rx="1" fill="#0F172A" />
+                </svg>
+              </span>
+              <span className="text-2xl font-bold tracking-tight text-slate-900">ElevenLabs</span>
+            </a>
           </div>
         </div>
       </section>
@@ -423,7 +517,7 @@ export default async function LandingPage() {
               <ArrowRightIcon className="w-4 h-4" />
             </Link>
             <Link
-              href="/contact"
+              href="https://symprio.com/contact" target="_blank" rel="noopener noreferrer"
               className="inline-flex items-center justify-center px-8 py-3.5 rounded-full bg-white/10 text-white font-semibold ring-1 ring-white/30 hover:bg-white/20 transition-all backdrop-blur-sm"
             >
               Book a demo

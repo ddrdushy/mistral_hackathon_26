@@ -168,7 +168,7 @@ export default function AboutPage() {
               <ArrowRightIcon className="w-4 h-4" />
             </Link>
             <Link
-              href="/contact"
+              href="https://symprio.com/contact" target="_blank" rel="noopener noreferrer"
               className="inline-flex items-center justify-center px-8 py-3.5 rounded-full bg-white/10 text-white font-semibold ring-1 ring-white/30 hover:bg-white/20 transition-all backdrop-blur-sm"
             >
               Get in touch
