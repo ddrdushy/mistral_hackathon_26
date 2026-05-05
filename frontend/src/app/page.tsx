@@ -397,9 +397,8 @@ export default function LandingPage() {
       {/* ──────────────────────────────────────────────────────────────
          FINAL CTA
          ────────────────────────────────────────────────────────────── */}
-      <section className="relative py-20 lg:py-24 overflow-hidden">
-        <div className="absolute inset-0 -z-10 bg-gradient-to-br from-blue-600 via-blue-700 to-slate-900" />
-        <div className="bg-blobs absolute inset-0 -z-10 overflow-hidden opacity-30">
+      <section className="relative py-20 lg:py-24 overflow-hidden bg-gradient-to-br from-blue-600 via-blue-700 to-slate-900">
+        <div className="bg-blobs absolute inset-0 overflow-hidden opacity-30 pointer-events-none">
           <div className="blob-extra" />
         </div>
 
