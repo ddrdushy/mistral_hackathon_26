@@ -20,8 +20,8 @@ router = APIRouter(prefix="/api/v1/metrics", tags=["metrics"])
 async def public_metrics(db: Session = Depends(get_db)):
     apps_processed = db.query(func.count(Application.id)).scalar() or 0
     avg_score_raw = (
-        db.query(func.avg(Application.score))
-        .filter(Application.score.isnot(None))
+        db.query(func.avg(Application.resume_score))
+        .filter(Application.resume_score.isnot(None))
         .scalar()
     )
     avg_score = round(float(avg_score_raw)) if avg_score_raw is not None else None
