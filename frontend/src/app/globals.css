@@ -41,3 +41,83 @@ body {
   outline: 2px solid #3b82f6;
   outline-offset: 2px;
 }
+
+/* ─────────────────────────────────────────────────────────────────────
+   Landing-page animated background (Symprio brand)
+   Three soft blue blobs drifting on a 22s loop. Pure CSS, no JS.
+   Sits behind hero content via z-index -10 on the parent section.
+   ───────────────────────────────────────────────────────────────────── */
+@keyframes blob-drift-a {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33%      { transform: translate(8vw, -4vh) scale(1.08); }
+  66%      { transform: translate(-6vw, 6vh) scale(0.95); }
+}
+@keyframes blob-drift-b {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33%      { transform: translate(-9vw, 5vh) scale(0.92); }
+  66%      { transform: translate(6vw, -7vh) scale(1.1); }
+}
+@keyframes blob-drift-c {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33%      { transform: translate(5vw, 7vh) scale(1.05); }
+  66%      { transform: translate(-7vw, -5vh) scale(0.9); }
+}
+
+.bg-blobs::before,
+.bg-blobs::after,
+.bg-blobs > .blob-extra {
+  content: "";
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(90px);
+  opacity: 0.55;
+  pointer-events: none;
+  will-change: transform;
+}
+.bg-blobs::before {
+  inset: -10% auto auto -10%;
+  width: 55vw;
+  height: 55vw;
+  background: radial-gradient(circle at 30% 30%, #93c5fd 0%, transparent 70%);
+  animation: blob-drift-a 22s ease-in-out infinite;
+}
+.bg-blobs::after {
+  inset: auto -15% -20% auto;
+  width: 50vw;
+  height: 50vw;
+  background: radial-gradient(circle at 70% 70%, #bfdbfe 0%, transparent 70%);
+  animation: blob-drift-b 26s ease-in-out infinite;
+}
+.bg-blobs > .blob-extra {
+  inset: 30% 20% auto auto;
+  width: 35vw;
+  height: 35vw;
+  background: radial-gradient(circle at 50% 50%, #dbeafe 0%, transparent 70%);
+  animation: blob-drift-c 30s ease-in-out infinite;
+  opacity: 0.4;
+}
+
+/* Subtle dot grid overlay (used behind sections) */
+.bg-dot-grid {
+  background-image: radial-gradient(circle, rgba(37, 99, 235, 0.08) 1px, transparent 1px);
+  background-size: 28px 28px;
+}
+
+/* Marquee for the logo cloud */
+@keyframes marquee {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+.animate-marquee {
+  animation: marquee 38s linear infinite;
+}
+
+/* Reduced motion: stop all animations */
+@media (prefers-reduced-motion: reduce) {
+  .bg-blobs::before,
+  .bg-blobs::after,
+  .bg-blobs > .blob-extra,
+  .animate-marquee {
+    animation: none !important;
+  }
+}
