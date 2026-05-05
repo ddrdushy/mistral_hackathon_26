@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { apiGet, apiPatch } from "@/lib/api";
+import { apiGet, apiPatch, apiPut, apiDelete } from "@/lib/api";
 
 interface AgentInfo {
   key: string;
@@ -52,6 +52,23 @@ interface EnvCheck {
   DATABASE_URL: string;
 }
 
+interface PlatformSecret {
+  key: string;
+  source: "db" | "env" | "unset";
+  has_value: boolean;
+  masked_value: string;
+  updated_at: string | null;
+}
+
+interface PlatformSecretsResponse {
+  secrets: PlatformSecret[];
+  keys: string[];
+}
+
+interface MeResponseLite {
+  user: { is_superadmin: boolean };
+}
+
 const STATUS_BADGES: Record<string, string> = {
   active: "bg-green-100 text-green-800",
   mock: "bg-yellow-100 text-yellow-800",
@@ -78,6 +95,10 @@ export default function SettingsPage() {
   const [usageDays, setUsageDays] = useState(7);
   const [activeTab, setActiveTab] = useState<"agents" | "usage" | "system">("agents");
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
+  const [isSuperadmin, setIsSuperadmin] = useState(false);
+  const [secrets, setSecrets] = useState<PlatformSecret[]>([]);
+  const [secretDrafts, setSecretDrafts] = useState<Record<string, string>>({});
+  const [secretSaving, setSecretSaving] = useState<string | null>(null);
 
   const showToast = useCallback((message: string, type: "success" | "error" = "success") => {
     setToast({ message, type });
@@ -87,20 +108,65 @@ export default function SettingsPage() {
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const [agentsRes, usageRes, envRes] = await Promise.all([
+      const [agentsRes, usageRes, envRes, meRes] = await Promise.all([
         apiGet<{ agents: AgentInfo[] }>("/settings/agents"),
         apiGet<UsageReport>("/settings/llm/usage", { days: String(usageDays) }),
         apiGet<EnvCheck>("/settings/env-check"),
+        apiGet<MeResponseLite>("/auth/me"),
       ]);
       setAgents(agentsRes.agents);
       setUsage(usageRes);
       setEnvCheck(envRes);
+      setIsSuperadmin(meRes.user.is_superadmin);
+      if (meRes.user.is_superadmin) {
+        try {
+          const sec = await apiGet<PlatformSecretsResponse>("/admin/secrets");
+          setSecrets(sec.secrets);
+        } catch {
+          // non-fatal
+        }
+      }
     } catch {
       showToast("Failed to load settings", "error");
     } finally {
       setLoading(false);
     }
   }, [usageDays, showToast]);
+
+  const handleSaveSecret = async (key: string) => {
+    const value = (secretDrafts[key] || "").trim();
+    if (!value) {
+      showToast("Enter a value before saving", "error");
+      return;
+    }
+    setSecretSaving(key);
+    try {
+      await apiPut(`/admin/secrets/${key}`, { value });
+      const sec = await apiGet<PlatformSecretsResponse>("/admin/secrets");
+      setSecrets(sec.secrets);
+      setSecretDrafts((d) => ({ ...d, [key]: "" }));
+      showToast(`${key} updated`);
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "Failed to save", "error");
+    } finally {
+      setSecretSaving(null);
+    }
+  };
+
+  const handleClearSecret = async (key: string) => {
+    if (!confirm(`Remove DB override for ${key}? It will fall back to the .env file value.`)) return;
+    setSecretSaving(key);
+    try {
+      await apiDelete(`/admin/secrets/${key}`);
+      const sec = await apiGet<PlatformSecretsResponse>("/admin/secrets");
+      setSecrets(sec.secrets);
+      showToast(`${key} override cleared`);
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "Failed to clear", "error");
+    } finally {
+      setSecretSaving(null);
+    }
+  };
 
   useEffect(() => {
     fetchData();
@@ -419,28 +485,101 @@ export default function SettingsPage() {
       {activeTab === "system" && envCheck && (
         <div className="space-y-6">
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
-            <h3 className="text-base font-semibold text-slate-900 mb-4">Environment Variables</h3>
-            <div className="space-y-3">
-              {Object.entries(envCheck).map(([key, status]) => (
-                <div key={key} className="flex items-center justify-between py-2 border-b border-slate-100 last:border-0">
-                  <span className="text-sm font-mono text-slate-700">{key}</span>
-                  {status === "set" ? (
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">
-                      <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                      </svg>
-                      Configured
-                    </span>
-                  ) : (
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700">
-                      <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                      Missing
-                    </span>
-                  )}
+            <div className="flex items-start justify-between mb-1">
+              <div>
+                <h3 className="text-base font-semibold text-slate-900">Platform Secrets</h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Mistral &amp; ElevenLabs credentials are platform-wide — every tenant uses these and is billed for usage.
+                  {isSuperadmin
+                    ? " Edit values below; changes take effect immediately."
+                    : " Only superadmins can edit these values."}
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-4 space-y-4">
+              {(isSuperadmin ? secrets : []).map((s) => {
+                const draft = secretDrafts[s.key] ?? "";
+                const sourceBadge =
+                  s.source === "db"
+                    ? "bg-emerald-100 text-emerald-700"
+                    : s.source === "env"
+                    ? "bg-slate-100 text-slate-600"
+                    : "bg-rose-100 text-rose-700";
+                const sourceLabel =
+                  s.source === "db" ? "from DB" : s.source === "env" ? "from .env" : "not set";
+                return (
+                  <div key={s.key} className="border border-slate-200 rounded-lg p-4">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-mono text-slate-800">{s.key}</span>
+                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${sourceBadge}`}>
+                          {sourceLabel}
+                        </span>
+                      </div>
+                      <span className="text-xs font-mono text-slate-400">
+                        {s.has_value ? s.masked_value : "(empty)"}
+                      </span>
+                    </div>
+                    <div className="flex gap-2">
+                      <input
+                        type="password"
+                        value={draft}
+                        onChange={(e) =>
+                          setSecretDrafts((d) => ({ ...d, [s.key]: e.target.value }))
+                        }
+                        placeholder="Enter new value to overwrite…"
+                        autoComplete="off"
+                        className="flex-1 px-3 py-2 text-sm border border-slate-300 rounded-md font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                      <button
+                        onClick={() => handleSaveSecret(s.key)}
+                        disabled={!draft.trim() || secretSaving === s.key}
+                        className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700 disabled:bg-slate-300 disabled:cursor-not-allowed"
+                      >
+                        {secretSaving === s.key ? "Saving…" : "Save"}
+                      </button>
+                      {s.source === "db" && (
+                        <button
+                          onClick={() => handleClearSecret(s.key)}
+                          disabled={secretSaving === s.key}
+                          className="px-3 py-2 text-sm font-medium text-slate-600 bg-white border border-slate-300 rounded-md hover:bg-slate-50 disabled:opacity-50"
+                          title="Remove DB override; revert to .env value"
+                        >
+                          Clear
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+
+              {!isSuperadmin && (
+                <div className="text-sm text-slate-500 italic py-4">
+                  You don&apos;t have permission to manage platform secrets.
                 </div>
-              ))}
+              )}
+
+              {/* DATABASE_URL is always read-only — bootstrap secret, can't live in DB */}
+              <div className="border border-slate-200 rounded-lg p-4 bg-slate-50">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-mono text-slate-800">DATABASE_URL</span>
+                    <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-slate-200 text-slate-700">
+                      server-managed
+                    </span>
+                  </div>
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">
+                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                    {envCheck.DATABASE_URL === "set" ? "Configured" : "Missing"}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-500 mt-2">
+                  Bootstrap secret — managed via the server&apos;s .env file.
+                </p>
+              </div>
             </div>
           </div>
 

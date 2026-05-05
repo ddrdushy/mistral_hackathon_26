@@ -28,6 +28,12 @@ from auth.security import issue_jwt, COOKIE_NAME, JWT_TTL_DAYS, hash_password, n
 from auth.dependencies import require_superadmin, CurrentSession
 from auth.audit import record_audit
 from auth.email_service import send_password_reset_email
+from services.secrets import (
+    GLOBAL_SECRET_KEYS,
+    list_secret_status,
+    set_global_secret,
+    clear_global_secret,
+)
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
 
@@ -1107,3 +1113,80 @@ def list_audit_log(
     ]
 
     return AuditLogResponse(entries=entries, total=total)
+
+
+# ── Platform secrets (Mistral / ElevenLabs) ───────────────────────────────
+# Global keys shared by all tenants — the platform owner pays for usage and
+# bills tenants via Stripe. Stored in the `settings` table with tenant_id IS
+# NULL; mirrored into os.environ at startup and on every write.
+
+class SecretStatusItem(BaseModel):
+    key: str
+    source: str  # "db" | "env" | "unset"
+    has_value: bool
+    masked_value: str
+    updated_at: Optional[datetime] = None
+
+
+class SecretStatusResponse(BaseModel):
+    secrets: list[SecretStatusItem]
+    keys: list[str]
+
+
+class SecretUpdateRequest(BaseModel):
+    value: str = Field(min_length=1, max_length=4096)
+
+
+@router.get("/secrets", response_model=SecretStatusResponse)
+async def list_platform_secrets(
+    _: CurrentSession = Depends(require_superadmin),
+):
+    """List all platform-level secrets with masked values + source."""
+    items = list_secret_status()
+    return SecretStatusResponse(
+        secrets=[SecretStatusItem(**i) for i in items],
+        keys=list(GLOBAL_SECRET_KEYS),
+    )
+
+
+@router.put("/secrets/{key}")
+async def update_platform_secret(
+    key: str,
+    req: SecretUpdateRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(require_superadmin),
+):
+    """Upsert a global secret. Takes effect immediately for new requests."""
+    if key not in GLOBAL_SECRET_KEYS:
+        raise HTTPException(status_code=404, detail=f"Unknown secret key: {key}")
+    set_global_secret(key, req.value)
+    record_audit(
+        db,
+        actor=session.user,
+        action=f"platform_secret.update",
+        request=request,
+        payload={"key": key, "length": len(req.value)},
+    )
+    return {"status": "updated", "key": key}
+
+
+@router.delete("/secrets/{key}")
+async def clear_platform_secret(
+    key: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(require_superadmin),
+):
+    """Remove the DB override; falls back to whatever the .env file had."""
+    if key not in GLOBAL_SECRET_KEYS:
+        raise HTTPException(status_code=404, detail=f"Unknown secret key: {key}")
+    clear_global_secret(key)
+    record_audit(
+        db,
+        actor=session.user,
+        action=f"platform_secret.clear",
+        request=request,
+        payload={"key": key},
+    )
+    return {"status": "cleared", "key": key}

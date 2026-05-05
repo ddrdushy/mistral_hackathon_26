@@ -11,10 +11,18 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 from database import init_db
+
+# Merge DB-stored global secrets (Mistral / ElevenLabs keys managed by the
+# superadmin via the UI) into os.environ BEFORE any router or agent module
+# imports — those modules cache env values at import time.
+from services.secrets import apply_db_secrets_to_env
+_secret_sources = apply_db_secrets_to_env()
+
 from app_limiter import limiter
 from routers import inbox, jobs, candidates, applications, screening, reports, settings, auth, admin, team, billing
 
 logger = logging.getLogger("hireops")
+logger.info("Global secrets sources: %s", _secret_sources)
 
 # ── Sentry ────────────────────────────────────────────────────────────────
 SENTRY_DSN = os.getenv("SENTRY_DSN", "")
