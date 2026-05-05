@@ -49,9 +49,22 @@ export default function Reveal({
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
-    setHydrated(true);
     const node = ref.current;
     if (!node) return;
+
+    // Sync check first: if already in viewport at mount, mark visible
+    // immediately and skip the observer — avoids flash-of-hidden for any
+    // content above the fold (or already scrolled past).
+    const rect = node.getBoundingClientRect();
+    const vh = window.innerHeight;
+    const alreadyInView = rect.top < vh * (1 - threshold) && rect.bottom > 0;
+    if (alreadyInView) {
+      setHydrated(true);
+      setVisible(true);
+      return;
+    }
+
+    setHydrated(true);
     const obs = new IntersectionObserver(
       (entries) => {
         for (const entry of entries) {

@@ -125,8 +125,8 @@ export default async function LandingPage() {
         />
 
         <div className="relative max-w-7xl mx-auto px-6 pt-16 pb-20 lg:pt-24 lg:pb-28 grid grid-cols-1 lg:grid-cols-2 gap-12 lg:gap-16 items-center">
-          {/* Left column — staggered fade-in for badge → headline → body → CTAs → stats */}
-          <Reveal direction="left" duration={800}>
+          {/* Left column — above the fold, no scroll-reveal (would flash empty) */}
+          <div>
             <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-bold tracking-widest uppercase text-blue-700 bg-white/60 ring-1 ring-blue-200 backdrop-blur-sm">
               <SparklesIcon className="w-3.5 h-3.5" />
               Powered by Mistral &amp; ElevenLabs
@@ -172,10 +172,10 @@ export default async function LandingPage() {
               <Stat value={stats.scoreValue} label={stats.scoreLabel} />
               <Stat value={stats.interviewsValue} label={stats.interviewsLabel} />
             </dl>
-          </Reveal>
+          </div>
 
-          {/* Right column — 3D hero illustration with gentle float */}
-          <Reveal direction="scale" delay={150}>
+          {/* Right column — 3D hero illustration with gentle float (above the fold) */}
+          <div className="relative">
             <div className="relative aspect-[16/10] w-full animate-float">
               <Image
                 src="/landing/hero-illustration.webp"
@@ -186,7 +186,7 @@ export default async function LandingPage() {
                 className="object-contain drop-shadow-[0_30px_60px_rgba(37,99,235,0.18)]"
               />
             </div>
-          </Reveal>
+          </div>
         </div>
       </section>
 
