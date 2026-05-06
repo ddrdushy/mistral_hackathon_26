@@ -94,19 +94,40 @@ export default function InboxPage() {
     }
   }, []);
 
+  const [hasActiveMailbox, setHasActiveMailbox] = useState(false);
+
+  const fetchMailboxStatus = useCallback(async () => {
+    try {
+      const data = await apiGet<{ accounts: { listener_enabled: boolean; status: string }[] }>(
+        "/inbox/accounts",
+      );
+      const active = (data.accounts || []).some(
+        (a) => a.listener_enabled && a.status === "connected",
+      );
+      setHasActiveMailbox(active);
+    } catch {
+      setHasActiveMailbox(false);
+    }
+  }, []);
+
   useEffect(() => {
     fetchEmails();
     fetchGmailStatus();
-  }, [fetchEmails, fetchGmailStatus]);
+    fetchMailboxStatus();
+  }, [fetchEmails, fetchGmailStatus, fetchMailboxStatus]);
 
-  // Poll Gmail status every 5s when listener is active (to pick up new emails in UI)
-  const listenerActive = gmailStatus?.idle_active || gmailStatus?.polling;
+  // Poll every 10s while ANY listener is alive — legacy Gmail OAuth or a
+  // per-tenant IMAP MailAccount. Without this branch a tenant who only uses
+  // the new MailAccount flow stays on a stale snapshot.
+  const listenerActive =
+    gmailStatus?.idle_active || gmailStatus?.polling || hasActiveMailbox;
   useEffect(() => {
     if (listenerActive) {
       statusPollRef.current = setInterval(() => {
         fetchGmailStatus();
         fetchEmails();
-      }, 5000);
+        fetchMailboxStatus();
+      }, 10000);
     }
     return () => {
       if (statusPollRef.current) {
@@ -114,7 +135,7 @@ export default function InboxPage() {
         statusPollRef.current = null;
       }
     };
-  }, [listenerActive, fetchGmailStatus, fetchEmails]);
+  }, [listenerActive, fetchGmailStatus, fetchEmails, fetchMailboxStatus]);
 
   // ─── Gmail Handlers ───
 
