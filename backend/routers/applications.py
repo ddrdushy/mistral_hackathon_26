@@ -351,12 +351,14 @@ async def rescore_application(
     if not candidate or not job:
         raise HTTPException(status_code=404, detail="Candidate or job missing")
 
-    # Re-extract resume text from the source email's attachments. The IMAP
-    # listener's next sync should have refreshed content_b64 — if it hasn't,
-    # we fall back to whatever resume_text already exists on the candidate.
+    # Re-extract resume text from the source email's attachments AND combine
+    # with the email body (cover-letter signal). If the listener hasn't
+    # re-pulled bytes yet we keep whatever resume_text the candidate already had.
     from models import Email
     em = db.query(Email).filter(Email.id == candidate.source_email_id).first()
     if em:
+        cv_text = ""
+        cv_filename = ""
         atts = json.loads(em.attachments) if em.attachments else []
         for att in atts:
             content_b64 = att.get("content_b64", "")
@@ -366,14 +368,23 @@ async def rescore_application(
                     import base64
                     from services.resume_service import extract_resume_text
                     file_bytes = base64.b64decode(content_b64)
-                    new_text = extract_resume_text(filename, file_bytes=file_bytes)
-                    if new_text and new_text.strip():
-                        candidate.resume_text = new_text
-                        candidate.resume_filename = filename
-                        db.commit()
-                        break
+                    cv_text = extract_resume_text(filename, file_bytes=file_bytes)
+                    cv_filename = filename
+                    break
                 except Exception:
                     pass
+
+        body_text = (em.body_full or em.body_snippet or "").strip()
+        parts = []
+        if body_text:
+            parts.append(f"--- Email body ---\n{body_text}")
+        if cv_text and cv_text.strip():
+            parts.append(f"--- CV ({cv_filename}) ---\n{cv_text}")
+        if parts:
+            candidate.resume_text = "\n\n".join(parts)
+            if cv_filename:
+                candidate.resume_filename = cv_filename
+            db.commit()
 
     if not candidate.resume_text or not candidate.resume_text.strip():
         raise HTTPException(

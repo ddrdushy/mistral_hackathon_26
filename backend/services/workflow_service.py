@@ -335,28 +335,40 @@ def _create_candidate_from_email(em: Email, db: Session) -> Candidate:
     candidate_email = contact.get("email", "") or em.from_address
     phone = contact.get("phone", "")
 
-    resume_text = ""
+    # Build the scorer input from BOTH the email body (cover-letter-ish:
+    # motivation, role highlights) and the CV attachment (structured
+    # experience). Either alone misses real signal — the email is often where
+    # candidates explain why they're a fit, the CV is where they prove it.
+    cv_text = ""
     resume_filename = ""
     attachments = json.loads(em.attachments) if em.attachments else []
     for att in attachments:
         filename = att.get("filename", "")
         if filename.lower().endswith(('.pdf', '.docx', '.doc', '.txt', '.tex')):
             resume_filename = filename
-            # Extract text from the actual attachment file bytes
             content_b64 = att.get("content_b64", "")
             if content_b64:
                 try:
                     from services.resume_service import extract_resume_text
                     file_bytes = base64.b64decode(content_b64)
-                    resume_text = extract_resume_text(filename, file_bytes=file_bytes)
-                    logger.info(f"Extracted {len(resume_text)} chars from attachment: {filename}")
+                    cv_text = extract_resume_text(filename, file_bytes=file_bytes)
+                    logger.info(f"Extracted {len(cv_text)} chars from attachment: {filename}")
                 except Exception as e:
                     logger.warning(f"Failed to extract text from {filename}: {e}")
-            # Fallback to email body if extraction fails or no content
-            if not resume_text.strip():
-                resume_text = body_text
-                logger.info(f"Using email body as resume text (attachment extraction failed/empty)")
             break
+
+    parts = []
+    body_clean = (body_text or "").strip()
+    if body_clean:
+        parts.append(f"--- Email body ---\n{body_clean}")
+    cv_clean = (cv_text or "").strip()
+    if cv_clean:
+        parts.append(f"--- CV ({resume_filename}) ---\n{cv_clean}")
+    resume_text = "\n\n".join(parts)
+    if not resume_text:
+        # No body, no extractable CV — fall back to whatever we have so the
+        # scorer at least sees the from-address / subject context.
+        resume_text = em.subject or em.from_address or ""
 
     candidate = Candidate(
         tenant_id=em.tenant_id,
