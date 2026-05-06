@@ -1045,22 +1045,20 @@ export default function CandidateDetailPage({
             <Card
               title="Resume Score"
               action={
-                resume.score === 0 ? (
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      try {
-                        await apiPost(`/applications/${id}/rescore`, {});
-                        await fetchApplication();
-                      } catch (err) {
-                        alert(err instanceof Error ? err.message : "Re-score failed");
-                      }
-                    }}
-                    className="text-xs font-medium px-3 py-1.5 rounded-md bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
-                  >
-                    Re-score
-                  </button>
-                ) : null
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      await apiPost(`/applications/${id}/rescore`, {});
+                      await fetchApplication();
+                    } catch (err) {
+                      alert(err instanceof Error ? err.message : "Re-score failed");
+                    }
+                  }}
+                  className="text-xs font-medium px-3 py-1.5 rounded-md bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
+                >
+                  Re-score
+                </button>
               }
             >
               <div className="space-y-5">
