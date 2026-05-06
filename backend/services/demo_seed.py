@@ -222,30 +222,62 @@ def seed_tenant(db: Session, tenant: Tenant) -> dict:
 
 
 def clear_demo(db: Session, tenant: Tenant) -> dict:
-    """Remove demo jobs/candidates/applications (anything tagged with DEMO_MARKER)."""
-    demo_jobs = db.query(Job).filter(
-        Job.tenant_id == tenant.id,
-        Job.description.like(f"{DEMO_MARKER}%"),
-    ).all()
-    job_ids = [j.id for j in demo_jobs]
+    """Remove demo data for a tenant.
 
-    if not job_ids:
+    "Demo data" = anything that wasn't sourced from a real inbound email:
+      - Jobs with [DEMO] prefix in description
+      - Candidates without a source_email_id (seeded, not classified)
+      - Applications, events, interview_links, qa_sessions cascading from
+        either of the above
+    """
+    from models import InterviewLink, QaSession
+
+    demo_job_ids = [
+        j.id for (j,) in db.query(Job).filter(
+            Job.tenant_id == tenant.id,
+            Job.description.like(f"{DEMO_MARKER}%"),
+        ).with_entities(Job).all()
+    ]
+    seed_candidate_ids = [
+        c.id for (c,) in db.query(Candidate).filter(
+            Candidate.tenant_id == tenant.id,
+            Candidate.source_email_id.is_(None),
+        ).with_entities(Candidate).all()
+    ]
+
+    # Every application that touches demo data — by job OR by candidate.
+    app_ids = [
+        a.id for (a,) in db.query(Application).filter(
+            Application.tenant_id == tenant.id,
+            (
+                Application.job_id.in_(demo_job_ids) if demo_job_ids else False
+            ) | (
+                Application.candidate_id.in_(seed_candidate_ids) if seed_candidate_ids else False
+            ),
+        ).with_entities(Application).all()
+    ] if (demo_job_ids or seed_candidate_ids) else []
+
+    if not (demo_job_ids or seed_candidate_ids or app_ids):
         return {"cleared": False, "reason": "no demo data"}
 
-    # Delete applications + their candidates first
-    apps = db.query(Application).filter(
-        Application.tenant_id == tenant.id,
-        Application.job_id.in_(job_ids),
-    ).all()
-    candidate_ids = [a.candidate_id for a in apps]
-    app_ids = [a.id for a in apps]
-
-    db.query(Event).filter(Event.app_id.in_(app_ids)).delete(synchronize_session="fetch")
-    db.query(Application).filter(Application.id.in_(app_ids)).delete(synchronize_session="fetch")
-    db.query(Candidate).filter(
-        Candidate.id.in_(candidate_ids),
-        Candidate.tenant_id == tenant.id,
-    ).delete(synchronize_session="fetch")
-    db.query(Job).filter(Job.id.in_(job_ids)).delete(synchronize_session="fetch")
+    # Cascade — order matters (FKs point upward).
+    if app_ids:
+        db.query(QaSession).filter(QaSession.app_id.in_(app_ids)).delete(synchronize_session="fetch")
+        db.query(InterviewLink).filter(InterviewLink.app_id.in_(app_ids)).delete(synchronize_session="fetch")
+        db.query(Event).filter(Event.app_id.in_(app_ids)).delete(synchronize_session="fetch")
+        db.query(Application).filter(Application.id.in_(app_ids)).delete(synchronize_session="fetch")
+    if seed_candidate_ids:
+        db.query(Candidate).filter(
+            Candidate.id.in_(seed_candidate_ids),
+            Candidate.tenant_id == tenant.id,
+        ).delete(synchronize_session="fetch")
+    if demo_job_ids:
+        db.query(Job).filter(Job.id.in_(demo_job_ids)).delete(synchronize_session="fetch")
     db.commit()
-    return {"cleared": True, "jobs": len(job_ids), "candidates": len(candidate_ids), "applications": len(app_ids)}
+
+    return {
+        "cleared": True,
+        "jobs": len(demo_job_ids),
+        "candidates": len(seed_candidate_ids),
+        "applications": len(app_ids),
+    }

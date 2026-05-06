@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { apiGet } from "@/lib/api";
+import { apiGet, apiPost } from "@/lib/api";
 import { useAuth } from "@/components/auth/AuthGate";
 import JobBoardIntegrations from "@/components/talent/JobBoardIntegrations";
 
@@ -190,6 +190,9 @@ export default function TenantSettingsPage() {
         </div>
       </div>
 
+      {/* ── Demo data cleanup ─────────────────────────────────────────── */}
+      <DemoDataPanel />
+
       {/* ── Job board integrations (Apollo platform-default + BYO) ────── */}
       <div className="mb-6">
         <JobBoardIntegrations
@@ -269,6 +272,72 @@ export default function TenantSettingsPage() {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+function DemoDataPanel() {
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+
+  const onClear = async () => {
+    if (!confirm(
+      "Remove all demo and seeded sample data?\n\n" +
+      "This deletes:\n" +
+      "  • Jobs tagged [DEMO]\n" +
+      "  • Candidates not sourced from a real email\n" +
+      "  • Their applications, interview links, Q&A sessions, events\n\n" +
+      "Real candidates from your connected mailbox stay."
+    )) return;
+    try {
+      setBusy(true);
+      setResult(null);
+      const data = await apiPost<{
+        cleared: boolean;
+        reason?: string;
+        jobs?: number;
+        candidates?: number;
+        applications?: number;
+      }>("/team/clear-demo", {});
+      if (!data.cleared) {
+        setResult(`Nothing to remove — ${data.reason || "no demo data"}.`);
+      } else {
+        setResult(
+          `Removed ${data.jobs ?? 0} job(s), ${data.candidates ?? 0} candidate(s), ${data.applications ?? 0} application(s).`,
+        );
+      }
+    } catch (err) {
+      setResult(err instanceof Error ? err.message : "Request failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-5 mb-6">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-base font-semibold text-slate-900">Demo data</h2>
+          <p className="text-xs text-slate-500 mt-1 max-w-xl">
+            On signup we seed your tenant with a few sample jobs and
+            candidates so the dashboard isn&apos;t empty. Once your real
+            mailbox is wired up, clear them out.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onClear}
+          disabled={busy}
+          className="text-sm font-medium px-3 py-1.5 rounded-md border border-rose-200 text-rose-700 hover:bg-rose-50 disabled:opacity-50 whitespace-nowrap"
+        >
+          {busy ? "Clearing..." : "Clear demo data"}
+        </button>
+      </div>
+      {result && (
+        <p className="mt-3 text-sm text-slate-700 bg-slate-50 rounded-md px-3 py-2">
+          {result}
+        </p>
+      )}
     </div>
   );
 }
