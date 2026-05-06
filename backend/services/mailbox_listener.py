@@ -46,68 +46,84 @@ _started: bool = False
 
 
 async def _poll_loop(account_id: int) -> None:
-    """One iteration per POLL_INTERVAL_SECONDS until cancelled."""
+    """One iteration per POLL_INTERVAL_SECONDS until cancelled.
+
+    The whole body is wrapped so that a transient DB/import error never
+    silently kills the asyncio task — without this, a single hiccup leaves
+    the UI showing LISTENING forever while no mail is pulled.
+    """
     backoff = POLL_INTERVAL_SECONDS
     while True:
-        db = SessionLocal()
         try:
-            account = (
-                db.query(MailAccount)
-                .filter(MailAccount.id == account_id)
-                .first()
-            )
-            if not account:
-                logger.info("Account %s gone, stopping listener", account_id)
-                return
-            if account.status == "disconnected" or not account.listener_enabled:
-                # Either the user paused this mailbox (cost control) or the
-                # account is disconnected. Either way, idle the task so we
-                # don't burn classifier LLM tokens until they re-enable.
-                await asyncio.sleep(POLL_INTERVAL_SECONDS)
-                continue
-
-            # Tag every LLM call made inside this iteration with the tenant
-            # so cost_guard.record_llm_usage attributes it correctly. Without
-            # this, the mailbox listener (which runs outside an HTTP request)
-            # would produce LlmUsage rows with tenant_id=NULL — and the tenant
-            # usage meter would always read $0 for auto-pickup work.
-            set_active_tenant(account.tenant_id)
-
-            # 1) Pull new emails. sync_account already commits and tags tenant_id.
+            db = SessionLocal()
             try:
-                new_emails = mail_account_service.sync_account(
-                    db, account, limit=50
+                account = (
+                    db.query(MailAccount)
+                    .filter(MailAccount.id == account_id)
+                    .first()
                 )
-            except Exception as e:
-                logger.warning(
-                    "Listener pull failed for account %s (%s) — backoff %ds: %s",
-                    account_id, account.email_address, backoff, e,
-                )
-                await asyncio.sleep(backoff)
-                backoff = min(backoff * 2, MAX_BACKOFF_SECONDS)
-                continue
+                if not account:
+                    logger.info("Account %s gone, stopping listener", account_id)
+                    return
+                if account.status == "disconnected" or not account.listener_enabled:
+                    # Either the user paused this mailbox (cost control) or the
+                    # account is disconnected. Either way, idle the task so we
+                    # don't burn classifier LLM tokens until they re-enable.
+                    await asyncio.sleep(POLL_INTERVAL_SECONDS)
+                    continue
 
-            # 2) Run the workflow on each new email. Failures are per-email,
-            # so one bad message doesn't stop the rest of the batch.
-            for em in new_emails:
+                # Tag every LLM call made inside this iteration with the tenant
+                # so cost_guard.record_llm_usage attributes it correctly. Without
+                # this, the mailbox listener (which runs outside an HTTP request)
+                # would produce LlmUsage rows with tenant_id=NULL — and the tenant
+                # usage meter would always read $0 for auto-pickup work.
+                set_active_tenant(account.tenant_id)
+
+                # 1) Pull new emails. sync_account already commits and tags tenant_id.
                 try:
-                    await run_email_workflow(em.id, db)
+                    new_emails = mail_account_service.sync_account(
+                        db, account, limit=50
+                    )
                 except Exception as e:
-                    logger.exception(
-                        "Workflow failed for email %s in listener for account %s: %s",
-                        em.id, account_id, e,
+                    logger.warning(
+                        "Listener pull failed for account %s (%s) — backoff %ds: %s",
+                        account_id, account.email_address, backoff, e,
+                    )
+                    await asyncio.sleep(backoff)
+                    backoff = min(backoff * 2, MAX_BACKOFF_SECONDS)
+                    continue
+
+                # 2) Run the workflow on each new email. Failures are per-email,
+                # so one bad message doesn't stop the rest of the batch.
+                for em in new_emails:
+                    try:
+                        await run_email_workflow(em.id, db)
+                    except Exception as e:
+                        logger.exception(
+                            "Workflow failed for email %s in listener for account %s: %s",
+                            em.id, account_id, e,
+                        )
+
+                if new_emails:
+                    print(
+                        f"[mailbox_listener] Auto-classified {len(new_emails)} new "
+                        f"emails for {account.email_address}",
+                        flush=True,
                     )
 
-            if new_emails:
-                print(
-                    f"[mailbox_listener] Auto-classified {len(new_emails)} new "
-                    f"emails for {account.email_address}",
-                    flush=True,
-                )
-
-            backoff = POLL_INTERVAL_SECONDS  # reset on success
-        finally:
-            db.close()
+                backoff = POLL_INTERVAL_SECONDS  # reset on success
+            finally:
+                db.close()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.exception(
+                "Listener iteration crashed for account %s — backoff %ds: %s",
+                account_id, backoff, e,
+            )
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, MAX_BACKOFF_SECONDS)
+            continue
 
         await asyncio.sleep(POLL_INTERVAL_SECONDS)
 
