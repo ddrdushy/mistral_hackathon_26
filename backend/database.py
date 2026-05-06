@@ -172,6 +172,45 @@ def _run_migrations():
                 except Exception:
                     pass
 
+    # Heal orphaned candidate/application/event rows from the workflow bug:
+    # the auto-pipeline used to create Candidate/Application/Event rows with
+    # tenant_id=NULL, so the dashboard never saw them. Walk the ownership
+    # chain (email → candidate → application → event/link) and copy the
+    # tenant_id down. Idempotent — only touches rows that are still NULL.
+    with engine.begin() as conn:
+        try:
+            conn.execute(text(
+                "UPDATE candidates SET tenant_id = ("
+                "  SELECT e.tenant_id FROM emails e WHERE e.id = candidates.source_email_id"
+                ") WHERE tenant_id IS NULL AND source_email_id IS NOT NULL"
+            ))
+        except Exception:
+            pass
+        try:
+            conn.execute(text(
+                "UPDATE applications SET tenant_id = ("
+                "  SELECT c.tenant_id FROM candidates c WHERE c.id = applications.candidate_id"
+                ") WHERE tenant_id IS NULL"
+            ))
+        except Exception:
+            pass
+        try:
+            conn.execute(text(
+                "UPDATE events SET tenant_id = ("
+                "  SELECT a.tenant_id FROM applications a WHERE a.id = events.app_id"
+                ") WHERE tenant_id IS NULL AND app_id IS NOT NULL"
+            ))
+        except Exception:
+            pass
+        try:
+            conn.execute(text(
+                "UPDATE interview_links SET tenant_id = ("
+                "  SELECT a.tenant_id FROM applications a WHERE a.id = interview_links.app_id"
+                ") WHERE tenant_id IS NULL"
+            ))
+        except Exception:
+            pass
+
 
 def _apply_superadmin_emails():
     """Promote any user listed in SUPERADMIN_EMAILS env var to is_superadmin=True.

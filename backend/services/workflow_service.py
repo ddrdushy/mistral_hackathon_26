@@ -108,7 +108,13 @@ async def run_email_workflow(email_id: int, db: Session) -> Dict:
         return result
 
     # ─── Step 4: Match to jobs + Score ───
-    open_jobs = db.query(Job).filter(Job.status == "open").all()
+    # Tenant-scope the lookup. Without this we'd match the email's candidate
+    # against another tenant's open jobs and silently create cross-tenant
+    # Applications that the dashboard can't see.
+    job_query = db.query(Job).filter(Job.status == "open")
+    if em.tenant_id is not None:
+        job_query = job_query.filter(Job.tenant_id == em.tenant_id)
+    open_jobs = job_query.all()
     if not open_jobs:
         result["steps"].append({"step": "match", "message": "No open jobs to match against"})
         return result
@@ -154,6 +160,7 @@ async def run_email_workflow(email_id: int, db: Session) -> Dict:
         score_result = await score_resume(scorer_input)
 
         application = Application(
+            tenant_id=em.tenant_id,
             candidate_id=candidate.id,
             job_id=job.id,
             stage="matched",
@@ -186,6 +193,7 @@ async def run_email_workflow(email_id: int, db: Session) -> Dict:
 
         # Log event
         event = Event(
+            tenant_id=em.tenant_id,
             app_id=application.id,
             event_type="auto_workflow_matched",
             payload=json.dumps({
@@ -202,6 +210,7 @@ async def run_email_workflow(email_id: int, db: Session) -> Dict:
         if score_result.recommendation == "advance":
             token = uuid.uuid4().hex
             link = InterviewLink(
+                tenant_id=em.tenant_id,
                 token=token,
                 app_id=application.id,
                 status="generated",
@@ -218,6 +227,7 @@ async def run_email_workflow(email_id: int, db: Session) -> Dict:
             application.ai_next_action = f"Interview link auto-generated — ready to send to {candidate.name}"
 
             auto_event = Event(
+                tenant_id=em.tenant_id,
                 app_id=application.id,
                 event_type="auto_interview_link_generated",
                 payload=json.dumps({
@@ -249,6 +259,7 @@ async def run_email_workflow(email_id: int, db: Session) -> Dict:
                     application.interview_link_status = "sent"
                     application.ai_next_action = f"Interview link emailed to {candidate.email} — waiting for candidate"
                     send_event = Event(
+                        tenant_id=em.tenant_id,
                         app_id=application.id,
                         event_type="auto_interview_link_emailed",
                         payload=json.dumps({
@@ -348,6 +359,7 @@ def _create_candidate_from_email(em: Email, db: Session) -> Candidate:
             break
 
     candidate = Candidate(
+        tenant_id=em.tenant_id,
         name=name,
         email=candidate_email,
         phone=phone,
