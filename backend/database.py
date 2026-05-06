@@ -172,6 +172,28 @@ def _run_migrations():
                 except Exception:
                     pass
 
+    # Talent-bank profile fields on candidates — added so HR can suggest
+    # past resumes for new jobs without re-running the LLM scorer.
+    if "candidates" in insp.get_table_names():
+        existing = {c["name"] for c in insp.get_columns("candidates")}
+        profile_cols = {
+            "profile_skills":           "TEXT DEFAULT ''",
+            "profile_role":             "VARCHAR DEFAULT ''",
+            "profile_seniority":        "VARCHAR DEFAULT ''",
+            "profile_years_experience": "FLOAT",
+            "profile_summary":          "TEXT DEFAULT ''",
+            "profile_extracted_at":     "TIMESTAMP",
+        }
+        with engine.begin() as conn:
+            for col_name, col_type in profile_cols.items():
+                if col_name not in existing:
+                    try:
+                        conn.execute(text(
+                            f"ALTER TABLE candidates ADD COLUMN {col_name} {col_type}"
+                        ))
+                    except Exception:
+                        pass
+
     # Heal orphaned candidate/application/event rows from the workflow bug:
     # the auto-pipeline used to create Candidate/Application/Event rows with
     # tenant_id=NULL, so the dashboard never saw them. Walk the ownership

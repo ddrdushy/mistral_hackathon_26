@@ -28,6 +28,146 @@ function skillColor(index: number): string {
   return SKILL_COLORS[index % SKILL_COLORS.length];
 }
 
+interface TalentBankSuggestion {
+  candidate_id: number;
+  name: string;
+  email: string;
+  role: string;
+  seniority: string;
+  years_experience: number | null;
+  summary: string;
+  skills: string[];
+  matched_skills: string[];
+  match_score: number;
+}
+
+interface TalentBankResponse {
+  job_id: number;
+  job_skills: string[];
+  suggestions: TalentBankSuggestion[];
+  total_profiled: number;
+  total_candidates: number;
+}
+
+function TalentBankSuggestions({ jobId }: { jobId: string }) {
+  const [data, setData] = useState<TalentBankResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await apiGet<TalentBankResponse>(
+          `/jobs/${jobId}/suggested-candidates?limit=10`,
+        );
+        if (!cancelled) setData(res);
+      } catch {
+        if (!cancelled) setData(null);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [jobId]);
+
+  if (loading) {
+    return (
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 mb-6">
+        <div className="h-5 w-48 bg-slate-200 rounded animate-pulse mb-3" />
+        <div className="space-y-2">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <div key={i} className="h-12 bg-slate-100 rounded animate-pulse" />
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (!data) return null;
+
+  const empty = data.suggestions.length === 0;
+
+  return (
+    <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 mb-6">
+      <div className="flex items-baseline justify-between mb-4">
+        <div>
+          <h2 className="text-base font-semibold text-slate-900">
+            From your talent bank
+          </h2>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Past candidates whose profile tags match this role —{" "}
+            {data.total_profiled} of {data.total_candidates} profiled
+          </p>
+        </div>
+      </div>
+
+      {empty ? (
+        <p className="text-sm text-slate-500">
+          No matching profiles yet. As resumes come in, they&apos;re tagged
+          automatically and surface here for future jobs.
+        </p>
+      ) : (
+        <ul className="divide-y divide-slate-100">
+          {data.suggestions.map((s) => (
+            <li key={s.candidate_id} className="py-3 flex items-start gap-4">
+              <div className="flex-shrink-0 w-12 text-center">
+                <div className="text-base font-bold text-indigo-600 tabular-nums">
+                  {s.match_score}
+                </div>
+                <div className="text-[10px] text-slate-400 uppercase tracking-wide">
+                  match
+                </div>
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <a
+                    href={`/candidates/${s.candidate_id}`}
+                    className="text-sm font-semibold text-slate-900 hover:text-indigo-700"
+                  >
+                    {s.name}
+                  </a>
+                  {s.role && (
+                    <span className="text-xs text-slate-500">· {s.role}</span>
+                  )}
+                  {s.seniority && s.seniority !== "unknown" && (
+                    <span className="text-[11px] uppercase tracking-wide text-slate-400">
+                      · {s.seniority}
+                    </span>
+                  )}
+                  {s.years_experience != null && s.years_experience > 0 && (
+                    <span className="text-xs text-slate-500">
+                      · {s.years_experience}y
+                    </span>
+                  )}
+                </div>
+                {s.summary && (
+                  <p className="text-xs text-slate-600 mt-1 line-clamp-2">
+                    {s.summary}
+                  </p>
+                )}
+                {s.matched_skills.length > 0 && (
+                  <div className="mt-1.5 flex flex-wrap gap-1">
+                    {s.matched_skills.slice(0, 8).map((sk) => (
+                      <span
+                        key={sk}
+                        className="text-[11px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200"
+                      >
+                        {sk}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 export default function JobDetailPage() {
   const router = useRouter();
   const params = useParams();
@@ -288,6 +428,9 @@ export default function JobDetailPage() {
           </div>
         </div>
       )}
+
+      {/* From your talent bank — past resumes that match this job */}
+      <TalentBankSuggestions jobId={jobId} />
 
       {/* AI Talent Search — source candidates without waiting for inbound applications */}
       <div className="mb-6">

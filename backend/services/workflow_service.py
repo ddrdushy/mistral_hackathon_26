@@ -14,6 +14,7 @@ from typing import Optional, List, Dict
 from sqlalchemy.orm import Session
 import os
 import uuid
+from database import SessionLocal
 from models import Email, Candidate, Job, Application, Event, InterviewLink
 from agents.email_classifier import classify_email, EmailClassifierInput
 from agents.resume_scorer import score_resume, ResumeScorerInput
@@ -384,7 +385,49 @@ def _create_candidate_from_email(em: Email, db: Session) -> Candidate:
     db.commit()
     db.refresh(candidate)
 
+    # Talent-bank: extract a structured profile so this candidate is
+    # searchable for FUTURE jobs without re-calling the LLM. Fire-and-forget
+    # so the workflow doesn't block on a second LLM call. The suggested-
+    # candidates endpoint also lazy-fills, so a missed schedule isn't fatal.
+    try:
+        import asyncio as _asyncio
+        loop = _asyncio.get_event_loop()
+        if loop.is_running():
+            loop.create_task(_async_apply_profile(candidate.id))
+    except Exception as e:
+        logger.warning("Profile extraction kickoff failed for %s: %s", candidate.id, e)
+
     return candidate
+
+
+def _apply_profile(db: Session, candidate: Candidate, prof) -> None:
+    candidate.profile_skills = json.dumps(prof.skills)
+    candidate.profile_role = prof.role
+    candidate.profile_seniority = prof.seniority
+    candidate.profile_years_experience = prof.years_experience
+    candidate.profile_summary = prof.summary
+    candidate.profile_extracted_at = datetime.utcnow()
+    db.commit()
+
+
+async def _async_apply_profile(candidate_id: int) -> None:
+    """Background fire-and-forget profile extraction for a freshly-created
+    candidate. Opens its own DB session because the caller's session likely
+    closed by the time this runs."""
+    from agents.profile_extractor import extract_profile
+    db = SessionLocal()
+    try:
+        cand = db.query(Candidate).filter(Candidate.id == candidate_id).first()
+        if not cand or cand.profile_extracted_at is not None:
+            return
+        prof = await extract_profile(cand.resume_text or "")
+        _apply_profile(db, cand, prof)
+        logger.info("Profiled candidate %s: %d skills, role=%s",
+                    candidate_id, len(prof.skills), prof.role)
+    except Exception as e:
+        logger.warning("Async profile extraction failed for %s: %s", candidate_id, e)
+    finally:
+        db.close()
 
 
 def _find_best_matching_job(jobs: List[Job], detected_role: str, resume_text: str) -> Optional[Job]:

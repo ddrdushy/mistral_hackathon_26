@@ -165,6 +165,120 @@ async def get_job(
     return _job_to_response(job, db)
 
 
+@router.get("/{job_id}/suggested-candidates")
+async def suggested_candidates(
+    job_id: int,
+    limit: int = 10,
+    extract_missing: bool = True,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(current_session),
+):
+    """Suggest candidates from the tenant's talent bank by tag overlap.
+
+    Tag-overlap scoring (no LLM): match the job's required skills against
+    each candidate's profile_skills. Uses the cached profile_extracted_at
+    column so we never re-LLM the same resume. Candidates without a profile
+    yet are extracted on-the-fly (capped to PROFILE_LAZY_CAP per call).
+    """
+    from models import Candidate
+    from agents.profile_extractor import extract_profile
+    from datetime import datetime as _dt
+    PROFILE_LAZY_CAP = 8  # ceiling on LLM calls per request
+
+    job = db.query(Job).filter(
+        Job.id == job_id,
+        Job.tenant_id == session.tenant.id,
+    ).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    job_skills = set()
+    if job.skills:
+        try:
+            job_skills = {s.strip().lower().replace(" ", "-") for s in json.loads(job.skills) if s}
+        except Exception:
+            pass
+    job_role = (job.title or "").lower()
+    job_seniority = (job.seniority or "").lower()
+
+    candidates = (
+        db.query(Candidate)
+        .filter(Candidate.tenant_id == session.tenant.id)
+        .order_by(Candidate.created_at.desc())
+        .limit(500)
+        .all()
+    )
+
+    # Lazy-fill profiles for legacy rows. Bounded so a tenant with 5000
+    # un-profiled candidates can't blow the LLM budget on one click.
+    if extract_missing:
+        missing = [c for c in candidates if not c.profile_extracted_at and (c.resume_text or "").strip()]
+        for cand in missing[:PROFILE_LAZY_CAP]:
+            try:
+                prof = await extract_profile(cand.resume_text or "")
+                cand.profile_skills = json.dumps(prof.skills)
+                cand.profile_role = prof.role
+                cand.profile_seniority = prof.seniority
+                cand.profile_years_experience = prof.years_experience
+                cand.profile_summary = prof.summary
+                cand.profile_extracted_at = _dt.utcnow()
+                db.commit()
+            except Exception:
+                db.rollback()
+
+    suggestions = []
+    for c in candidates:
+        if not c.profile_extracted_at:
+            continue
+        try:
+            cand_skills = {s for s in json.loads(c.profile_skills or "[]") if s}
+        except Exception:
+            cand_skills = set()
+        if not cand_skills:
+            continue
+
+        overlap = job_skills & cand_skills
+        # Tag overlap is the primary signal — ratio against the job's
+        # required skills means a candidate matching all 4/4 scores higher
+        # than one matching 6/12 of an unfocused job.
+        if job_skills:
+            base = (len(overlap) / len(job_skills)) * 80
+        else:
+            base = 0
+        # Role match bonus — substring either way
+        cand_role = (c.profile_role or "").lower()
+        if cand_role and job_role and (cand_role in job_role or job_role in cand_role):
+            base += 12
+        # Seniority match
+        if c.profile_seniority and job_seniority and c.profile_seniority in job_seniority:
+            base += 8
+        score = round(min(base, 100), 1)
+        if score < 5:
+            continue
+
+        suggestions.append({
+            "candidate_id": c.id,
+            "name": c.name,
+            "email": c.email,
+            "role": c.profile_role,
+            "seniority": c.profile_seniority,
+            "years_experience": c.profile_years_experience,
+            "summary": c.profile_summary,
+            "skills": sorted(cand_skills)[:12],
+            "matched_skills": sorted(overlap),
+            "match_score": score,
+        })
+
+    suggestions.sort(key=lambda x: x["match_score"], reverse=True)
+    return {
+        "job_id": job_id,
+        "job_skills": sorted(job_skills),
+        "suggestions": suggestions[:limit],
+        "total_profiled": sum(1 for c in candidates if c.profile_extracted_at),
+        "total_candidates": len(candidates),
+    }
+
+
 @router.put("/{job_id}")
 async def update_job(
     job_id: int,

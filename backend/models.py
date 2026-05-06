@@ -239,6 +239,17 @@ class Candidate(Base):
     resume_filename = Column(String, default="")
     source_email_id = Column(Integer, ForeignKey("emails.id"), nullable=True)
     notes = Column(Text, default="")
+
+    # Talent-bank profile — extracted once per resume so we can match against
+    # future jobs by tag overlap without re-calling the LLM. Nullable while
+    # extraction is pending; profile_extracted_at gates the suggested-
+    # candidates endpoint (only profiled rows are searchable).
+    profile_skills = Column(Text, default="")           # JSON array of strings
+    profile_role = Column(String, default="")           # primary role title
+    profile_seniority = Column(String, default="")      # junior/mid/senior/lead
+    profile_years_experience = Column(Float, nullable=True)
+    profile_summary = Column(Text, default="")
+    profile_extracted_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
