@@ -86,17 +86,28 @@ def fetch_imap_emails(
 
         body = ""
         attachments = []
+        # Cap attachment payload at 8 MB raw (~11 MB base64). Larger files
+        # are rare for resumes and would bloat the emails.attachments column.
+        ATTACHMENT_MAX_BYTES = 8 * 1024 * 1024
         if msg.is_multipart():
             for part in msg.walk():
                 content_type = part.get_content_type()
                 disposition = str(part.get("Content-Disposition", ""))
                 if "attachment" in disposition:
                     filename = part.get_filename() or "unknown"
-                    attachments.append({
+                    raw = part.get_payload(decode=True) or b""
+                    entry = {
                         "filename": filename,
                         "content_type": content_type,
-                        "size": len(part.get_payload(decode=True) or b""),
-                    })
+                        "size": len(raw),
+                    }
+                    # Persist the bytes so _create_candidate_from_email can
+                    # actually extract resume text. Without this every CV
+                    # falls back to the email body and scores 0.
+                    if raw and len(raw) <= ATTACHMENT_MAX_BYTES:
+                        import base64 as _b64
+                        entry["content_b64"] = _b64.b64encode(raw).decode("ascii")
+                    attachments.append(entry)
                 elif content_type == "text/plain":
                     payload = part.get_payload(decode=True)
                     if payload:
@@ -130,11 +141,28 @@ def fetch_imap_emails(
 
 
 def sync_imap_emails(db: Session, emails_data: List[dict]) -> List[Email]:
-    """Store fetched IMAP emails into the database."""
+    """Store fetched IMAP emails into the database.
+
+    For pre-existing rows whose attachments lack `content_b64` (from the older
+    fetcher that didn't persist bytes), refresh the attachments column so
+    downstream resume extraction can run. Only rewrites when at least one
+    attachment in the new payload has bytes — never wipes good data.
+    """
     created = []
     for data in emails_data:
         existing = db.query(Email).filter(Email.message_id == data.get("message_id")).first()
         if existing:
+            new_atts = data.get("attachments", []) or []
+            new_has_bytes = any(a.get("content_b64") for a in new_atts)
+            if new_has_bytes:
+                try:
+                    cur_atts = json.loads(existing.attachments) if existing.attachments else []
+                except Exception:
+                    cur_atts = []
+                cur_has_bytes = any(a.get("content_b64") for a in cur_atts)
+                if not cur_has_bytes:
+                    existing.attachments = json.dumps(new_atts)
+                    db.commit()
             continue
 
         email_obj = Email(

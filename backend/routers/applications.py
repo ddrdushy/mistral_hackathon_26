@@ -325,6 +325,104 @@ async def update_stage(
     return _app_to_response(app, db)
 
 
+@router.post("/{app_id}/rescore")
+async def rescore_application(
+    app_id: int,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(current_session),
+):
+    """Re-extract resume text from the source email and re-run the scorer.
+
+    Use this on applications that scored 0/100 because the email arrived
+    before the IMAP fetcher persisted attachment bytes. Pulls fresh resume
+    text out of the (now refreshed) email attachments and writes a new
+    resume_score / recommendation.
+    """
+    check_llm_budget()
+    app = db.query(Application).filter(
+        Application.id == app_id,
+        Application.tenant_id == session.tenant.id,
+    ).first()
+    if not app:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    candidate = db.query(Candidate).filter(Candidate.id == app.candidate_id).first()
+    job = db.query(Job).filter(Job.id == app.job_id).first()
+    if not candidate or not job:
+        raise HTTPException(status_code=404, detail="Candidate or job missing")
+
+    # Re-extract resume text from the source email's attachments. The IMAP
+    # listener's next sync should have refreshed content_b64 — if it hasn't,
+    # we fall back to whatever resume_text already exists on the candidate.
+    from models import Email
+    em = db.query(Email).filter(Email.id == candidate.source_email_id).first()
+    if em:
+        atts = json.loads(em.attachments) if em.attachments else []
+        for att in atts:
+            content_b64 = att.get("content_b64", "")
+            filename = att.get("filename", "")
+            if content_b64 and filename.lower().endswith(('.pdf', '.docx', '.doc', '.txt', '.tex')):
+                try:
+                    import base64
+                    from services.resume_service import extract_resume_text
+                    file_bytes = base64.b64decode(content_b64)
+                    new_text = extract_resume_text(filename, file_bytes=file_bytes)
+                    if new_text and new_text.strip():
+                        candidate.resume_text = new_text
+                        candidate.resume_filename = filename
+                        db.commit()
+                        break
+                except Exception:
+                    pass
+
+    if not candidate.resume_text or not candidate.resume_text.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="No resume text available — wait for the next mailbox sync to refresh attachments, then try again",
+        )
+
+    skills = json.loads(job.skills) if job.skills else []
+    responsibilities = json.loads(job.responsibilities) if job.responsibilities else []
+    scorer_input = ResumeScorerInput(
+        resume_text=candidate.resume_text,
+        job_id=job.job_id,
+        job_title=job.title,
+        job_description=job.description,
+        must_have_skills=skills,
+        nice_to_have_skills=[],
+        seniority=job.seniority,
+        responsibilities=responsibilities,
+    )
+    score_result = await score_resume(scorer_input)
+
+    app.resume_score = score_result.score
+    app.resume_score_json = json.dumps({
+        "score": score_result.score,
+        "evidence": score_result.evidence,
+        "gaps": score_result.gaps,
+        "risks": score_result.risks,
+        "recommendation": score_result.recommendation,
+        "screening_questions": score_result.screening_questions,
+        "summary": score_result.summary,
+    })
+    app.recommendation = score_result.recommendation
+    app.ai_snippets = json.dumps({
+        "why_shortlisted": score_result.why_shortlisted,
+        "key_strengths": score_result.key_strengths,
+        "main_gaps": score_result.main_gaps,
+        "interview_focus": score_result.interview_focus,
+    })
+    app.updated_at = datetime.utcnow()
+    _log_event(
+        db, app.id, "rescored",
+        {"resume_score": score_result.score, "recommendation": score_result.recommendation},
+        tenant_id=session.tenant.id,
+    )
+    db.commit()
+    db.refresh(app)
+    return _app_to_response(app, db)
+
+
 @router.patch("/{app_id}/notes")
 async def update_application_notes(
     app_id: int,
