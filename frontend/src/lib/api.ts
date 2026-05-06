@@ -1,4 +1,6 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://dushy2009-hireops-ai.hf.space/api/v1";
+// Default to same-origin /api/v1 so a build with a missing NEXT_PUBLIC_API_URL
+// hits its own backend (via the reverse proxy) instead of an unrelated host.
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "/api/v1";
 
 interface ApiOptions {
   method?: string;

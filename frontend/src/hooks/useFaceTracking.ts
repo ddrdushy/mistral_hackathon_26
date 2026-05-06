@@ -14,7 +14,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
  */
 
 const API_BASE =
-  process.env.NEXT_PUBLIC_API_URL || "https://dushy2009-hireops-ai.hf.space/api/v1";
+  process.env.NEXT_PUBLIC_API_URL || "/api/v1";
 
 type FaceDetector = {
   detectForVideo: (

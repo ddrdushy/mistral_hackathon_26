@@ -10,7 +10,7 @@ import type {
 import { useFaceTracking } from "@/hooks/useFaceTracking";
 
 const API_BASE =
-  process.env.NEXT_PUBLIC_API_URL || "https://dushy2009-hireops-ai.hf.space/api/v1";
+  process.env.NEXT_PUBLIC_API_URL || "/api/v1";
 
 const ROUND_LABELS: Record<QaRound, string> = {
   aptitude: "Aptitude",
