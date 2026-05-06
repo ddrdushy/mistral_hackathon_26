@@ -233,29 +233,33 @@ def clear_demo(db: Session, tenant: Tenant) -> dict:
     from models import InterviewLink, QaSession
 
     demo_job_ids = [
-        j.id for (j,) in db.query(Job).filter(
+        jid for (jid,) in db.query(Job.id).filter(
             Job.tenant_id == tenant.id,
             Job.description.like(f"{DEMO_MARKER}%"),
-        ).with_entities(Job).all()
+        ).all()
     ]
     seed_candidate_ids = [
-        c.id for (c,) in db.query(Candidate).filter(
+        cid for (cid,) in db.query(Candidate.id).filter(
             Candidate.tenant_id == tenant.id,
             Candidate.source_email_id.is_(None),
-        ).with_entities(Candidate).all()
+        ).all()
     ]
 
     # Every application that touches demo data — by job OR by candidate.
-    app_ids = [
-        a.id for (a,) in db.query(Application).filter(
-            Application.tenant_id == tenant.id,
-            (
-                Application.job_id.in_(demo_job_ids) if demo_job_ids else False
-            ) | (
-                Application.candidate_id.in_(seed_candidate_ids) if seed_candidate_ids else False
-            ),
-        ).with_entities(Application).all()
-    ] if (demo_job_ids or seed_candidate_ids) else []
+    app_ids: list[int] = []
+    if demo_job_ids or seed_candidate_ids:
+        from sqlalchemy import or_
+        clauses = []
+        if demo_job_ids:
+            clauses.append(Application.job_id.in_(demo_job_ids))
+        if seed_candidate_ids:
+            clauses.append(Application.candidate_id.in_(seed_candidate_ids))
+        app_ids = [
+            aid for (aid,) in db.query(Application.id).filter(
+                Application.tenant_id == tenant.id,
+                or_(*clauses),
+            ).all()
+        ]
 
     if not (demo_job_ids or seed_candidate_ids or app_ids):
         return {"cleared": False, "reason": "no demo data"}
