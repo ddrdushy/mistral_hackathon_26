@@ -205,6 +205,20 @@ async def delete_job(
     ).first()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
+
+    # Cascade by hand: the FKs from applications/interview_links/events/
+    # qa_sessions to jobs aren't declared with ON DELETE CASCADE, so a plain
+    # delete blows up with NOT NULL on applications.job_id. Walk the tree.
+    from models import InterviewLink, QaSession, Event
+    app_ids = [
+        aid for (aid,) in db.query(Application.id).filter(Application.job_id == job.id).all()
+    ]
+    if app_ids:
+        db.query(QaSession).filter(QaSession.app_id.in_(app_ids)).delete(synchronize_session=False)
+        db.query(InterviewLink).filter(InterviewLink.app_id.in_(app_ids)).delete(synchronize_session=False)
+        db.query(Event).filter(Event.app_id.in_(app_ids)).delete(synchronize_session=False)
+        db.query(Application).filter(Application.id.in_(app_ids)).delete(synchronize_session=False)
+
     db.delete(job)
     db.commit()
-    return {"status": "deleted"}
+    return {"status": "deleted", "applications_removed": len(app_ids)}
