@@ -29,6 +29,7 @@ services:
       - ./backend/.env
     environment:
       DATABASE_URL: postgresql://hireops:hireops_secret@db:5432/hireops
+      FRONTEND_URL: http://localhost:3000
     depends_on:
       db:
         condition: service_healthy

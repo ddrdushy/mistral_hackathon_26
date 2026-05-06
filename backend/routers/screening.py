@@ -207,7 +207,7 @@ async def generate_interview_link(
     db.commit()
     db.refresh(link)
 
-    base_url = os.getenv("FRONTEND_URL", "https://dushy2009-hireops-ai.hf.space")
+    base_url = os.getenv("FRONTEND_URL", "").rstrip("/")
     interview_url = f"{base_url}/interview/{token}"
 
     return InterviewLinkResponse(
@@ -242,7 +242,7 @@ async def send_interview_link(body: dict, db: Session = Depends(get_db), session
     if not candidate or not candidate.email:
         raise HTTPException(status_code=400, detail="Candidate email not found")
 
-    base_url = os.getenv("FRONTEND_URL", "https://dushy2009-hireops-ai.hf.space")
+    base_url = os.getenv("FRONTEND_URL", "").rstrip("/")
     interview_url = f"{base_url}/interview/{token}"
     company = os.getenv("COMPANY_NAME", "HireOps AI")
 
@@ -359,7 +359,7 @@ async def book_interview_slot(app_id: int, body: dict, db: Session = Depends(get
         raise HTTPException(status_code=400, detail="Candidate email not found")
 
     company = os.getenv("COMPANY_NAME", "HireOps AI")
-    base_url = os.getenv("FRONTEND_URL", "https://dushy2009-hireops-ai.hf.space")
+    base_url = os.getenv("FRONTEND_URL", "").rstrip("/")
     job_title = job.title if job else "Open Position"
 
     # ── 1. Parse slot text → datetime ──
@@ -655,7 +655,7 @@ async def get_application_links(app_id: int, db: Session = Depends(get_db), sess
         InterviewLink.app_id == app_id
     ).order_by(InterviewLink.created_at.desc()).all()
 
-    base_url = os.getenv("FRONTEND_URL", "https://dushy2009-hireops-ai.hf.space")
+    base_url = os.getenv("FRONTEND_URL", "").rstrip("/")
 
     return {
         "links": [
@@ -1204,7 +1204,7 @@ async def get_screening_status(app_id: int, db: Session = Depends(get_db), sessi
         InterviewLink.app_id == app_id
     ).order_by(InterviewLink.created_at.desc()).first()
 
-    base_url = os.getenv("FRONTEND_URL", "https://dushy2009-hireops-ai.hf.space")
+    base_url = os.getenv("FRONTEND_URL", "").rstrip("/")
 
     return {
         "app_id": app.id,
