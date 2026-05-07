@@ -116,12 +116,6 @@ function CandidatesTracker() {
   const [loading, setLoading] = useState(true);
   const [jobsLoading, setJobsLoading] = useState(true);
 
-  // ── View mode: Applications (default) vs Talent Bank ─────────────────
-  const [viewMode, setViewMode] = useState<"applications" | "talent_bank">(
-    "applications",
-  );
-  const [talentBankRefresh, setTalentBankRefresh] = useState(0);
-
   // ── Upload CV dialog state ──────────────────────────────────────────────
   const [uploadOpen, setUploadOpen] = useState(false);
 
@@ -404,36 +398,8 @@ function CandidatesTracker() {
         onUploaded={() => {
           setUploadOpen(false);
           fetchApplications();
-          setTalentBankRefresh((n) => n + 1);
         }}
       />
-
-      {/* ── View toggle: Applications vs Talent Bank ──────────────────── */}
-      <div className="flex items-center gap-2 border-b border-slate-200">
-        {([
-          { id: "applications", label: "Applications" },
-          { id: "talent_bank", label: "Talent Bank" },
-        ] as const).map((tab) => (
-          <button
-            key={tab.id}
-            type="button"
-            onClick={() => setViewMode(tab.id)}
-            className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
-              viewMode === tab.id
-                ? "border-indigo-600 text-indigo-700"
-                : "border-transparent text-slate-500 hover:text-slate-700"
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
-
-      {viewMode === "talent_bank" ? (
-        <TalentBankList refreshKey={talentBankRefresh} />
-      ) : null}
-
-      {viewMode === "applications" && (<>
 
       {/* ── Filter Bar ──────────────────────────────────────────────────── */}
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
@@ -831,8 +797,6 @@ function CandidatesTracker() {
         )}
       </div>
 
-      </>)}
-
       {/* ── Match Candidate Dialog ─────────────────────────────────────── */}
       {matchOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -988,182 +952,6 @@ function generatePageNumbers(
   return pages;
 }
 
-interface TalentBankCandidate {
-  id: number;
-  name: string;
-  email: string;
-  phone: string;
-  resume_filename: string;
-  application_count: number;
-  profile?: {
-    role?: string;
-    seniority?: string;
-    years_experience?: number | null;
-    summary?: string;
-    skills?: string[];
-    key_points?: string[];
-    extracted_at?: string | null;
-  };
-  created_at?: string | null;
-}
-
-function TalentBankList({ refreshKey }: { refreshKey: number }) {
-  const [items, setItems] = useState<TalentBankCandidate[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState("");
-  const [showOnlyUnassigned, setShowOnlyUnassigned] = useState(false);
-
-  const fetchData = useCallback(async () => {
-    try {
-      setLoading(true);
-      const params: Record<string, string> = { per_page: "50" };
-      if (search.trim()) params.search = search.trim();
-      if (showOnlyUnassigned) params.talent_bank_only = "true";
-      const res = await apiGet<{ candidates: TalentBankCandidate[] }>(
-        "/candidates",
-        params,
-      );
-      setItems(res.candidates ?? []);
-    } catch {
-      setItems([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [search, showOnlyUnassigned]);
-
-  useEffect(() => {
-    fetchData();
-  }, [fetchData, refreshKey]);
-
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-3 bg-white rounded-xl border border-slate-200 p-3">
-        <div className="relative flex-1 max-w-md">
-          <MagnifyingGlassIcon className="absolute left-2.5 top-2.5 h-4 w-4 text-slate-400" />
-          <input
-            type="search"
-            placeholder="Search name, email, role..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="w-full pl-8 pr-3 py-2 text-sm border border-slate-300 rounded-md focus:outline-none focus:ring-1 focus:ring-indigo-500"
-          />
-        </div>
-        <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
-          <input
-            type="checkbox"
-            checked={showOnlyUnassigned}
-            onChange={(e) => setShowOnlyUnassigned(e.target.checked)}
-            className="rounded border-slate-300"
-          />
-          Unassigned only
-        </label>
-      </div>
-
-      {loading ? (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <div
-              key={i}
-              className="h-32 bg-white border border-slate-200 rounded-xl animate-pulse"
-            />
-          ))}
-        </div>
-      ) : items.length === 0 ? (
-        <div className="bg-white border border-slate-200 rounded-xl p-8 text-center">
-          <p className="text-sm text-slate-500">
-            No candidates yet. Upload CVs above to seed your talent bank.
-          </p>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-          {items.map((c) => (
-            <div
-              key={c.id}
-              className="bg-white border border-slate-200 rounded-xl p-4 hover:border-indigo-300 hover:shadow-sm transition"
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="text-sm font-semibold text-slate-900 truncate">
-                    {c.name}
-                  </div>
-                  <div className="text-xs text-slate-500 truncate">
-                    {c.email}
-                    {c.profile?.role && ` · ${c.profile.role}`}
-                    {c.profile?.seniority &&
-                      c.profile.seniority !== "unknown" &&
-                      ` · ${c.profile.seniority}`}
-                    {c.profile?.years_experience != null &&
-                      c.profile.years_experience > 0 &&
-                      ` · ${c.profile.years_experience}y`}
-                  </div>
-                </div>
-                <div className="flex-shrink-0">
-                  {c.application_count > 0 ? (
-                    <span className="text-[11px] px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
-                      {c.application_count} application
-                      {c.application_count === 1 ? "" : "s"}
-                    </span>
-                  ) : (
-                    <span className="text-[11px] px-2 py-0.5 rounded bg-slate-50 text-slate-600 border border-slate-200">
-                      Talent bank
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              {c.profile?.summary && (
-                <p className="text-xs text-slate-600 mt-2 leading-snug line-clamp-2">
-                  {c.profile.summary}
-                </p>
-              )}
-
-              {c.profile?.key_points && c.profile.key_points.length > 0 && (
-                <ul className="mt-2 space-y-0.5 text-xs text-slate-600">
-                  {c.profile.key_points.slice(0, 3).map((kp, i) => (
-                    <li key={i} className="flex gap-1.5">
-                      <span className="text-emerald-600 flex-shrink-0">·</span>
-                      <span className="line-clamp-1">{kp}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-
-              {c.profile?.skills && c.profile.skills.length > 0 && (
-                <div className="mt-2.5 flex flex-wrap gap-1">
-                  {c.profile.skills.slice(0, 6).map((sk) => (
-                    <span
-                      key={sk}
-                      className="text-[11px] px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200"
-                    >
-                      {sk}
-                    </span>
-                  ))}
-                </div>
-              )}
-
-              {!c.profile?.extracted_at && (
-                <p className="text-[11px] text-amber-700 mt-2">
-                  Profile pending — will appear after the next sync.
-                </p>
-              )}
-
-              <div className="mt-3 flex items-center gap-2 text-[11px] text-slate-500">
-                {c.resume_filename && (
-                  <span className="truncate">{c.resume_filename}</span>
-                )}
-                {c.created_at && (
-                  <span className="ml-auto flex-shrink-0">
-                    {timeAgo(c.created_at)}
-                  </span>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
 
 interface UploadedSummary {
   candidate: {

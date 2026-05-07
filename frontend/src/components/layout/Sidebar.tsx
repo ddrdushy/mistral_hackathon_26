@@ -11,6 +11,7 @@ import {
   Cog6ToothIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
+  BookmarkSquareIcon,
 } from "@heroicons/react/24/outline";
 
 interface NavItem {
@@ -24,6 +25,7 @@ const navItems: NavItem[] = [
   { label: "Inbox", href: "/inbox", icon: InboxIcon },
   { label: "Jobs", href: "/jobs", icon: BriefcaseIcon },
   { label: "Candidates", href: "/candidates", icon: UsersIcon },
+  { label: "Talent Bank", href: "/talent-bank", icon: BookmarkSquareIcon },
   { label: "Reports", href: "/reports", icon: ChartBarIcon },
   { label: "Settings", href: "/settings", icon: Cog6ToothIcon },
 ];
