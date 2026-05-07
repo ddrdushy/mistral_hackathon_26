@@ -645,7 +645,7 @@ async def candidate_timeline(
         interview link generated/sent, …)
       - interview activity (interview_links opens / completes)
     """
-    from models import Application, Event, InterviewLink
+    from models import Application, Event, InterviewLink, Communication
 
     c = db.query(Candidate).filter(
         Candidate.id == candidate_id,
@@ -755,6 +755,38 @@ async def candidate_timeline(
                     "label": "Interview completed",
                     "meta": {"token": l.token},
                 })
+
+    # Communications (email / WhatsApp / voice) — outbound touchpoints
+    comms = db.query(Communication).filter(
+        Communication.tenant_id == session.tenant.id,
+        Communication.candidate_id == candidate_id,
+    ).all()
+    for cm in comms:
+        channel_label = {
+            "email": "Email", "whatsapp": "WhatsApp", "voice": "Call",
+        }.get(cm.channel, cm.channel.title())
+        if cm.status == "failed":
+            label = f"{channel_label} failed: {cm.error[:80] if cm.error else 'unknown error'}"
+        elif cm.direction == "inbound":
+            label = f"{channel_label} received from candidate"
+        else:
+            preview = (cm.body or "").replace("\n", " ").strip()
+            if len(preview) > 80:
+                preview = preview[:77] + "..."
+            label = f"{channel_label} sent · {preview}"
+        items.append({
+            "type": f"comm_{cm.channel}",
+            "at": cm.sent_at.isoformat() if cm.sent_at else None,
+            "label": label,
+            "meta": {
+                "communication_id": cm.id,
+                "channel": cm.channel,
+                "status": cm.status,
+                "direction": cm.direction,
+                "body": cm.body[:500] if cm.body else "",
+                "to": cm.to_address,
+            },
+        })
 
     # Sort: chronological (oldest first). Treat None timestamps as oldest.
     items.sort(key=lambda x: x.get("at") or "")

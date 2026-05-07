@@ -1627,6 +1627,16 @@ export default function CandidateDetailPage({
           )}
 
 
+          {/* ── Send WhatsApp ──────────────────────────────────────────────── */}
+          {app?.candidate_id && (
+            <SendWhatsAppCard
+              candidateId={app.candidate_id}
+              candidateName={app.candidate_name}
+              candidatePhone={app.candidate_phone}
+              onSent={fetchApplication}
+            />
+          )}
+
           {/* ── History timeline + CV versions ─────────────────────────────── */}
           {app?.candidate_id && (
             <CandidateHistoryCards candidateId={app.candidate_id} />
@@ -1866,6 +1876,94 @@ function HeroStat({
       </p>
       {sub && <p className="text-[10px] text-slate-500">{sub}</p>}
     </div>
+  );
+}
+
+function SendWhatsAppCard({
+  candidateId,
+  candidateName,
+  candidatePhone,
+  onSent,
+}: {
+  candidateId: number;
+  candidateName: string;
+  candidatePhone: string | null;
+  onSent: () => void;
+}) {
+  const [body, setBody] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<{ tone: "ok" | "err"; msg: string } | null>(null);
+
+  const phoneOk = (candidatePhone ?? "").trim().length > 0;
+
+  const send = async () => {
+    if (!body.trim()) return;
+    try {
+      setBusy(true);
+      setResult(null);
+      await apiPost("/communications/whatsapp", {
+        candidate_id: candidateId,
+        body: body.trim(),
+      });
+      setBody("");
+      setResult({ tone: "ok", msg: `WhatsApp sent to ${candidatePhone}` });
+      onSent();
+    } catch (err) {
+      setResult({
+        tone: "err",
+        msg: err instanceof Error ? err.message : "Send failed",
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card title="Send WhatsApp">
+      {!phoneOk ? (
+        <p className="text-sm text-slate-500">
+          Add a phone number to {candidateName}&apos;s record before sending
+          WhatsApp.
+        </p>
+      ) : (
+        <div className="space-y-3">
+          <div className="text-xs text-slate-500">
+            To: <span className="font-mono text-slate-700">{candidatePhone}</span>
+          </div>
+          <textarea
+            value={body}
+            onChange={(e) => setBody(e.target.value)}
+            placeholder={`Hi ${candidateName.split(" ")[0]}, ...`}
+            rows={4}
+            maxLength={1600}
+            className="w-full px-3 py-2 text-sm border border-slate-300 rounded-md focus:outline-none focus:ring-1 focus:ring-indigo-500 resize-y"
+          />
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-xs text-slate-400">
+              {body.length} / 1600
+            </span>
+            <button
+              onClick={send}
+              disabled={busy || !body.trim()}
+              className="px-3 py-1.5 text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-700 rounded-md disabled:opacity-50"
+            >
+              {busy ? "Sending..." : "Send WhatsApp"}
+            </button>
+          </div>
+          {result && (
+            <p
+              className={`text-xs rounded-md px-3 py-2 ${
+                result.tone === "ok"
+                  ? "bg-emerald-50 text-emerald-800 border border-emerald-200"
+                  : "bg-rose-50 text-rose-800 border border-rose-200"
+              }`}
+            >
+              {result.msg}
+            </p>
+          )}
+        </div>
+      )}
+    </Card>
   );
 }
 

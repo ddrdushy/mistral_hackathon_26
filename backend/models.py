@@ -264,6 +264,60 @@ class Candidate(Base):
     )
 
 
+class TenantIntegration(Base):
+    """Per-tenant integration credentials (Twilio, Slack, etc.).
+
+    config_json holds public/non-secret config (account SID, from-number);
+    secret_encrypted holds anything that must stay encrypted at rest
+    (auth token, OAuth refresh token). Both are tenant-scoped — multi-
+    tenant isolation lives at the DB layer.
+    """
+    __tablename__ = "tenant_integrations"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
+    provider = Column(String, nullable=False)  # twilio | slack | ...
+    enabled = Column(Boolean, default=True, nullable=False)
+    config_json = Column(Text, default="{}")
+    secret_encrypted = Column(Text, default="")
+    last_error = Column(Text, default="")
+    last_used_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "provider", name="uq_tenant_integrations_tenant_provider"),
+    )
+
+
+class Communication(Base):
+    """One row per outbound (or inbound) message to a candidate.
+
+    Channel-agnostic so email, WhatsApp, and voice calls all live in the
+    same audit log. Surfaces in the candidate timeline so HR can see a
+    single chronological view of every touchpoint."""
+    __tablename__ = "communications"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
+    candidate_id = Column(Integer, ForeignKey("candidates.id"), nullable=True, index=True)
+    app_id = Column(Integer, ForeignKey("applications.id"), nullable=True, index=True)
+
+    channel = Column(String, nullable=False)              # email | whatsapp | voice
+    direction = Column(String, default="outbound")        # outbound | inbound
+    status = Column(String, default="pending")            # pending | sent | delivered | failed | read
+    to_address = Column(String, default="")
+    from_address = Column(String, default="")
+    subject = Column(String, default="")
+    body = Column(Text, default="")
+    metadata_json = Column(Text, default="{}")            # provider message id, etc.
+    error = Column(Text, default="")
+
+    sent_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    sent_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    delivered_at = Column(DateTime, nullable=True)
+
+
 class CandidateCvVersion(Base):
     """Archive of a candidate's prior CV every time it's replaced.
 

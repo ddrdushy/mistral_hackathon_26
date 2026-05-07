@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { apiGet, apiPost } from "@/lib/api";
+import { apiGet, apiPost, apiPut, apiDelete } from "@/lib/api";
 import { useAuth } from "@/components/auth/AuthGate";
 import JobBoardIntegrations from "@/components/talent/JobBoardIntegrations";
 
@@ -190,6 +190,9 @@ export default function TenantSettingsPage() {
         </div>
       </div>
 
+      {/* ── Twilio integration (per-tenant WhatsApp / SMS) ────────────── */}
+      <TwilioIntegrationPanel />
+
       {/* ── Demo data cleanup ─────────────────────────────────────────── */}
       <DemoDataPanel />
 
@@ -272,6 +275,297 @@ export default function TenantSettingsPage() {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+interface TwilioIntegration {
+  id: number;
+  provider: string;
+  enabled: boolean;
+  account_sid: string;
+  whatsapp_from: string;
+  sms_from: string;
+  auth_token_set: boolean;
+  last_error: string;
+  last_used_at: string | null;
+}
+
+function TwilioIntegrationPanel() {
+  const [data, setData] = useState<TwilioIntegration | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [accountSid, setAccountSid] = useState("");
+  const [authToken, setAuthToken] = useState("");
+  const [whatsappFrom, setWhatsappFrom] = useState("");
+  const [smsFrom, setSmsFrom] = useState("");
+  const [enabled, setEnabled] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [testTo, setTestTo] = useState("");
+  const [result, setResult] = useState<{ tone: "ok" | "err"; msg: string } | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      setLoading(true);
+      const res = await apiGet<{ integration: TwilioIntegration | null }>(
+        "/integrations/twilio",
+      );
+      const i = res.integration;
+      setData(i);
+      if (i) {
+        setAccountSid(i.account_sid || "");
+        setWhatsappFrom(i.whatsapp_from || "");
+        setSmsFrom(i.sms_from || "");
+        setEnabled(i.enabled);
+      }
+    } catch {
+      setData(null);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const save = async () => {
+    if (!accountSid.trim()) {
+      setResult({ tone: "err", msg: "Account SID is required" });
+      return;
+    }
+    if (!data && !authToken.trim()) {
+      setResult({ tone: "err", msg: "Auth token required for first save" });
+      return;
+    }
+    try {
+      setBusy(true);
+      setResult(null);
+      const body: Record<string, unknown> = {
+        account_sid: accountSid.trim(),
+        whatsapp_from: whatsappFrom.trim(),
+        sms_from: smsFrom.trim(),
+        enabled,
+      };
+      if (authToken.trim()) body.auth_token = authToken.trim();
+      const res = await apiPut<{ integration: TwilioIntegration }>(
+        "/integrations/twilio",
+        body,
+      );
+      setData(res.integration);
+      setAuthToken("");
+      setResult({ tone: "ok", msg: "Saved." });
+    } catch (err) {
+      setResult({
+        tone: "err",
+        msg: err instanceof Error ? err.message : "Save failed",
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const test = async () => {
+    if (!testTo.trim()) {
+      setResult({ tone: "err", msg: "Enter a WhatsApp number to test" });
+      return;
+    }
+    try {
+      setBusy(true);
+      setResult(null);
+      await apiPost("/integrations/twilio/test", { to: testTo.trim() });
+      setResult({ tone: "ok", msg: `Test message sent to ${testTo}` });
+      load();
+    } catch (err) {
+      setResult({
+        tone: "err",
+        msg: err instanceof Error ? err.message : "Test failed",
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async () => {
+    if (!confirm("Remove the Twilio integration? Outbound WhatsApp will stop until reconfigured.")) return;
+    try {
+      setBusy(true);
+      setResult(null);
+      await apiDelete("/integrations/twilio");
+      setData(null);
+      setAccountSid("");
+      setAuthToken("");
+      setWhatsappFrom("");
+      setSmsFrom("");
+      setResult({ tone: "ok", msg: "Removed." });
+    } catch (err) {
+      setResult({
+        tone: "err",
+        msg: err instanceof Error ? err.message : "Remove failed",
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-5 mb-6">
+      <div className="flex items-start justify-between gap-4 mb-4">
+        <div>
+          <h2 className="text-base font-semibold text-slate-900 flex items-center gap-2">
+            Twilio
+            {data && (
+              <span
+                className={`text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full ${
+                  data.enabled
+                    ? "bg-emerald-100 text-emerald-700"
+                    : "bg-slate-100 text-slate-600"
+                }`}
+              >
+                {data.enabled ? "Connected" : "Disabled"}
+              </span>
+            )}
+          </h2>
+          <p className="text-xs text-slate-500 mt-1 max-w-xl">
+            Per-tenant WhatsApp + SMS. Auth token is encrypted at rest. Used
+            for sending interview links, candidate confirmations, and
+            availability checks.
+          </p>
+        </div>
+        {data && (
+          <button
+            onClick={remove}
+            disabled={busy}
+            className="text-xs font-medium text-rose-700 hover:text-rose-900"
+          >
+            Remove
+          </button>
+        )}
+      </div>
+
+      {loading ? (
+        <div className="h-24 bg-slate-100 rounded-md animate-pulse" />
+      ) : (
+        <>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+            <div>
+              <label className="block text-xs font-medium text-slate-600 uppercase tracking-wider mb-1.5">
+                Account SID
+              </label>
+              <input
+                type="text"
+                value={accountSid}
+                onChange={(e) => setAccountSid(e.target.value)}
+                placeholder="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                className="w-full px-3 py-2 text-sm font-mono border border-slate-300 rounded-md focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-600 uppercase tracking-wider mb-1.5">
+                Auth Token{" "}
+                {data?.auth_token_set && (
+                  <span className="text-slate-400 normal-case">(stored — leave blank to keep)</span>
+                )}
+              </label>
+              <input
+                type="password"
+                value={authToken}
+                onChange={(e) => setAuthToken(e.target.value)}
+                placeholder={
+                  data?.auth_token_set ? "•••••••••••••••• (saved)" : "Your Twilio auth token"
+                }
+                className="w-full px-3 py-2 text-sm font-mono border border-slate-300 rounded-md focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-600 uppercase tracking-wider mb-1.5">
+                WhatsApp from{" "}
+                <span className="text-slate-400 normal-case">(E.164, e.g. +14155551234)</span>
+              </label>
+              <input
+                type="text"
+                value={whatsappFrom}
+                onChange={(e) => setWhatsappFrom(e.target.value)}
+                placeholder="+14155551234"
+                className="w-full px-3 py-2 text-sm font-mono border border-slate-300 rounded-md focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-600 uppercase tracking-wider mb-1.5">
+                SMS from{" "}
+                <span className="text-slate-400 normal-case">(optional)</span>
+              </label>
+              <input
+                type="text"
+                value={smsFrom}
+                onChange={(e) => setSmsFrom(e.target.value)}
+                placeholder="+14155551234"
+                className="w-full px-3 py-2 text-sm font-mono border border-slate-300 rounded-md focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              />
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3 mb-3">
+            <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+              <input
+                type="checkbox"
+                checked={enabled}
+                onChange={(e) => setEnabled(e.target.checked)}
+                className="rounded border-slate-300"
+              />
+              Enabled
+            </label>
+            <button
+              onClick={save}
+              disabled={busy}
+              className="px-3 py-1.5 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-md disabled:opacity-50"
+            >
+              {busy ? "Saving..." : data ? "Update" : "Connect Twilio"}
+            </button>
+          </div>
+
+          {data?.auth_token_set && (
+            <div className="border-t border-slate-100 pt-3 mt-3 flex items-end gap-3">
+              <div className="flex-1">
+                <label className="block text-xs font-medium text-slate-600 uppercase tracking-wider mb-1.5">
+                  Send a test WhatsApp
+                </label>
+                <input
+                  type="text"
+                  value={testTo}
+                  onChange={(e) => setTestTo(e.target.value)}
+                  placeholder="+14155551234 (the recipient)"
+                  className="w-full px-3 py-2 text-sm font-mono border border-slate-300 rounded-md focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                />
+              </div>
+              <button
+                onClick={test}
+                disabled={busy || !testTo.trim()}
+                className="px-3 py-1.5 text-sm font-medium text-slate-700 border border-slate-300 hover:bg-slate-50 rounded-md disabled:opacity-50"
+              >
+                Send test
+              </button>
+            </div>
+          )}
+
+          {result && (
+            <p
+              className={`mt-3 text-sm rounded-md px-3 py-2 ${
+                result.tone === "ok"
+                  ? "bg-emerald-50 text-emerald-800 border border-emerald-200"
+                  : "bg-rose-50 text-rose-800 border border-rose-200"
+              }`}
+            >
+              {result.msg}
+            </p>
+          )}
+
+          {data?.last_error && (
+            <p className="mt-3 text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-md px-3 py-2">
+              Last error: {data.last_error}
+            </p>
+          )}
+        </>
+      )}
     </div>
   );
 }
