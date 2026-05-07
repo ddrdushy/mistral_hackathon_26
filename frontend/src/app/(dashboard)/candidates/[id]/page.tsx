@@ -1627,6 +1627,11 @@ export default function CandidateDetailPage({
           )}
 
 
+          {/* ── History timeline + CV versions ─────────────────────────────── */}
+          {app?.candidate_id && (
+            <CandidateHistoryCards candidateId={app.candidate_id} />
+          )}
+
           {/* ── Next Actions Card ───────────────────────────────────────────── */}
           <Card title="Actions">
             <div className="flex flex-col gap-2">
@@ -1861,6 +1866,168 @@ function HeroStat({
       </p>
       {sub && <p className="text-[10px] text-slate-500">{sub}</p>}
     </div>
+  );
+}
+
+interface TimelineItem {
+  type: string;
+  at: string | null;
+  label: string;
+  meta?: Record<string, unknown>;
+  app_id?: number;
+}
+
+interface CvVersionRow {
+  id: number | null;
+  version_number: number;
+  is_current: boolean;
+  filename: string;
+  source: string;
+  uploaded_at: string | null;
+  char_count: number;
+}
+
+function CandidateHistoryCards({ candidateId }: { candidateId: number }) {
+  const [timeline, setTimeline] = useState<TimelineItem[] | null>(null);
+  const [versions, setVersions] = useState<CvVersionRow[] | null>(null);
+  const [openVersion, setOpenVersion] = useState<{ version_number: number; resume_text: string } | null>(null);
+
+  useEffect(() => {
+    let cancel = false;
+    (async () => {
+      try {
+        const [tl, vs] = await Promise.all([
+          apiGet<{ timeline: TimelineItem[] }>(`/candidates/${candidateId}/timeline`),
+          apiGet<{ versions: CvVersionRow[] }>(`/candidates/${candidateId}/cv-versions`),
+        ]);
+        if (cancel) return;
+        setTimeline(tl.timeline ?? []);
+        setVersions(vs.versions ?? []);
+      } catch {
+        if (!cancel) {
+          setTimeline([]);
+          setVersions([]);
+        }
+      }
+    })();
+    return () => {
+      cancel = true;
+    };
+  }, [candidateId]);
+
+  const viewVersion = async (id: number) => {
+    try {
+      const data = await apiGet<{ version_number: number; resume_text: string }>(
+        `/candidates/${candidateId}/cv-versions/${id}/text`,
+      );
+      setOpenVersion(data);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to load version");
+    }
+  };
+
+  return (
+    <>
+      <Card title={`CV History${versions ? ` (${versions.length})` : ""}`}>
+        {!versions ? (
+          <div className="space-y-2">
+            {Array.from({ length: 2 }).map((_, i) => (
+              <div key={i} className="h-10 bg-slate-100 rounded animate-pulse" />
+            ))}
+          </div>
+        ) : versions.length === 0 ? (
+          <p className="text-sm text-slate-500">No CV uploaded yet.</p>
+        ) : (
+          <ul className="divide-y divide-slate-100 text-sm">
+            {versions.map((v) => (
+              <li
+                key={`${v.version_number}-${v.id ?? "current"}`}
+                className="py-2 flex items-center gap-3"
+              >
+                <span
+                  className={`text-xs font-semibold px-2 py-0.5 rounded ${
+                    v.is_current
+                      ? "bg-emerald-100 text-emerald-700"
+                      : "bg-slate-100 text-slate-700"
+                  }`}
+                >
+                  v{v.version_number}
+                  {v.is_current && " · current"}
+                </span>
+                <span className="flex-1 truncate text-slate-700">
+                  {v.filename || "(unnamed)"}
+                </span>
+                <span className="text-xs text-slate-500 flex-shrink-0">
+                  {v.uploaded_at ? timeAgo(v.uploaded_at) : ""}
+                </span>
+                {!v.is_current && v.id != null && (
+                  <button
+                    type="button"
+                    onClick={() => viewVersion(v.id!)}
+                    className="text-xs font-medium text-indigo-600 hover:text-indigo-800"
+                  >
+                    View
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
+
+      <Card title={`Activity Timeline${timeline ? ` (${timeline.length})` : ""}`}>
+        {!timeline ? (
+          <div className="space-y-2">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <div key={i} className="h-8 bg-slate-100 rounded animate-pulse" />
+            ))}
+          </div>
+        ) : timeline.length === 0 ? (
+          <p className="text-sm text-slate-500">No activity yet.</p>
+        ) : (
+          <ol className="relative border-l-2 border-slate-200 pl-4 space-y-3">
+            {[...timeline].reverse().map((it, i) => (
+              <li key={i} className="relative">
+                <span className="absolute -left-[19px] top-1.5 w-3 h-3 rounded-full bg-indigo-500 border-2 border-white" />
+                <div className="text-sm text-slate-800">{it.label}</div>
+                {it.at && (
+                  <div className="text-xs text-slate-500 mt-0.5">
+                    {timeAgo(it.at)}
+                  </div>
+                )}
+              </li>
+            ))}
+          </ol>
+        )}
+      </Card>
+
+      {openVersion && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50"
+          onClick={() => setOpenVersion(null)}
+        >
+          <div
+            className="bg-white rounded-xl shadow-xl border border-slate-200 w-full max-w-3xl max-h-[80vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-6 py-3 border-b border-slate-200 flex items-center justify-between">
+              <h2 className="text-base font-semibold text-slate-900">
+                CV v{openVersion.version_number}
+              </h2>
+              <button
+                onClick={() => setOpenVersion(null)}
+                className="text-slate-500 hover:text-slate-800"
+              >
+                ✕
+              </button>
+            </div>
+            <pre className="px-6 py-4 overflow-y-auto whitespace-pre-wrap text-xs font-mono text-slate-800 flex-1">
+              {openVersion.resume_text || "(empty)"}
+            </pre>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 

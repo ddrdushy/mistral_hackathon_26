@@ -5,7 +5,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlalchemy.orm import Session
 from database import get_db
-from models import Candidate, Email
+from models import Candidate, CandidateCvVersion, Email
 from schemas import CandidateCreate, CandidateResponse, CandidateFromEmailResponse
 from services.resume_service import extract_resume_text, parse_contact_info
 from auth.dependencies import current_session, CurrentSession
@@ -190,6 +190,28 @@ def _find_existing_candidate(db: Session, tenant_id: int, email: str) -> Optiona
     ).first()
 
 
+def _archive_current_cv(
+    db: Session,
+    candidate: Candidate,
+    source: str = "manual_upload",
+    user_id: Optional[int] = None,
+) -> None:
+    """Snapshot the candidate's CURRENT resume into candidate_cv_versions
+    before the caller overwrites it. Skips when there's nothing to archive."""
+    if not (candidate.resume_text or "").strip() and not candidate.resume_filename:
+        return
+    snapshot = CandidateCvVersion(
+        tenant_id=candidate.tenant_id,
+        candidate_id=candidate.id,
+        version_number=candidate.cv_version or 1,
+        filename=candidate.resume_filename or "",
+        resume_text=candidate.resume_text or "",
+        source=source,
+        uploaded_by_user_id=user_id,
+    )
+    db.add(snapshot)
+
+
 @router.post("/upload")
 async def upload_candidate(
     file: UploadFile = File(...),
@@ -254,6 +276,8 @@ async def upload_candidate(
     is_update = existing is not None
     if existing:
         candidate = existing
+        # Snapshot v(N) into the archive BEFORE we overwrite with v(N+1).
+        _archive_current_cv(db, candidate, source="manual_upload", user_id=session.user.id if hasattr(session, "user") else None)
         candidate.resume_text = resume_text
         candidate.resume_filename = filename
         candidate.cv_version = (candidate.cv_version or 1) + 1
@@ -378,6 +402,7 @@ async def upload_candidates_bulk(
             is_update = existing is not None
             if existing:
                 candidate = existing
+                _archive_current_cv(db, candidate, source="manual_upload", user_id=session.user.id if hasattr(session, "user") else None)
                 candidate.resume_text = resume_text
                 candidate.resume_filename = fname
                 candidate.cv_version = (candidate.cv_version or 1) + 1
@@ -529,6 +554,211 @@ async def get_candidate(
     if not c:
         raise HTTPException(status_code=404, detail="Candidate not found")
     return _candidate_to_response(c)
+
+
+@router.get("/{candidate_id}/cv-versions")
+async def list_cv_versions(
+    candidate_id: int,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(current_session),
+):
+    """All historical CV uploads for this candidate, current first.
+
+    The 'current' entry mirrors the live candidates row (so the UI can list
+    everything in one place); older versions come from candidate_cv_versions
+    where each row is a snapshot taken just before a re-upload."""
+    c = db.query(Candidate).filter(
+        Candidate.id == candidate_id,
+        Candidate.tenant_id == session.tenant.id,
+    ).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+
+    archived = db.query(CandidateCvVersion).filter(
+        CandidateCvVersion.candidate_id == candidate_id,
+    ).order_by(CandidateCvVersion.version_number.desc()).all()
+
+    out = [{
+        "id": None,
+        "version_number": c.cv_version or 1,
+        "is_current": True,
+        "filename": c.resume_filename or "",
+        "source": "current",
+        "uploaded_at": c.updated_at.isoformat() if c.updated_at else (c.created_at.isoformat() if c.created_at else None),
+        "char_count": len(c.resume_text or ""),
+    }]
+    for v in archived:
+        out.append({
+            "id": v.id,
+            "version_number": v.version_number,
+            "is_current": False,
+            "filename": v.filename or "",
+            "source": v.source or "manual_upload",
+            "uploaded_at": v.uploaded_at.isoformat() if v.uploaded_at else None,
+            "char_count": len(v.resume_text or ""),
+        })
+    return {"versions": out}
+
+
+@router.get("/{candidate_id}/cv-versions/{version_id}/text")
+async def get_cv_version_text(
+    candidate_id: int,
+    version_id: int,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(current_session),
+):
+    """Return the full text of a specific archived CV version. Used by the
+    UI's 'View v1' button to peek at an older resume without overwriting
+    the live one."""
+    c = db.query(Candidate).filter(
+        Candidate.id == candidate_id,
+        Candidate.tenant_id == session.tenant.id,
+    ).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+    v = db.query(CandidateCvVersion).filter(
+        CandidateCvVersion.id == version_id,
+        CandidateCvVersion.candidate_id == candidate_id,
+    ).first()
+    if not v:
+        raise HTTPException(status_code=404, detail="Version not found")
+    return {
+        "version_number": v.version_number,
+        "filename": v.filename,
+        "resume_text": v.resume_text,
+        "uploaded_at": v.uploaded_at.isoformat() if v.uploaded_at else None,
+        "source": v.source,
+    }
+
+
+@router.get("/{candidate_id}/timeline")
+async def candidate_timeline(
+    candidate_id: int,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(current_session),
+):
+    """Chronological history for the candidate detail page.
+
+    Pulls from multiple sources and renders a single ordered list:
+      - cv uploads (current candidate row + candidate_cv_versions)
+      - pipeline events (events table — classified, scored, stage changes,
+        interview link generated/sent, …)
+      - interview activity (interview_links opens / completes)
+    """
+    from models import Application, Event, InterviewLink
+
+    c = db.query(Candidate).filter(
+        Candidate.id == candidate_id,
+        Candidate.tenant_id == session.tenant.id,
+    ).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+
+    items = []
+
+    # Candidate creation
+    if c.created_at:
+        items.append({
+            "type": "candidate_created",
+            "at": c.created_at.isoformat(),
+            "label": f"Candidate created · {c.resume_filename or 'no CV'}",
+            "meta": {
+                "filename": c.resume_filename or "",
+                "source": "email" if c.source_email_id else "manual_upload",
+            },
+        })
+
+    # Current CV (only show as separate event if it differs from creation)
+    if c.cv_version and c.cv_version > 1 and c.updated_at:
+        items.append({
+            "type": "cv_uploaded",
+            "at": c.updated_at.isoformat(),
+            "label": f"CV updated to v{c.cv_version} · {c.resume_filename or ''}",
+            "meta": {
+                "version_number": c.cv_version,
+                "filename": c.resume_filename or "",
+                "is_current": True,
+            },
+        })
+
+    # Archived CV versions
+    archived = db.query(CandidateCvVersion).filter(
+        CandidateCvVersion.candidate_id == candidate_id
+    ).all()
+    for v in archived:
+        items.append({
+            "type": "cv_archived",
+            "at": v.uploaded_at.isoformat() if v.uploaded_at else None,
+            "label": f"CV v{v.version_number} archived · {v.filename or ''}",
+            "meta": {
+                "version_id": v.id,
+                "version_number": v.version_number,
+                "filename": v.filename or "",
+                "source": v.source,
+            },
+        })
+
+    # Application events — find apps for this candidate, then events on them.
+    app_ids = [
+        aid for (aid,) in db.query(Application.id).filter(
+            Application.candidate_id == candidate_id,
+            Application.tenant_id == session.tenant.id,
+        ).all()
+    ]
+    if app_ids:
+        events = db.query(Event).filter(
+            Event.app_id.in_(app_ids)
+        ).order_by(Event.created_at.asc()).all()
+        for e in events:
+            try:
+                payload = json.loads(e.payload) if e.payload else {}
+            except Exception:
+                payload = {}
+            label = e.event_type.replace("_", " ").title()
+            if e.event_type == "stage_changed":
+                label = f"Stage: {payload.get('from','?')} → {payload.get('to','?')}"
+            elif e.event_type == "matched":
+                label = f"Matched · resume score {payload.get('resume_score', '?')}"
+            elif e.event_type == "rescored":
+                label = f"Re-scored · resume score {payload.get('resume_score', '?')}"
+            elif e.event_type == "auto_workflow_matched":
+                label = f"Auto-matched · score {payload.get('resume_score', '?')} · {payload.get('recommendation','')}"
+            elif e.event_type == "auto_interview_link_generated":
+                label = "Interview link auto-generated"
+            elif e.event_type == "auto_interview_link_emailed":
+                label = f"Interview link emailed to {payload.get('to_email','candidate')}"
+            items.append({
+                "type": e.event_type,
+                "at": e.created_at.isoformat() if e.created_at else None,
+                "label": label,
+                "meta": payload,
+                "app_id": e.app_id,
+            })
+
+    # Interview link milestones
+    if app_ids:
+        links = db.query(InterviewLink).filter(
+            InterviewLink.app_id.in_(app_ids)
+        ).all()
+        for l in links:
+            if l.opened_at:
+                items.append({
+                    "type": "interview_opened",
+                    "at": l.opened_at.isoformat(),
+                    "label": "Candidate opened the interview link",
+                    "meta": {"token": l.token},
+                })
+            if l.interview_completed_at:
+                items.append({
+                    "type": "interview_completed",
+                    "at": l.interview_completed_at.isoformat(),
+                    "label": "Interview completed",
+                    "meta": {"token": l.token},
+                })
+
+    # Sort: chronological (oldest first). Treat None timestamps as oldest.
+    items.sort(key=lambda x: x.get("at") or "")
+    return {"timeline": items}
 
 
 @router.patch("/{candidate_id}/notes")

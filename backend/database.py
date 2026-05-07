@@ -33,7 +33,7 @@ def get_db():
 
 def init_db():
     from models import (  # noqa: F401
-        Job, Email, Candidate, Application, Event, InterviewLink, Setting, QaSession,
+        Job, Email, Candidate, CandidateCvVersion, Application, Event, InterviewLink, Setting, QaSession,
         Tenant, User, EmailVerification, PasswordReset, TenantInvite, LlmUsage,
         AuditLog, Testimonial, MailAccount, JobBoardAccount,
     )

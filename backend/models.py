@@ -257,6 +257,32 @@ class Candidate(Base):
 
     source_email = relationship("Email", back_populates="candidate")
     applications = relationship("Application", back_populates="candidate")
+    cv_versions = relationship(
+        "CandidateCvVersion",
+        back_populates="candidate",
+        cascade="all, delete-orphan",
+    )
+
+
+class CandidateCvVersion(Base):
+    """Archive of a candidate's prior CV every time it's replaced.
+
+    When a re-upload bumps cv_version, we snapshot the old resume_text +
+    filename + extracted_at into this table BEFORE overwriting. Lets HR
+    diff between versions and recover the previous resume for context."""
+    __tablename__ = "candidate_cv_versions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=True, index=True)
+    candidate_id = Column(Integer, ForeignKey("candidates.id"), nullable=False, index=True)
+    version_number = Column(Integer, nullable=False)
+    filename = Column(String, default="")
+    resume_text = Column(Text, default="")
+    source = Column(String, default="manual_upload")  # email | manual_upload | imported | api
+    uploaded_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    uploaded_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    candidate = relationship("Candidate", back_populates="cv_versions")
 
 
 class Application(Base):
