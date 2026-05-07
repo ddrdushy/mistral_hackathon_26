@@ -1637,6 +1637,15 @@ export default function CandidateDetailPage({
             />
           )}
 
+          {/* ── Phone queue (schedule + recent calls) ──────────────────────── */}
+          {app?.candidate_id && (
+            <CallQueueCard
+              candidateId={app.candidate_id}
+              candidatePhone={app.candidate_phone}
+              appId={app.id}
+            />
+          )}
+
           {/* ── History timeline + CV versions ─────────────────────────────── */}
           {app?.candidate_id && (
             <CandidateHistoryCards candidateId={app.candidate_id} />
@@ -1960,6 +1969,239 @@ function SendWhatsAppCard({
             >
               {result.msg}
             </p>
+          )}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+interface QueuedCall {
+  id: number;
+  candidate_id: number;
+  app_id: number | null;
+  purpose: string;
+  status: string;
+  scheduled_for: string | null;
+  attempted_at: string | null;
+  completed_at: string | null;
+  to_phone: string;
+  twilio_call_sid: string;
+  transcript: string;
+  outcome: string;
+  outcome_details: Record<string, unknown>;
+  retry_count: number;
+  last_error: string;
+  rescheduled_to_id: number | null;
+  created_at: string | null;
+}
+
+const PURPOSES: Array<{ id: string; label: string }> = [
+  { id: "screening", label: "Screening" },
+  { id: "reschedule", label: "Reschedule" },
+  { id: "reminder", label: "Reminder" },
+  { id: "availability_check", label: "Availability check" },
+  { id: "custom", label: "Custom" },
+];
+
+function CallQueueCard({
+  candidateId,
+  candidatePhone,
+  appId,
+}: {
+  candidateId: number;
+  candidatePhone: string | null;
+  appId?: number;
+}) {
+  const [calls, setCalls] = useState<QueuedCall[] | null>(null);
+  const [purpose, setPurpose] = useState("screening");
+  const [scheduledFor, setScheduledFor] = useState("");
+  const [scriptPrompt, setScriptPrompt] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<{ tone: "ok" | "err"; msg: string } | null>(null);
+
+  const phoneOk = (candidatePhone ?? "").trim().length > 0;
+
+  const fetchCalls = useCallback(async () => {
+    try {
+      const data = await apiGet<{ calls: QueuedCall[] }>(
+        `/calls?candidate_id=${candidateId}&limit=20`,
+      );
+      setCalls(data.calls ?? []);
+    } catch {
+      setCalls([]);
+    }
+  }, [candidateId]);
+
+  useEffect(() => {
+    fetchCalls();
+  }, [fetchCalls]);
+
+  const enqueue = async (callNow: boolean) => {
+    if (!phoneOk) return;
+    try {
+      setBusy(true);
+      setResult(null);
+      const body: Record<string, unknown> = {
+        candidate_id: candidateId,
+        purpose,
+        script_prompt: scriptPrompt.trim(),
+      };
+      if (appId) body.app_id = appId;
+      if (!callNow && scheduledFor) {
+        // datetime-local is local time; send as UTC ISO
+        body.scheduled_for = new Date(scheduledFor).toISOString();
+      }
+      await apiPost("/calls", body);
+      setScheduledFor("");
+      setScriptPrompt("");
+      setResult({
+        tone: "ok",
+        msg: callNow
+          ? "Queued — worker will dial within ~30s."
+          : `Scheduled for ${new Date(scheduledFor).toLocaleString()}`,
+      });
+      fetchCalls();
+    } catch (err) {
+      setResult({
+        tone: "err",
+        msg: err instanceof Error ? err.message : "Queue failed",
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const cancel = async (id: number) => {
+    if (!confirm("Cancel this scheduled call?")) return;
+    try {
+      await apiPost(`/calls/${id}/cancel`);
+      fetchCalls();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Cancel failed");
+    }
+  };
+
+  return (
+    <Card title="Phone Queue">
+      {!phoneOk ? (
+        <p className="text-sm text-slate-500">
+          Add a phone number to this candidate before scheduling a call.
+        </p>
+      ) : (
+        <div className="space-y-3">
+          <div className="text-xs text-slate-500">
+            Will call: <span className="font-mono text-slate-700">{candidatePhone}</span>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-slate-600 uppercase tracking-wider mb-1.5">
+                Purpose
+              </label>
+              <select
+                value={purpose}
+                onChange={(e) => setPurpose(e.target.value)}
+                className="w-full px-3 py-2 text-sm border border-slate-300 rounded-md focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              >
+                {PURPOSES.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-600 uppercase tracking-wider mb-1.5">
+                Schedule for{" "}
+                <span className="text-slate-400 normal-case">(blank = ASAP)</span>
+              </label>
+              <input
+                type="datetime-local"
+                value={scheduledFor}
+                onChange={(e) => setScheduledFor(e.target.value)}
+                className="w-full px-3 py-2 text-sm border border-slate-300 rounded-md focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              />
+            </div>
+          </div>
+          <textarea
+            value={scriptPrompt}
+            onChange={(e) => setScriptPrompt(e.target.value)}
+            placeholder="Optional: notes / prompt for the AI agent (e.g. 'Confirm Tuesday 3pm slot, ask about availability through November')"
+            rows={2}
+            className="w-full px-3 py-2 text-sm border border-slate-300 rounded-md focus:outline-none focus:ring-1 focus:ring-indigo-500 resize-y"
+          />
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => enqueue(true)}
+              disabled={busy}
+              className="px-3 py-1.5 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-md disabled:opacity-50"
+            >
+              {busy ? "Queueing..." : "Call now"}
+            </button>
+            <button
+              onClick={() => enqueue(false)}
+              disabled={busy || !scheduledFor}
+              className="px-3 py-1.5 text-sm font-medium text-slate-700 border border-slate-300 hover:bg-slate-50 rounded-md disabled:opacity-50"
+            >
+              Schedule
+            </button>
+          </div>
+          {result && (
+            <p
+              className={`text-xs rounded-md px-3 py-2 ${
+                result.tone === "ok"
+                  ? "bg-emerald-50 text-emerald-800 border border-emerald-200"
+                  : "bg-rose-50 text-rose-800 border border-rose-200"
+              }`}
+            >
+              {result.msg}
+            </p>
+          )}
+
+          {calls && calls.length > 0 && (
+            <div className="border-t border-slate-100 pt-3">
+              <p className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-2">
+                Recent calls ({calls.length})
+              </p>
+              <ul className="space-y-1.5 text-sm">
+                {calls.slice(0, 8).map((c) => (
+                  <li
+                    key={c.id}
+                    className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-slate-50"
+                  >
+                    <span
+                      className={`text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded ${
+                        c.status === "completed"
+                          ? "bg-emerald-100 text-emerald-700"
+                          : c.status === "failed"
+                          ? "bg-rose-100 text-rose-700"
+                          : c.status === "cancelled" || c.status === "rescheduled"
+                          ? "bg-slate-100 text-slate-600"
+                          : c.status === "in_progress"
+                          ? "bg-amber-100 text-amber-700"
+                          : "bg-indigo-100 text-indigo-700"
+                      }`}
+                    >
+                      {c.status.replace("_", " ")}
+                    </span>
+                    <span className="text-xs text-slate-600 capitalize">
+                      {c.purpose.replace("_", " ")}
+                    </span>
+                    <span className="text-xs text-slate-400 ml-auto flex-shrink-0">
+                      {c.scheduled_for ? new Date(c.scheduled_for).toLocaleString() : ""}
+                    </span>
+                    {c.status === "pending" && (
+                      <button
+                        onClick={() => cancel(c.id)}
+                        className="text-xs text-rose-600 hover:text-rose-800 ml-1"
+                      >
+                        Cancel
+                      </button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
         </div>
       )}

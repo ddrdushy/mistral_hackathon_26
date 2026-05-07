@@ -645,7 +645,7 @@ async def candidate_timeline(
         interview link generated/sent, …)
       - interview activity (interview_links opens / completes)
     """
-    from models import Application, Event, InterviewLink, Communication
+    from models import Application, Event, InterviewLink, Communication, CallQueue
 
     c = db.query(Candidate).filter(
         Candidate.id == candidate_id,
@@ -785,6 +785,36 @@ async def candidate_timeline(
                 "direction": cm.direction,
                 "body": cm.body[:500] if cm.body else "",
                 "to": cm.to_address,
+            },
+        })
+
+    # Queued / completed calls
+    calls = db.query(CallQueue).filter(
+        CallQueue.tenant_id == session.tenant.id,
+        CallQueue.candidate_id == candidate_id,
+    ).all()
+    for cl in calls:
+        if cl.status == "completed":
+            label = f"Voice call completed · {cl.outcome or 'no outcome captured'}"
+        elif cl.status == "rescheduled":
+            label = "Voice call rescheduled"
+        elif cl.status == "failed":
+            label = f"Voice call failed: {(cl.last_error or '')[:80]}"
+        elif cl.status == "cancelled":
+            label = "Voice call cancelled"
+        elif cl.status == "in_progress":
+            label = "Voice call in progress"
+        else:
+            label = f"Voice call queued · {cl.purpose or 'screening'}"
+        items.append({
+            "type": f"call_{cl.status}",
+            "at": (cl.scheduled_for or cl.created_at).isoformat() if (cl.scheduled_for or cl.created_at) else None,
+            "label": label,
+            "meta": {
+                "call_id": cl.id,
+                "purpose": cl.purpose,
+                "status": cl.status,
+                "to_phone": cl.to_phone,
             },
         })
 

@@ -19,7 +19,7 @@ from services.secrets import apply_db_secrets_to_env
 _secret_sources = apply_db_secrets_to_env()
 
 from app_limiter import limiter
-from routers import inbox, jobs, candidates, applications, screening, reports, settings, auth, admin, team, billing, testimonials, metrics, talent, integrations, communications
+from routers import inbox, jobs, candidates, applications, screening, reports, settings, auth, admin, team, billing, testimonials, metrics, talent, integrations, communications, calls
 
 logger = logging.getLogger("hireops")
 logger.info("Global secrets sources: %s", _secret_sources)
@@ -83,6 +83,7 @@ app.include_router(talent.router)
 app.include_router(talent.jobs_router)
 app.include_router(integrations.router)
 app.include_router(communications.router)
+app.include_router(calls.router)
 
 
 @app.on_event("startup")
@@ -118,6 +119,14 @@ async def on_startup():
     except Exception as e:
         logger.warning(f"Backfill kickoff failed: {e}")
 
+    # Phone queue worker — polls call_queue every 30s and dispatches due
+    # outbound calls via Twilio. One worker per backend process.
+    try:
+        from services import call_queue
+        await call_queue.start_worker()
+    except Exception as e:
+        logger.warning(f"Call queue worker startup failed: {e}")
+
 
 @app.on_event("shutdown")
 async def on_shutdown():
@@ -126,6 +135,11 @@ async def on_shutdown():
         await mailbox_listener.stop_all()
     except Exception as e:
         logger.warning(f"Mailbox listener shutdown failed: {e}")
+    try:
+        from services import call_queue
+        await call_queue.stop_worker()
+    except Exception as e:
+        logger.warning(f"Call queue worker shutdown failed: {e}")
 
 
 @app.get("/health")

@@ -264,6 +264,56 @@ class Candidate(Base):
     )
 
 
+class CallQueue(Base):
+    """Outbound voice calls queued for dispatch.
+
+    Each row is a single attempt to dial a candidate at a specific time.
+    A worker polls for status='pending' AND scheduled_for <= now(), marks
+    in_progress, dispatches via Twilio (with ElevenLabs agent in the loop
+    when configured), and reconciles status from Twilio's status webhook.
+
+    Reschedule flow: when an outcome of 'reschedule' is detected (manually
+    via UI or by parsing the conversation), we mark the original row
+    'rescheduled' and enqueue a NEW pending row at the new time. Keeps the
+    full attempt history visible.
+    """
+    __tablename__ = "call_queue"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
+    candidate_id = Column(Integer, ForeignKey("candidates.id"), nullable=False, index=True)
+    app_id = Column(Integer, ForeignKey("applications.id"), nullable=True, index=True)
+
+    purpose = Column(String, default="screening")
+    # screening | reschedule | reminder | availability_check | custom
+    status = Column(String, default="pending", index=True)
+    # pending | in_progress | completed | failed | cancelled | rescheduled
+
+    scheduled_for = Column(DateTime, nullable=False, index=True)
+    attempted_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+
+    to_phone = Column(String, nullable=False, default="")
+    from_phone = Column(String, default="")
+
+    twilio_call_sid = Column(String, default="")
+    elevenlabs_conversation_id = Column(String, default="")
+
+    script_prompt = Column(Text, default="")
+    transcript = Column(Text, default="")
+    outcome = Column(String, default="")
+    # confirmed | reschedule | declined | no_answer | voicemail | error
+    outcome_details_json = Column(Text, default="{}")
+
+    rescheduled_to_id = Column(Integer, ForeignKey("call_queue.id"), nullable=True)
+    retry_count = Column(Integer, default=0)
+    last_error = Column(Text, default="")
+
+    created_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
 class TenantIntegration(Base):
     """Per-tenant integration credentials (Twilio, Slack, etc.).
 

@@ -36,6 +36,7 @@ def init_db():
         Job, Email, Candidate, CandidateCvVersion, Application, Event, InterviewLink, Setting, QaSession,
         Tenant, User, EmailVerification, PasswordReset, TenantInvite, LlmUsage,
         AuditLog, Testimonial, MailAccount, JobBoardAccount, TenantIntegration, Communication,
+        CallQueue,
     )
     Base.metadata.create_all(bind=engine)
     _run_migrations()
