@@ -33,13 +33,18 @@ Return ONLY valid JSON matching the schema below. No prose. No markdown fences.
   "role": "primary role title in 1-3 words, e.g. RPA Developer | Data Analyst | Frontend Engineer | DevOps Engineer",
   "seniority": "junior | mid | senior | lead | principal | unknown",
   "years_experience": <number, can be 0 for fresher>,
-  "summary": "<= 240 chars, plain prose, third person, no fluff"
+  "summary": "<= 280 chars, plain prose, third person, no fluff — what they do, where, with what stack",
+  "key_points": [
+    "3-6 punchy bullets capturing standout achievements, scale ("led 12-engineer team"), shipped products, awards, certifications",
+    "each bullet <= 100 chars, no markdown bullets/dashes/numbers, just the text"
+  ]
 }
 
 Rules:
 - Use ONLY information present in the resume. Do not invent.
 - Skills are CONCRETE technologies / tools / methods, not soft skills.
 - Lowercase + hyphens for compound names ("power-bi" not "Power BI").
+- Key points should be the 3-6 things a recruiter would highlight when pitching this candidate to a hiring manager.
 """
 
 
@@ -50,6 +55,7 @@ class ProfileExtractorOutput:
     seniority: str = ""
     years_experience: float = 0.0
     summary: str = ""
+    key_points: List[str] = field(default_factory=list)
 
 
 def _normalize_skill(s: str) -> str:
@@ -98,12 +104,18 @@ async def extract_profile(resume_text: str) -> ProfileExtractorOutput:
                 text_out = text_out.split("\n", 1)[1].rsplit("```", 1)[0].strip()
             data = json.loads(text_out)
 
+            key_points_raw = data.get("key_points") or []
+            if isinstance(key_points_raw, str):
+                key_points_raw = [key_points_raw]
+            key_points = [str(k).strip()[:160] for k in key_points_raw if k][:6]
+
             return ProfileExtractorOutput(
                 skills=[_normalize_skill(s) for s in (data.get("skills") or []) if s][:12],
                 role=str(data.get("role") or "").strip()[:80],
                 seniority=str(data.get("seniority") or "").strip().lower()[:20],
                 years_experience=float(data.get("years_experience") or 0),
-                summary=str(data.get("summary") or "").strip()[:300],
+                summary=str(data.get("summary") or "").strip()[:320],
+                key_points=key_points,
             )
         except Exception as e:
             logger.warning("profile_extractor LLM failed, falling back: %s", e)

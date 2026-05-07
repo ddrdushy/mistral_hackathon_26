@@ -952,6 +952,22 @@ function generatePageNumbers(
   return pages;
 }
 
+interface UploadedSummary {
+  candidate: {
+    id: number;
+    name: string;
+    email: string;
+    profile?: {
+      role?: string;
+      seniority?: string;
+      years_experience?: number | null;
+      summary?: string;
+      skills?: string[];
+      key_points?: string[];
+    };
+  };
+}
+
 function UploadCvDialog({
   open,
   onClose,
@@ -961,47 +977,80 @@ function UploadCvDialog({
   onClose: () => void;
   onUploaded: () => void;
 }) {
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [results, setResults] = useState<UploadedSummary[] | null>(null);
 
   if (!open) return null;
 
   const reset = () => {
-    setFile(null);
+    setFiles([]);
     setName("");
     setEmail("");
     setPhone("");
     setError(null);
+    setResults(null);
   };
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!file) {
-      setError("Pick a CV file first");
+    if (files.length === 0) {
+      setError("Pick at least one CV file");
       return;
     }
     try {
       setBusy(true);
       setError(null);
-      const fd = new FormData();
-      fd.append("file", file);
-      if (name.trim()) fd.append("name", name.trim());
-      if (email.trim()) fd.append("email", email.trim());
-      if (phone.trim()) fd.append("phone", phone.trim());
-      const res = await fetch(`${API_BASE}/candidates/upload`, {
-        method: "POST",
-        credentials: "include",
-        body: fd,
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.detail || `Upload failed (${res.status})`);
+      setResults(null);
+
+      if (files.length === 1) {
+        const fd = new FormData();
+        fd.append("file", files[0]);
+        if (name.trim()) fd.append("name", name.trim());
+        if (email.trim()) fd.append("email", email.trim());
+        if (phone.trim()) fd.append("phone", phone.trim());
+        const res = await fetch(`${API_BASE}/candidates/upload`, {
+          method: "POST",
+          credentials: "include",
+          body: fd,
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.detail || `Upload failed (${res.status})`);
+        }
+        const data = (await res.json()) as UploadedSummary;
+        setResults([data]);
+      } else {
+        const fd = new FormData();
+        for (const f of files) fd.append("files", f);
+        const res = await fetch(`${API_BASE}/candidates/upload-bulk`, {
+          method: "POST",
+          credentials: "include",
+          body: fd,
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.detail || `Upload failed (${res.status})`);
+        }
+        const data = (await res.json()) as {
+          results: { ok: boolean; candidate: UploadedSummary["candidate"] | null; error: string | null; filename: string }[];
+          uploaded: number;
+          failed: number;
+        };
+        setResults(
+          data.results.filter((r) => r.ok && r.candidate).map((r) => ({ candidate: r.candidate! })),
+        );
+        if (data.failed > 0) {
+          const errs = data.results.filter((r) => !r.ok);
+          setError(
+            `${data.failed} file(s) failed: ${errs.map((e) => `${e.filename} (${e.error})`).join(", ")}`,
+          );
+        }
       }
-      reset();
       onUploaded();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Upload failed");
@@ -1027,62 +1076,134 @@ function UploadCvDialog({
             and tag it for future job matches automatically.
           </p>
         </div>
-        <div className="px-6 py-4 space-y-4">
+        <div className="px-6 py-4 space-y-4 max-h-[70vh] overflow-y-auto">
           <div>
             <label className="block text-xs font-medium text-slate-600 uppercase tracking-wider mb-1.5">
-              CV file
+              CV files <span className="text-slate-400 normal-case">(one or many)</span>
             </label>
             <input
               type="file"
               accept=".pdf,.docx,.doc,.txt,.tex"
-              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+              multiple
+              onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
               className="block w-full text-sm text-slate-700 file:mr-3 file:py-2 file:px-3 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 cursor-pointer"
               required
             />
-            {file && (
-              <p className="text-xs text-slate-500 mt-1.5">
-                {file.name} · {(file.size / 1024).toFixed(0)} KB
+            {files.length > 0 && (
+              <ul className="mt-2 max-h-32 overflow-y-auto text-xs text-slate-600 space-y-0.5">
+                {files.map((f, i) => (
+                  <li key={i} className="flex justify-between">
+                    <span className="truncate">{f.name}</span>
+                    <span className="text-slate-400 ml-2 flex-shrink-0">
+                      {(f.size / 1024).toFixed(0)} KB
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {files.length > 1 && (
+              <p className="text-xs text-indigo-700 mt-2">
+                Bulk upload — overrides below are ignored when multiple files
+                selected. Each CV is auto-parsed for name/email/phone.
               </p>
             )}
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-medium text-slate-600 uppercase tracking-wider mb-1.5">
-                Name <span className="text-slate-400 normal-case">(optional)</span>
-              </label>
-              <input
-                type="text"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Auto-detected from CV"
-                className="w-full px-3 py-2 text-sm border border-slate-300 rounded-md focus:outline-none focus:ring-1 focus:ring-indigo-500"
-              />
+          {files.length <= 1 && (
+            <>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 uppercase tracking-wider mb-1.5">
+                    Name <span className="text-slate-400 normal-case">(optional)</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder="Auto-detected from CV"
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-md focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 uppercase tracking-wider mb-1.5">
+                    Email <span className="text-slate-400 normal-case">(optional)</span>
+                  </label>
+                  <input
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="Auto-detected from CV"
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-md focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-600 uppercase tracking-wider mb-1.5">
+                  Phone <span className="text-slate-400 normal-case">(optional)</span>
+                </label>
+                <input
+                  type="tel"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  placeholder="Auto-detected from CV"
+                  className="w-full px-3 py-2 text-sm border border-slate-300 rounded-md focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                />
+              </div>
+            </>
+          )}
+          {results && results.length > 0 && (
+            <div className="border border-emerald-200 bg-emerald-50 rounded-md p-3 space-y-3">
+              <p className="text-xs font-medium text-emerald-800 uppercase tracking-wider">
+                {results.length === 1 ? "Analysis" : `${results.length} candidates added`}
+              </p>
+              {results.map((r) => (
+                <div key={r.candidate.id} className="text-sm bg-white rounded p-2.5 border border-emerald-200/60">
+                  <div className="flex items-center justify-between">
+                    <a
+                      href={`/candidates/${r.candidate.id}`}
+                      className="font-semibold text-slate-900 hover:text-indigo-700"
+                    >
+                      {r.candidate.name}
+                    </a>
+                    {r.candidate.profile?.role && (
+                      <span className="text-xs text-slate-500">
+                        {r.candidate.profile.role}
+                        {r.candidate.profile.seniority &&
+                          r.candidate.profile.seniority !== "unknown" &&
+                          ` · ${r.candidate.profile.seniority}`}
+                      </span>
+                    )}
+                  </div>
+                  {r.candidate.profile?.summary && (
+                    <p className="text-xs text-slate-700 mt-1 leading-snug">
+                      {r.candidate.profile.summary}
+                    </p>
+                  )}
+                  {r.candidate.profile?.key_points && r.candidate.profile.key_points.length > 0 && (
+                    <ul className="mt-2 space-y-0.5 text-xs text-slate-600">
+                      {r.candidate.profile.key_points.slice(0, 5).map((kp, i) => (
+                        <li key={i} className="flex gap-1.5">
+                          <span className="text-emerald-600 flex-shrink-0">·</span>
+                          <span>{kp}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {r.candidate.profile?.skills && r.candidate.profile.skills.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      {r.candidate.profile.skills.slice(0, 8).map((sk) => (
+                        <span
+                          key={sk}
+                          className="text-[11px] px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200"
+                        >
+                          {sk}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
-            <div>
-              <label className="block text-xs font-medium text-slate-600 uppercase tracking-wider mb-1.5">
-                Email <span className="text-slate-400 normal-case">(optional)</span>
-              </label>
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="Auto-detected from CV"
-                className="w-full px-3 py-2 text-sm border border-slate-300 rounded-md focus:outline-none focus:ring-1 focus:ring-indigo-500"
-              />
-            </div>
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-slate-600 uppercase tracking-wider mb-1.5">
-              Phone <span className="text-slate-400 normal-case">(optional)</span>
-            </label>
-            <input
-              type="tel"
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-              placeholder="Auto-detected from CV"
-              className="w-full px-3 py-2 text-sm border border-slate-300 rounded-md focus:outline-none focus:ring-1 focus:ring-indigo-500"
-            />
-          </div>
+          )}
           {error && (
             <p className="text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-md px-3 py-2">
               {error}
@@ -1098,15 +1219,23 @@ function UploadCvDialog({
             }}
             className="px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-100 rounded-md"
           >
-            Cancel
+            {results ? "Done" : "Cancel"}
           </button>
-          <button
-            type="submit"
-            disabled={busy || !file}
-            className="px-4 py-1.5 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-md disabled:opacity-50"
-          >
-            {busy ? "Uploading..." : "Upload to talent bank"}
-          </button>
+          {!results && (
+            <button
+              type="submit"
+              disabled={busy || files.length === 0}
+              className="px-4 py-1.5 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-md disabled:opacity-50"
+            >
+              {busy
+                ? files.length > 1
+                  ? `Analyzing ${files.length} CVs...`
+                  : "Analyzing..."
+                : files.length > 1
+                ? `Upload ${files.length} to talent bank`
+                : "Upload to talent bank"}
+            </button>
+          )}
         </div>
       </form>
     </div>

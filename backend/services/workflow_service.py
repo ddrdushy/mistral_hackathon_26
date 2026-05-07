@@ -406,6 +406,7 @@ def _apply_profile(db: Session, candidate: Candidate, prof) -> None:
     candidate.profile_seniority = prof.seniority
     candidate.profile_years_experience = prof.years_experience
     candidate.profile_summary = prof.summary
+    candidate.profile_key_points = json.dumps(getattr(prof, "key_points", []))
     candidate.profile_extracted_at = datetime.utcnow()
     db.commit()
 

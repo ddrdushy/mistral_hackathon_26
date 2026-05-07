@@ -182,6 +182,7 @@ def _run_migrations():
             "profile_seniority":        "VARCHAR DEFAULT ''",
             "profile_years_experience": "FLOAT",
             "profile_summary":          "TEXT DEFAULT ''",
+            "profile_key_points":       "TEXT DEFAULT ''",
             "profile_extracted_at":     "TIMESTAMP",
         }
         with engine.begin() as conn:

@@ -15,6 +15,14 @@ router = APIRouter(prefix="/api/v1/candidates", tags=["candidates"])
 
 
 def _candidate_to_response(c: Candidate) -> dict:
+    try:
+        skills = json.loads(c.profile_skills or "[]")
+    except Exception:
+        skills = []
+    try:
+        key_points = json.loads(c.profile_key_points or "[]")
+    except Exception:
+        key_points = []
     return {
         "id": c.id,
         "name": c.name,
@@ -24,6 +32,15 @@ def _candidate_to_response(c: Candidate) -> dict:
         "resume_filename": c.resume_filename,
         "source_email_id": c.source_email_id,
         "notes": c.notes,
+        "profile": {
+            "skills": skills,
+            "role": c.profile_role or "",
+            "seniority": c.profile_seniority or "",
+            "years_experience": c.profile_years_experience,
+            "summary": c.profile_summary or "",
+            "key_points": key_points,
+            "extracted_at": c.profile_extracted_at.isoformat() if c.profile_extracted_at else None,
+        },
         "created_at": c.created_at.isoformat() if c.created_at else None,
         "updated_at": c.updated_at.isoformat() if c.updated_at else None,
     }
@@ -184,17 +201,26 @@ async def upload_candidate(
     db.commit()
     db.refresh(candidate)
 
-    # Kick off background profile extraction so the upload shows up in the
-    # talent bank straight away. If the loop isn't running (sync test
-    # context) we just skip — the suggested-candidates endpoint lazy-fills.
+    # Run profile extraction inline so the upload response carries the LLM
+    # summary + key points back to the modal — HR sees the analysis right
+    # after pressing Upload, no second click needed.
     try:
-        import asyncio
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            from services.workflow_service import _async_apply_profile
-            loop.create_task(_async_apply_profile(candidate.id))
+        from agents.profile_extractor import extract_profile
+        from services.workflow_service import _apply_profile
+        prof = await extract_profile(resume_text)
+        _apply_profile(db, candidate, prof)
+        db.refresh(candidate)
     except Exception:
-        pass
+        # If LLM fails (budget cap, network), fall back to schedule a
+        # background retry — talent bank still works via lazy fill.
+        try:
+            import asyncio
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                from services.workflow_service import _async_apply_profile
+                loop.create_task(_async_apply_profile(candidate.id))
+        except Exception:
+            pass
 
     return {
         "candidate": _candidate_to_response(candidate),
@@ -204,6 +230,100 @@ async def upload_candidate(
             "email_from_resume": contact.get("email", "") or "",
             "phone_from_resume": contact.get("phone", "") or "",
         },
+    }
+
+
+@router.post("/upload-bulk")
+async def upload_candidates_bulk(
+    files: list[UploadFile] = File(...),
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(current_session),
+):
+    """Bulk CV upload — pass multiple files in one multipart request.
+
+    Each file goes through the same parse → contact-info → create →
+    profile-extract pipeline as the single upload, but we don't bail on
+    the whole batch if one file is bad. Returns a per-file result so the
+    UI can show success/failure individually.
+    """
+    if not files:
+        raise HTTPException(status_code=400, detail="No files provided")
+    if len(files) > 25:
+        raise HTTPException(
+            status_code=400,
+            detail="Bulk upload limited to 25 files per batch — split into smaller batches",
+        )
+
+    from agents.profile_extractor import extract_profile
+    from services.workflow_service import _apply_profile
+
+    results = []
+    successes = 0
+    failures = 0
+
+    for f in files:
+        item = {
+            "filename": f.filename or "unknown",
+            "ok": False,
+            "candidate": None,
+            "error": None,
+        }
+        try:
+            check_quota(db, session.tenant, "candidates")
+        except HTTPException as e:
+            item["error"] = e.detail if isinstance(e.detail, str) else "Quota exceeded"
+            failures += 1
+            results.append(item)
+            continue
+
+        try:
+            file_bytes = await f.read()
+            if not file_bytes:
+                raise ValueError("empty file")
+            fname = f.filename or "resume.pdf"
+            if not fname.lower().endswith((".pdf", ".docx", ".doc", ".txt", ".tex")):
+                raise ValueError("unsupported file type")
+            resume_text = extract_resume_text(fname, file_bytes=file_bytes)
+            if not resume_text or not resume_text.strip():
+                raise ValueError("no text extractable")
+
+            contact = parse_contact_info(resume_text)
+            placeholder_email = f"unknown+{int(datetime.utcnow().timestamp())}-{successes}@uploaded.local"
+            candidate = Candidate(
+                tenant_id=session.tenant.id,
+                name=(contact.get("name") or fname.rsplit(".", 1)[0])[:80],
+                email=(contact.get("email") or placeholder_email),
+                phone=contact.get("phone", ""),
+                resume_text=resume_text,
+                resume_filename=fname,
+                source_email_id=None,
+            )
+            db.add(candidate)
+            db.commit()
+            db.refresh(candidate)
+
+            # Profile extract inline — HR uploaded a stack and expects
+            # all of them to be searchable when the dialog closes.
+            try:
+                prof = await extract_profile(resume_text)
+                _apply_profile(db, candidate, prof)
+                db.refresh(candidate)
+            except Exception:
+                pass
+
+            item["ok"] = True
+            item["candidate"] = _candidate_to_response(candidate)
+            successes += 1
+        except Exception as e:
+            db.rollback()
+            item["error"] = str(e)
+            failures += 1
+        results.append(item)
+
+    return {
+        "uploaded": successes,
+        "failed": failures,
+        "results": results,
     }
 
 

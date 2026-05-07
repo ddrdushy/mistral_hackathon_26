@@ -149,14 +149,9 @@ export default function DashboardPage() {
     fetchData();
   }, [fetchData]);
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-32">
-        <LoadingSpinner size="lg" />
-      </div>
-    );
-  }
-
+  // Render the full page chrome immediately on navigation; cards show
+  // dashes / empty states until data arrives. This avoids the
+  // full-screen spinner that made every nav feel like a hard reload.
   if (error) {
     return (
       <EmptyState

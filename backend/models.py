@@ -249,6 +249,7 @@ class Candidate(Base):
     profile_seniority = Column(String, default="")      # junior/mid/senior/lead
     profile_years_experience = Column(Float, nullable=True)
     profile_summary = Column(Text, default="")
+    profile_key_points = Column(Text, default="")    # JSON array of bullets
     profile_extracted_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
