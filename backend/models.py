@@ -237,6 +237,7 @@ class Candidate(Base):
     phone = Column(String, default="")
     resume_text = Column(Text, default="")
     resume_filename = Column(String, default="")
+    cv_version = Column(Integer, default=1, nullable=False)  # bumps on re-upload
     source_email_id = Column(Integer, ForeignKey("emails.id"), nullable=True)
     notes = Column(Text, default="")
 

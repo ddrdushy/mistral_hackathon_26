@@ -30,6 +30,7 @@ def _candidate_to_response(c: Candidate) -> dict:
         "phone": c.phone,
         "resume_text": c.resume_text,
         "resume_filename": c.resume_filename,
+        "cv_version": c.cv_version or 1,
         "source_email_id": c.source_email_id,
         "notes": c.notes,
         "profile": {
@@ -130,6 +131,65 @@ async def create_from_email(
     }
 
 
+@router.post("/parse")
+async def parse_resume(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(current_session),
+):
+    """Pre-parse a CV without saving — returns name/email/phone the UI can
+    use to pre-fill the upload form. Also reports whether a candidate with
+    that email already exists in the tenant so HR knows it'll bump CV
+    version instead of creating a duplicate."""
+    file_bytes = await file.read()
+    if not file_bytes:
+        raise HTTPException(status_code=400, detail="Empty file")
+    filename = file.filename or "resume.pdf"
+    if not filename.lower().endswith((".pdf", ".docx", ".doc", ".txt", ".tex")):
+        raise HTTPException(status_code=400, detail="Unsupported file type")
+    try:
+        text = extract_resume_text(filename, file_bytes=file_bytes)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not parse: {e}")
+    contact = parse_contact_info(text or "")
+
+    existing = None
+    parsed_email = (contact.get("email") or "").strip().lower()
+    if parsed_email:
+        existing = db.query(Candidate).filter(
+            Candidate.tenant_id == session.tenant.id,
+            Candidate.email.ilike(parsed_email),
+        ).first()
+
+    return {
+        "name": contact.get("name", "") or "",
+        "email": contact.get("email", "") or "",
+        "phone": contact.get("phone", "") or "",
+        "resume_length": len(text or ""),
+        "existing_candidate": (
+            {
+                "id": existing.id,
+                "name": existing.name,
+                "current_version": existing.cv_version or 1,
+                "next_version": (existing.cv_version or 1) + 1,
+            }
+            if existing
+            else None
+        ),
+    }
+
+
+def _find_existing_candidate(db: Session, tenant_id: int, email: str) -> Optional[Candidate]:
+    """Match by email (case-insensitive). None if no match or email empty."""
+    e = (email or "").strip().lower()
+    if not e or e.startswith("unknown+"):
+        return None
+    return db.query(Candidate).filter(
+        Candidate.tenant_id == tenant_id,
+        Candidate.email.ilike(e),
+    ).first()
+
+
 @router.post("/upload")
 async def upload_candidate(
     file: UploadFile = File(...),
@@ -187,17 +247,38 @@ async def upload_candidate(
         # fill it in.
         final_email = f"unknown+{int(datetime.utcnow().timestamp())}@uploaded.local"
 
-    candidate = Candidate(
-        tenant_id=session.tenant.id,
-        name=final_name,
-        email=final_email,
-        phone=final_phone,
-        resume_text=resume_text,
-        resume_filename=filename,
-        notes=(notes or "").strip(),
-        source_email_id=None,
-    )
-    db.add(candidate)
+    # Dedup by email — same candidate re-uploading bumps cv_version instead
+    # of creating a duplicate row. Profile is re-extracted from the new
+    # resume so tags reflect the latest CV.
+    existing = _find_existing_candidate(db, session.tenant.id, final_email)
+    is_update = existing is not None
+    if existing:
+        candidate = existing
+        candidate.resume_text = resume_text
+        candidate.resume_filename = filename
+        candidate.cv_version = (candidate.cv_version or 1) + 1
+        if final_phone:
+            candidate.phone = final_phone
+        if name and name.strip():
+            candidate.name = final_name
+        if notes and notes.strip():
+            candidate.notes = (notes or "").strip()
+        candidate.updated_at = datetime.utcnow()
+        # Force re-extraction so tags follow the new CV.
+        candidate.profile_extracted_at = None
+    else:
+        candidate = Candidate(
+            tenant_id=session.tenant.id,
+            name=final_name,
+            email=final_email,
+            phone=final_phone,
+            resume_text=resume_text,
+            resume_filename=filename,
+            notes=(notes or "").strip(),
+            source_email_id=None,
+            cv_version=1,
+        )
+        db.add(candidate)
     db.commit()
     db.refresh(candidate)
 
@@ -225,6 +306,8 @@ async def upload_candidate(
     return {
         "candidate": _candidate_to_response(candidate),
         "resume_length": len(resume_text),
+        "is_update": is_update,
+        "cv_version": candidate.cv_version or 1,
         "parsed": {
             "name_from_resume": contact.get("name", "") or "",
             "email_from_resume": contact.get("email", "") or "",
@@ -289,16 +372,31 @@ async def upload_candidates_bulk(
 
             contact = parse_contact_info(resume_text)
             placeholder_email = f"unknown+{int(datetime.utcnow().timestamp())}-{successes}@uploaded.local"
-            candidate = Candidate(
-                tenant_id=session.tenant.id,
-                name=(contact.get("name") or fname.rsplit(".", 1)[0])[:80],
-                email=(contact.get("email") or placeholder_email),
-                phone=contact.get("phone", ""),
-                resume_text=resume_text,
-                resume_filename=fname,
-                source_email_id=None,
-            )
-            db.add(candidate)
+            parsed_email = (contact.get("email") or "").strip()
+
+            existing = _find_existing_candidate(db, session.tenant.id, parsed_email)
+            is_update = existing is not None
+            if existing:
+                candidate = existing
+                candidate.resume_text = resume_text
+                candidate.resume_filename = fname
+                candidate.cv_version = (candidate.cv_version or 1) + 1
+                if contact.get("phone"):
+                    candidate.phone = contact["phone"]
+                candidate.updated_at = datetime.utcnow()
+                candidate.profile_extracted_at = None
+            else:
+                candidate = Candidate(
+                    tenant_id=session.tenant.id,
+                    name=(contact.get("name") or fname.rsplit(".", 1)[0])[:80],
+                    email=(parsed_email or placeholder_email),
+                    phone=contact.get("phone", ""),
+                    resume_text=resume_text,
+                    resume_filename=fname,
+                    source_email_id=None,
+                    cv_version=1,
+                )
+                db.add(candidate)
             db.commit()
             db.refresh(candidate)
 
@@ -313,6 +411,8 @@ async def upload_candidates_bulk(
 
             item["ok"] = True
             item["candidate"] = _candidate_to_response(candidate)
+            item["is_update"] = is_update
+            item["cv_version"] = candidate.cv_version or 1
             successes += 1
         except Exception as e:
             db.rollback()

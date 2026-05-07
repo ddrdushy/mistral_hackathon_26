@@ -172,6 +172,20 @@ def _run_migrations():
                 except Exception:
                     pass
 
+    # CV version counter — bumps when HR re-uploads a CV for an existing
+    # candidate (matched by email), so we don't create duplicates and the UI
+    # can show "v2", "v3" etc.
+    if "candidates" in insp.get_table_names():
+        existing = {c["name"] for c in insp.get_columns("candidates")}
+        if "cv_version" not in existing:
+            with engine.begin() as conn:
+                try:
+                    conn.execute(text(
+                        "ALTER TABLE candidates ADD COLUMN cv_version INTEGER NOT NULL DEFAULT 1"
+                    ))
+                except Exception:
+                    pass
+
     # Talent-bank profile fields on candidates — added so HR can suggest
     # past resumes for new jobs without re-running the LLM scorer.
     if "candidates" in insp.get_table_names():

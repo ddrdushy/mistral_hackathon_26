@@ -16,6 +16,7 @@ interface TalentBankCandidate {
   email: string;
   phone: string;
   resume_filename: string;
+  cv_version?: number;
   application_count: number;
   profile?: {
     role?: string;
@@ -202,6 +203,11 @@ export default function TalentBankPage() {
                 {c.resume_filename && (
                   <span className="truncate">{c.resume_filename}</span>
                 )}
+                {(c.cv_version ?? 1) > 1 && (
+                  <span className="px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 font-medium">
+                    v{c.cv_version}
+                  </span>
+                )}
                 {c.created_at && (
                   <span className="ml-auto flex-shrink-0">
                     {timeAgo(c.created_at)}
@@ -241,6 +247,19 @@ interface UploadedSummary {
   };
 }
 
+interface ParseResult {
+  name: string;
+  email: string;
+  phone: string;
+  resume_length: number;
+  existing_candidate: {
+    id: number;
+    name: string;
+    current_version: number;
+    next_version: number;
+  } | null;
+}
+
 function UploadCvDialog({
   open,
   onClose,
@@ -255,8 +274,10 @@ function UploadCvDialog({
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [busy, setBusy] = useState(false);
+  const [parsing, setParsing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [results, setResults] = useState<UploadedSummary[] | null>(null);
+  const [parsed, setParsed] = useState<ParseResult | null>(null);
 
   if (!open) return null;
 
@@ -267,6 +288,34 @@ function UploadCvDialog({
     setPhone("");
     setError(null);
     setResults(null);
+    setParsed(null);
+  };
+
+  const onFilesChange = async (next: File[]) => {
+    setFiles(next);
+    setParsed(null);
+    if (next.length !== 1) return;
+    try {
+      setParsing(true);
+      const fd = new FormData();
+      fd.append("file", next[0]);
+      const res = await fetch(`${API_BASE}/candidates/parse`, {
+        method: "POST",
+        credentials: "include",
+        body: fd,
+      });
+      if (!res.ok) return;
+      const data = (await res.json()) as ParseResult;
+      setParsed(data);
+      // Pre-fill the override fields ONLY if user hasn't typed anything yet.
+      if (!name && data.name) setName(data.name);
+      if (!email && data.email) setEmail(data.email);
+      if (!phone && data.phone) setPhone(data.phone);
+    } catch {
+      // Pre-parse is best-effort; submit still works even if it fails.
+    } finally {
+      setParsing(false);
+    }
   };
 
   const submit = async (e: React.FormEvent) => {
@@ -366,10 +415,22 @@ function UploadCvDialog({
               type="file"
               accept=".pdf,.docx,.doc,.txt,.tex"
               multiple
-              onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
+              onChange={(e) => onFilesChange(Array.from(e.target.files ?? []))}
               className="block w-full text-sm text-slate-700 file:mr-3 file:py-2 file:px-3 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 cursor-pointer"
               required
             />
+            {parsing && (
+              <p className="text-xs text-indigo-600 mt-1.5">
+                Parsing CV...
+              </p>
+            )}
+            {parsed?.existing_candidate && (
+              <div className="mt-2 text-xs bg-amber-50 border border-amber-200 text-amber-800 rounded-md px-3 py-2">
+                <span className="font-semibold">{parsed.existing_candidate.name}</span>{" "}
+                already exists (v{parsed.existing_candidate.current_version}).
+                This upload will save as <strong>v{parsed.existing_candidate.next_version}</strong> on the same candidate.
+              </div>
+            )}
             {files.length > 0 && (
               <ul className="mt-2 max-h-32 overflow-y-auto text-xs text-slate-600 space-y-0.5">
                 {files.map((f, i) => (
