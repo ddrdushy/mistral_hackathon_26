@@ -116,6 +116,9 @@ function CandidatesTracker() {
   const [loading, setLoading] = useState(true);
   const [jobsLoading, setJobsLoading] = useState(true);
 
+  // ── Upload CV dialog state ──────────────────────────────────────────────
+  const [uploadOpen, setUploadOpen] = useState(false);
+
   // ── Match dialog state ──────────────────────────────────────────────────
   const [matchOpen, setMatchOpen] = useState(false);
   const [candidates, setCandidates] = useState<Candidate[]>([]);
@@ -373,6 +376,13 @@ function CandidatesTracker() {
             Export CSV
           </button>
           <button
+            onClick={() => setUploadOpen(true)}
+            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors shadow-sm"
+          >
+            <ArrowDownTrayIcon className="h-4 w-4 rotate-180" />
+            Upload CV
+          </button>
+          <button
             onClick={openMatchDialog}
             className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors shadow-sm"
           >
@@ -381,6 +391,15 @@ function CandidatesTracker() {
           </button>
         </div>
       </div>
+
+      <UploadCvDialog
+        open={uploadOpen}
+        onClose={() => setUploadOpen(false)}
+        onUploaded={() => {
+          setUploadOpen(false);
+          fetchApplications();
+        }}
+      />
 
       {/* ── Filter Bar ──────────────────────────────────────────────────── */}
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
@@ -931,4 +950,165 @@ function generatePageNumbers(
   }
 
   return pages;
+}
+
+function UploadCvDialog({
+  open,
+  onClose,
+  onUploaded,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onUploaded: () => void;
+}) {
+  const [file, setFile] = useState<File | null>(null);
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  if (!open) return null;
+
+  const reset = () => {
+    setFile(null);
+    setName("");
+    setEmail("");
+    setPhone("");
+    setError(null);
+  };
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!file) {
+      setError("Pick a CV file first");
+      return;
+    }
+    try {
+      setBusy(true);
+      setError(null);
+      const fd = new FormData();
+      fd.append("file", file);
+      if (name.trim()) fd.append("name", name.trim());
+      if (email.trim()) fd.append("email", email.trim());
+      if (phone.trim()) fd.append("phone", phone.trim());
+      const res = await fetch(`${API_BASE}/candidates/upload`, {
+        method: "POST",
+        credentials: "include",
+        body: fd,
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.detail || `Upload failed (${res.status})`);
+      }
+      reset();
+      onUploaded();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Upload failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50"
+      onClick={onClose}
+    >
+      <form
+        onClick={(e) => e.stopPropagation()}
+        onSubmit={submit}
+        className="bg-white rounded-xl shadow-xl border border-slate-200 w-full max-w-lg"
+      >
+        <div className="px-6 py-4 border-b border-slate-200">
+          <h2 className="text-base font-semibold text-slate-900">Upload CV</h2>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Drop a resume into the talent bank. We&apos;ll parse contact info
+            and tag it for future job matches automatically.
+          </p>
+        </div>
+        <div className="px-6 py-4 space-y-4">
+          <div>
+            <label className="block text-xs font-medium text-slate-600 uppercase tracking-wider mb-1.5">
+              CV file
+            </label>
+            <input
+              type="file"
+              accept=".pdf,.docx,.doc,.txt,.tex"
+              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+              className="block w-full text-sm text-slate-700 file:mr-3 file:py-2 file:px-3 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 cursor-pointer"
+              required
+            />
+            {file && (
+              <p className="text-xs text-slate-500 mt-1.5">
+                {file.name} · {(file.size / 1024).toFixed(0)} KB
+              </p>
+            )}
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-slate-600 uppercase tracking-wider mb-1.5">
+                Name <span className="text-slate-400 normal-case">(optional)</span>
+              </label>
+              <input
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Auto-detected from CV"
+                className="w-full px-3 py-2 text-sm border border-slate-300 rounded-md focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-600 uppercase tracking-wider mb-1.5">
+                Email <span className="text-slate-400 normal-case">(optional)</span>
+              </label>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="Auto-detected from CV"
+                className="w-full px-3 py-2 text-sm border border-slate-300 rounded-md focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-600 uppercase tracking-wider mb-1.5">
+              Phone <span className="text-slate-400 normal-case">(optional)</span>
+            </label>
+            <input
+              type="tel"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              placeholder="Auto-detected from CV"
+              className="w-full px-3 py-2 text-sm border border-slate-300 rounded-md focus:outline-none focus:ring-1 focus:ring-indigo-500"
+            />
+          </div>
+          {error && (
+            <p className="text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-md px-3 py-2">
+              {error}
+            </p>
+          )}
+        </div>
+        <div className="px-6 py-3 border-t border-slate-200 flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              reset();
+              onClose();
+            }}
+            className="px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-100 rounded-md"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={busy || !file}
+            className="px-4 py-1.5 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-md disabled:opacity-50"
+          >
+            {busy ? "Uploading..." : "Upload to talent bank"}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
 }

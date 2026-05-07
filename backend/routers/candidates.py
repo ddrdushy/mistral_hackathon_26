@@ -2,7 +2,7 @@
 from typing import Optional
 import json
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlalchemy.orm import Session
 from database import get_db
 from models import Candidate, Email
@@ -110,6 +110,100 @@ async def create_from_email(
         "candidate": _candidate_to_response(candidate),
         "resume_extracted": bool(resume_text),
         "resume_length": len(resume_text),
+    }
+
+
+@router.post("/upload")
+async def upload_candidate(
+    file: UploadFile = File(...),
+    name: Optional[str] = Form(None),
+    email: Optional[str] = Form(None),
+    phone: Optional[str] = Form(None),
+    notes: Optional[str] = Form(None),
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(current_session),
+):
+    """Create a new candidate from an uploaded CV file.
+
+    Use this to drop walk-in resumes / linkedin downloads / past CV stacks
+    straight into the talent bank without needing an inbound email. We
+    extract text from the file, parse name+email+phone if not provided,
+    save the candidate, and kick off profile extraction in the background
+    so the candidate is searchable for future jobs immediately.
+    """
+    check_quota(db, session.tenant, "candidates")
+
+    file_bytes = await file.read()
+    if not file_bytes:
+        raise HTTPException(status_code=400, detail="Empty file")
+
+    filename = file.filename or "resume.pdf"
+    if not filename.lower().endswith((".pdf", ".docx", ".doc", ".txt", ".tex")):
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported file type — upload a PDF, DOCX, DOC, TXT, or TEX",
+        )
+
+    try:
+        resume_text = extract_resume_text(filename, file_bytes=file_bytes)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not parse resume: {e}")
+
+    if not resume_text or not resume_text.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="No text extractable from this file — try a different format",
+        )
+
+    contact = parse_contact_info(resume_text)
+    final_name = (name or contact.get("name") or "").strip()
+    final_email = (email or contact.get("email") or "").strip()
+    final_phone = (phone or contact.get("phone") or "").strip()
+
+    if not final_name:
+        # Last resort — derive a placeholder so the row is usable. HR can
+        # rename in the UI.
+        final_name = (filename.rsplit(".", 1)[0] or "Untitled candidate")[:80]
+    if not final_email:
+        # Email is "nullable but expected" everywhere downstream; placeholder
+        # keeps queries safe and surfaces in the UI as "no email" so HR can
+        # fill it in.
+        final_email = f"unknown+{int(datetime.utcnow().timestamp())}@uploaded.local"
+
+    candidate = Candidate(
+        tenant_id=session.tenant.id,
+        name=final_name,
+        email=final_email,
+        phone=final_phone,
+        resume_text=resume_text,
+        resume_filename=filename,
+        notes=(notes or "").strip(),
+        source_email_id=None,
+    )
+    db.add(candidate)
+    db.commit()
+    db.refresh(candidate)
+
+    # Kick off background profile extraction so the upload shows up in the
+    # talent bank straight away. If the loop isn't running (sync test
+    # context) we just skip — the suggested-candidates endpoint lazy-fills.
+    try:
+        import asyncio
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            from services.workflow_service import _async_apply_profile
+            loop.create_task(_async_apply_profile(candidate.id))
+    except Exception:
+        pass
+
+    return {
+        "candidate": _candidate_to_response(candidate),
+        "resume_length": len(resume_text),
+        "parsed": {
+            "name_from_resume": contact.get("name", "") or "",
+            "email_from_resume": contact.get("email", "") or "",
+            "phone_from_resume": contact.get("phone", "") or "",
+        },
     }
 
 
