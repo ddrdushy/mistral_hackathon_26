@@ -366,23 +366,50 @@ async def upload_resume(
 @router.get("")
 async def list_candidates(
     search: Optional[str] = None,
+    talent_bank_only: bool = False,
     page: int = 1,
     per_page: int = 20,
     db: Session = Depends(get_db),
     session: CurrentSession = Depends(current_session),
 ):
+    """List candidates. talent_bank_only=true filters to candidates with no
+    Application rows — i.e. uploaded CVs and unmatched email-sourced
+    candidates that are sitting in the talent bank waiting for a job."""
+    from models import Application
     query = db.query(Candidate).filter(Candidate.tenant_id == session.tenant.id)
     if search:
         query = query.filter(
             (Candidate.name.ilike(f"%{search}%")) |
             (Candidate.email.ilike(f"%{search}%"))
         )
+    if talent_bank_only:
+        applied_ids = db.query(Application.candidate_id).filter(
+            Application.tenant_id == session.tenant.id
+        ).distinct().subquery()
+        query = query.filter(~Candidate.id.in_(applied_ids))
 
     total = query.count()
     candidates = query.order_by(Candidate.created_at.desc()).offset((page - 1) * per_page).limit(per_page).all()
 
+    # Application counts in one round-trip (avoids N+1)
+    cand_ids = [c.id for c in candidates]
+    app_counts: dict[int, int] = {}
+    if cand_ids:
+        from sqlalchemy import func
+        rows = db.query(Application.candidate_id, func.count(Application.id)).filter(
+            Application.tenant_id == session.tenant.id,
+            Application.candidate_id.in_(cand_ids),
+        ).group_by(Application.candidate_id).all()
+        app_counts = {cid: n for cid, n in rows}
+
+    out = []
+    for c in candidates:
+        row = _candidate_to_response(c)
+        row["application_count"] = app_counts.get(c.id, 0)
+        out.append(row)
+
     return {
-        "candidates": [_candidate_to_response(c) for c in candidates],
+        "candidates": out,
         "total": total,
         "page": page,
         "per_page": per_page,
