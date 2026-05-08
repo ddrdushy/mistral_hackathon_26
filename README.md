@@ -24,6 +24,9 @@ app_port: 7860
 
 Production-grade agentic HR automation platform powered by Mistral AI and ElevenLabs.
 
+> **Full project docs: [DOCS.md](DOCS.md)** — architecture, schema, API reference, integrations, deployment, troubleshooting.
+> **Deployment guides: [DEPLOY.md](DEPLOY.md) (Docker)** · **[deploy/NATIVE_DEPLOY.md](deploy/NATIVE_DEPLOY.md) (bare-metal VPS)**
+
 ## What It Does
 
 HireOps AI automates the hiring pipeline end-to-end:
