@@ -72,6 +72,7 @@ def enqueue(
 def list_calls(
     candidate_id: Optional[int] = None,
     status: Optional[str] = None,
+    purpose: Optional[str] = None,
     limit: int = 100,
     db: Session = Depends(get_db),
     session: CurrentSession = Depends(current_session),
@@ -80,9 +81,50 @@ def list_calls(
     if candidate_id is not None:
         q = q.filter(CallQueue.candidate_id == candidate_id)
     if status:
-        q = q.filter(CallQueue.status == status)
+        # Comma-separated status filter so the UI can request "pending,in_progress" in one go.
+        statuses = [s.strip() for s in status.split(",") if s.strip()]
+        if statuses:
+            q = q.filter(CallQueue.status.in_(statuses))
+    if purpose:
+        q = q.filter(CallQueue.purpose == purpose)
     rows = q.order_by(CallQueue.scheduled_for.desc()).limit(min(limit, 500)).all()
-    return {"calls": [call_queue_service.to_response(r) for r in rows]}
+
+    # Hydrate with candidate name/email so the queue list page doesn't have
+    # to do per-row lookups.
+    cand_ids = list({r.candidate_id for r in rows if r.candidate_id})
+    cand_map: dict[int, dict] = {}
+    if cand_ids:
+        for c in db.query(Candidate).filter(Candidate.id.in_(cand_ids)).all():
+            cand_map[c.id] = {"id": c.id, "name": c.name, "email": c.email}
+
+    out = []
+    for r in rows:
+        item = call_queue_service.to_response(r)
+        item["candidate"] = cand_map.get(r.candidate_id)
+        out.append(item)
+    return {"calls": out}
+
+
+@router.get("/summary")
+def calls_summary(
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(current_session),
+):
+    """Tenant-wide counters for the Call Queue page header."""
+    from sqlalchemy import func
+    rows = db.query(CallQueue.status, func.count(CallQueue.id)).filter(
+        CallQueue.tenant_id == session.tenant.id,
+    ).group_by(CallQueue.status).all()
+    counts = {s: n for s, n in rows}
+    return {
+        "pending": counts.get("pending", 0),
+        "in_progress": counts.get("in_progress", 0),
+        "completed": counts.get("completed", 0),
+        "failed": counts.get("failed", 0),
+        "cancelled": counts.get("cancelled", 0),
+        "rescheduled": counts.get("rescheduled", 0),
+        "total": sum(counts.values()),
+    }
 
 
 @router.post("/{call_id}/cancel")

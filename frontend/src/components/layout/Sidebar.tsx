@@ -12,6 +12,7 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   BookmarkSquareIcon,
+  PhoneIcon,
 } from "@heroicons/react/24/outline";
 
 interface NavItem {
@@ -26,6 +27,7 @@ const navItems: NavItem[] = [
   { label: "Jobs", href: "/jobs", icon: BriefcaseIcon },
   { label: "Candidates", href: "/candidates", icon: UsersIcon },
   { label: "Talent Bank", href: "/talent-bank", icon: BookmarkSquareIcon },
+  { label: "Call Queue", href: "/calls", icon: PhoneIcon },
   { label: "Reports", href: "/reports", icon: ChartBarIcon },
   { label: "Settings", href: "/settings", icon: Cog6ToothIcon },
 ];
