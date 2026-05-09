@@ -390,6 +390,41 @@ class Communication(Base):
     delivered_at = Column(DateTime, nullable=True)
 
 
+class JobInterviewQuestion(Base):
+    """Per-job custom interview question (Feature 4 of ENTERPRISE_FEATURES.md).
+
+    The Q&A agent prepends required questions to its technical round. The
+    voice agent (ElevenLabs) receives them via dynamic_variables so the
+    Conversational AI agent's prompt template (configured in the
+    ElevenLabs console — operator action) can reference them.
+
+    Per-question scoring uses expected_keywords (overlap × weight) and
+    optionally an expected_answer_summary as a reference.
+    """
+    __tablename__ = "job_interview_questions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
+    job_id = Column(Integer, ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    question_text = Column(Text, nullable=False)
+    question_type = Column(String, default="behavioural")
+    # behavioural | technical | situational | culture_fit | custom
+
+    order_index = Column(Integer, default=0)
+    is_required = Column(Boolean, default=False)
+    weight = Column(Integer, default=3)  # 1-5
+    expected_keywords = Column(Text, default="[]")  # JSON array of strings
+    expected_answer_summary = Column(Text, default="")
+
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        Index("idx_job_interview_questions_job_order", "job_id", "order_index"),
+    )
+
+
 class Tag(Base):
     """Tenant-scoped candidate tag.
 

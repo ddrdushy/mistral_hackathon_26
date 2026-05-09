@@ -792,6 +792,29 @@ async def get_interview_link_public(token: str, db: Session = Depends(get_db)):
         except (json.JSONDecodeError, TypeError):
             pass
 
+    # Custom interview questions (Feature 4) — surfaced for the voice
+    # interview room to pass into ElevenLabs as dynamic_variables.
+    custom_questions: list[dict] = []
+    if job and app:
+        from models import JobInterviewQuestion as _JobQ
+        rows = db.query(_JobQ).filter(
+            _JobQ.job_id == job.id,
+            _JobQ.tenant_id == app.tenant_id,
+        ).order_by(_JobQ.order_index.asc(), _JobQ.id.asc()).all()
+        for q in rows:
+            try:
+                kw = json.loads(q.expected_keywords or "[]")
+            except Exception:
+                kw = []
+            custom_questions.append({
+                "id": q.id,
+                "text": q.question_text,
+                "type": q.question_type or "behavioural",
+                "weight": q.weight or 3,
+                "is_required": bool(q.is_required),
+                "expected_keywords": kw,
+            })
+
     return InterviewLinkPublicResponse(
         token=token,
         status=link.status,
@@ -801,6 +824,7 @@ async def get_interview_link_public(token: str, db: Session = Depends(get_db)):
         company_name=company,
         elevenlabs_agent_id=agent_id,
         screening_questions=screening_questions,
+        custom_questions=custom_questions,
         is_valid=True,
         scheduled_at=scheduled_at_iso,
         available_in_minutes=None,
@@ -1427,6 +1451,25 @@ async def qa_start(token: str, db: Session = Depends(get_db)):
         except (json.JSONDecodeError, TypeError):
             skills = []
 
+        # Custom interview questions for this job (Feature 4) — required
+        # ones get forced into the technical round; optional ones nudge
+        # the LLM's prompt.
+        from models import JobInterviewQuestion as _JobQ
+        custom_q_rows = db.query(_JobQ).filter(
+            _JobQ.job_id == job.id,
+            _JobQ.tenant_id == app.tenant_id,
+        ).order_by(_JobQ.order_index.asc(), _JobQ.id.asc()).all()
+        custom_questions_payload = [
+            {
+                "id": q.id,
+                "question_text": q.question_text,
+                "question_type": q.question_type or "behavioural",
+                "is_required": bool(q.is_required),
+                "weight": q.weight or 3,
+            }
+            for q in custom_q_rows
+        ]
+
         questions = generate_question_set(QaGenerateInput(
             candidate_name=candidate.name,
             resume_text=candidate.resume_text or "",
@@ -1434,6 +1477,7 @@ async def qa_start(token: str, db: Session = Depends(get_db)):
             job_description=job.description or "",
             required_skills=skills,
             seniority=job.seniority or "mid",
+            custom_questions=custom_questions_payload,
         ))
 
         session = QaSession(

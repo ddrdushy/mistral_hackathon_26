@@ -35,6 +35,11 @@ class QaGenerateInput:
     job_description: str
     required_skills: List[str]
     seniority: str = "mid"
+    # Per-job custom interview questions (Feature 4). Required ones are
+    # injected ahead of LLM-generated technical questions so HR's must-ask
+    # list always appears in the interview. Non-required questions
+    # influence the prompt as suggestions.
+    custom_questions: List[Dict[str, Any]] = None  # type: ignore[assignment]
 
 
 def _client():
@@ -49,16 +54,38 @@ def generate_question_set(input_data: QaGenerateInput) -> Dict[str, List[Dict[st
       {
         "aptitude":  [{text, options:[4 strings], correct_index:int}, ...],
         "reasoning": [{text, options:[4 strings], correct_index:int}, ...],
-        "technical": [{text}, ...]
+        "technical": [{text, custom_question_id?: int, weight?: int}, ...]
       }
+
+    Custom required questions (Feature 4) are prepended to the technical
+    round and the LLM is told to fill the remaining slots — so a job
+    with 3 required questions and QUESTIONS_PER_ROUND=3 gets exactly
+    those 3 (no LLM-generated technical questions added).
     """
     if USE_MOCK or not os.environ.get("MISTRAL_API_KEY"):
         return _mock_questions(input_data)
 
+    # Required custom questions occupy technical-round slots first.
+    custom_qs = list(input_data.custom_questions or [])
+    required_custom = [q for q in custom_qs if q.get("is_required")]
+    suggested_custom = [q for q in custom_qs if not q.get("is_required")]
+    technical_slots_to_fill = max(0, QUESTIONS_PER_ROUND - len(required_custom))
+
     try:
         from services.llm_tracker import LLMCallTimer
 
-        prompt = f"""You are an expert technical interviewer designing a written first-round screening for ONE specific candidate. Generate a 3-round Q&A interview, EXACTLY {QUESTIONS_PER_ROUND} questions per round.
+        custom_block = ""
+        if suggested_custom:
+            sug_lines = "\n".join(
+                f"- {q.get('question_text','')[:200]} (type={q.get('question_type','')})"
+                for q in suggested_custom[:8]
+            )
+            custom_block = (
+                "\n\nHR HAS SUGGESTED THESE QUESTIONS — match their style and topic for the technical round:\n"
+                + sug_lines
+            )
+
+        prompt = f"""You are an expert technical interviewer designing a written first-round screening for ONE specific candidate. Generate a 3-round Q&A interview, EXACTLY {QUESTIONS_PER_ROUND} questions per round.{custom_block}
 
 CANDIDATE
 - Name: {input_data.candidate_name}
@@ -75,7 +102,7 @@ JOB
 ROUND DESIGN
 1. "aptitude" — {QUESTIONS_PER_ROUND} MULTIPLE CHOICE questions on quantitative reasoning, pattern recognition, and basic logic. Role-relevant where it makes sense. Each question MUST have exactly {OPTIONS_PER_MCQ} options and EXACTLY one correct answer.
 2. "reasoning" — {QUESTIONS_PER_ROUND} MULTIPLE CHOICE situational/analytical questions with realistic role-relevant scenarios. Plausible distractors that test judgment, not just recall. Each question MUST have exactly {OPTIONS_PER_MCQ} options and EXACTLY one correct answer.
-3. "technical" — {QUESTIONS_PER_ROUND} FREE-FORM questions grounded in the CANDIDATE'S RESUME. Reference specific tools/projects/claims they made and probe one level deeper. If the resume is sparse, ask about the required job skills. Free-form, no options.
+3. "technical" — {technical_slots_to_fill} FREE-FORM questions grounded in the CANDIDATE'S RESUME. Reference specific tools/projects/claims they made and probe one level deeper. If the resume is sparse, ask about the required job skills. Free-form, no options.
 
 STRICT RULES
 - Each question is unique and self-contained.
@@ -95,7 +122,7 @@ OUTPUT SCHEMA
   ],
   "technical": [
     {{ "text": "..." }},
-    ... 3 total
+    ... {technical_slots_to_fill} total
   ]
 }}"""
 
@@ -112,7 +139,25 @@ OUTPUT SCHEMA
                 timer.output_tokens = usage.completion_tokens
 
         result = json.loads(response.choices[0].message.content)
-        return _validate_and_normalise(result, input_data)
+        normalised = _validate_and_normalise(result, input_data)
+        # Prepend required custom questions to the technical round so HR's
+        # must-ask list is always covered, regardless of what the LLM
+        # produced. We replace the technical round entirely if there are
+        # already enough required questions.
+        if required_custom:
+            forced = [
+                {
+                    "text": q.get("question_text", "").strip(),
+                    "custom_question_id": q.get("id"),
+                    "weight": q.get("weight", 3),
+                }
+                for q in required_custom
+                if q.get("question_text", "").strip()
+            ][:QUESTIONS_PER_ROUND]
+            existing_tech = normalised.get("technical") or []
+            slots_left = max(0, QUESTIONS_PER_ROUND - len(forced))
+            normalised["technical"] = forced + existing_tech[:slots_left]
+        return normalised
 
     except Exception as e:
         print(f"[qa_interview] generate fallback: {e}")

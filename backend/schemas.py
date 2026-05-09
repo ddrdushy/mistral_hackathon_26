@@ -342,6 +342,11 @@ class InterviewLinkPublicResponse(BaseModel):
     company_name: str
     elevenlabs_agent_id: str
     screening_questions: List[str] = []
+    # Per-job custom interview questions (Feature 4). Surfaced so the
+    # voice interview room can hand them to the ElevenLabs Conversational
+    # AI agent via dynamic_variables. The Q&A room reads them server-side
+    # via /qa/{token}/start and doesn't need this field.
+    custom_questions: List[dict] = []
     is_valid: bool
     error: Optional[str] = None
     # Time-gating for scheduled interviews
