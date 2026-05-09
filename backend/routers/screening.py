@@ -870,6 +870,55 @@ async def update_interview_status(token: str, req: InterviewStatusUpdateRequest,
 
         _log_event(db, link.app_id, "interview_completed", {"token": token})
 
+        # Record ElevenLabs voice usage for this interview so the tenant
+        # usage report shows voice spend alongside Mistral spend.
+        # Best-effort: pulls duration from ElevenLabs if a conversation_id
+        # is set; logs zero-duration row otherwise so call counts still
+        # show up.
+        try:
+            if app and app.tenant_id:
+                from services import elevenlabs_usage
+                duration = 0
+                chars = 0
+                if link.elevenlabs_conversation_id:
+                    meta = elevenlabs_usage.fetch_conversation_metadata(
+                        link.elevenlabs_conversation_id,
+                    )
+                    if meta:
+                        # ElevenLabs convai response shape: metadata.call_duration_secs
+                        # OR top-level call_duration_secs depending on version.
+                        md = meta.get("metadata") or {}
+                        duration = int(
+                            md.get("call_duration_secs")
+                            or meta.get("call_duration_secs")
+                            or 0
+                        )
+                        chars = int(
+                            md.get("character_count")
+                            or meta.get("character_count")
+                            or 0
+                        )
+                # Compute interview duration locally as a fallback
+                if duration == 0 and link.interview_started_at:
+                    duration = int(
+                        (link.interview_completed_at - link.interview_started_at)
+                        .total_seconds()
+                    )
+                elevenlabs_usage.record_voice_call(
+                    db,
+                    tenant_id=app.tenant_id,
+                    conversation_id=link.elevenlabs_conversation_id or "",
+                    duration_seconds=max(0, duration),
+                    character_count=chars,
+                    app_id=app.id,
+                )
+        except Exception as e:
+            # Don't fail the interview-completion webhook over a usage row.
+            import logging as _log
+            _log.getLogger("hireops.screening").warning(
+                "ElevenLabs usage logging failed for token %s: %s", token, e
+            )
+
     db.commit()
     return {"status": link.status, "token": token}
 

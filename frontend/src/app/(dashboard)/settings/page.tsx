@@ -190,6 +190,9 @@ export default function TenantSettingsPage() {
         </div>
       </div>
 
+      {/* ── ElevenLabs voice usage ────────────────────────────────────── */}
+      <VoiceUsagePanel />
+
       {/* ── Twilio integration (per-tenant WhatsApp / SMS) ────────────── */}
       <TwilioIntegrationPanel />
 
@@ -278,6 +281,175 @@ export default function TenantSettingsPage() {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+interface VoiceSubscription {
+  available: boolean;
+  error?: string;
+  tier?: string;
+  status?: string;
+  character_count?: number;
+  character_limit?: number;
+  characters_remaining?: number;
+  percent_used?: number;
+  next_character_count_reset_unix?: number | null;
+  voice_limit?: number;
+  professional_voice_limit?: number;
+}
+
+interface VoiceTenantSummary {
+  days: number;
+  calls: number;
+  characters: number;
+  seconds: number;
+  minutes: number;
+  estimated_cost_usd: number;
+  cost_per_minute_assumption: number;
+}
+
+function VoiceUsagePanel() {
+  const [data, setData] = useState<{
+    subscription: VoiceSubscription;
+    tenant: VoiceTenantSummary;
+  } | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancel = false;
+    (async () => {
+      try {
+        const res = await apiGet<{
+          subscription: VoiceSubscription;
+          tenant: VoiceTenantSummary;
+        }>("/settings/voice/usage");
+        if (!cancel) setData(res);
+      } catch {
+        if (!cancel) setData(null);
+      } finally {
+        if (!cancel) setLoading(false);
+      }
+    })();
+    return () => {
+      cancel = true;
+    };
+  }, []);
+
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-5 mb-6">
+      <div className="flex items-start justify-between gap-4 mb-4">
+        <div>
+          <h2 className="text-base font-semibold text-slate-900">
+            Voice usage (ElevenLabs)
+          </h2>
+          <p className="text-xs text-slate-500 mt-1 max-w-xl">
+            Conversational AI voice calls used for screening interviews.
+            Subscription is platform-wide; the tenant figure shows your share.
+          </p>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="h-24 bg-slate-100 rounded-md animate-pulse" />
+      ) : !data ? (
+        <p className="text-sm text-slate-500">Could not load voice usage.</p>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Live subscription */}
+          <div className="border border-slate-200 rounded-lg p-3">
+            <p className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-2">
+              Platform subscription
+            </p>
+            {!data.subscription.available ? (
+              <p className="text-sm text-slate-500">
+                {data.subscription.error || "Not available"}
+              </p>
+            ) : (
+              <>
+                <div className="flex items-baseline justify-between mb-1">
+                  <span className="text-sm text-slate-700">
+                    {data.subscription.tier || "Unknown tier"}
+                  </span>
+                  {data.subscription.status && (
+                    <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">
+                      {data.subscription.status}
+                    </span>
+                  )}
+                </div>
+                <div className="text-2xl font-semibold tabular-nums text-slate-900">
+                  {(data.subscription.character_count ?? 0).toLocaleString()}
+                  <span className="text-sm text-slate-500 font-normal">
+                    {" / "}
+                    {(data.subscription.character_limit ?? 0).toLocaleString()}
+                  </span>
+                </div>
+                <div className="mt-2 h-2 bg-slate-100 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full transition-all ${
+                      (data.subscription.percent_used ?? 0) >= 80
+                        ? "bg-rose-500"
+                        : (data.subscription.percent_used ?? 0) >= 50
+                        ? "bg-amber-500"
+                        : "bg-emerald-500"
+                    }`}
+                    style={{
+                      width: `${Math.min(
+                        100,
+                        data.subscription.percent_used ?? 0,
+                      )}%`,
+                    }}
+                  />
+                </div>
+                <div className="flex justify-between text-xs text-slate-500 mt-1">
+                  <span>
+                    {(data.subscription.characters_remaining ?? 0).toLocaleString()}{" "}
+                    chars left
+                  </span>
+                  <span>{data.subscription.percent_used ?? 0}% used</span>
+                </div>
+                {data.subscription.next_character_count_reset_unix && (
+                  <p className="text-[11px] text-slate-400 mt-2">
+                    Resets{" "}
+                    {new Date(
+                      data.subscription.next_character_count_reset_unix * 1000,
+                    ).toLocaleDateString()}
+                  </p>
+                )}
+              </>
+            )}
+          </div>
+
+          {/* Tenant share */}
+          <div className="border border-slate-200 rounded-lg p-3">
+            <p className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-2">
+              Your tenant · last {data.tenant.days} days
+            </p>
+            <div className="grid grid-cols-2 gap-3 mb-2">
+              <Stat label="Calls" value={data.tenant.calls.toLocaleString()} />
+              <Stat
+                label="Minutes"
+                value={data.tenant.minutes.toLocaleString()}
+              />
+              <Stat
+                label="Characters"
+                value={data.tenant.characters.toLocaleString()}
+              />
+              <Stat
+                label="Est. cost"
+                value={fmtMoney(data.tenant.estimated_cost_usd)}
+                accent
+              />
+            </div>
+            <p className="text-[11px] text-slate-400">
+              Cost estimate at $
+              {data.tenant.cost_per_minute_assumption.toFixed(2)}/min — set{" "}
+              <code className="font-mono">ELEVENLABS_COST_PER_MIN</code> to
+              match your tier.
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

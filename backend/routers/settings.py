@@ -262,6 +262,28 @@ async def llm_usage_logs(
     return {"logs": get_all_logs(limit)}
 
 
+@router.get("/voice/usage")
+async def voice_usage_report(
+    days: int = 30,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(current_session),
+):
+    """ElevenLabs voice usage — both the platform's live subscription
+    quota AND this tenant's own conversation rows from llm_usage.
+
+    The subscription part is platform-wide (all tenants share the
+    platform's ElevenLabs account); the tenant-scoped part shows how
+    much of that pie this specific tenant is consuming.
+    """
+    from services import elevenlabs_usage
+    return {
+        "subscription": elevenlabs_usage.fetch_subscription_summary(),
+        "tenant": elevenlabs_usage.tenant_voice_summary(
+            db, session.tenant.id, days=days,
+        ),
+    }
+
+
 # ═══════════════════════════════════════
 # SYSTEM CONFIGURATION
 # ═══════════════════════════════════════
