@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 import os
 import uuid
 from database import SessionLocal
-from models import Email, Candidate, Job, Application, Event, InterviewLink
+from models import Email, Candidate, Job, Application, Event, InterviewLink, ResumeFraudSignal
 from agents.email_classifier import classify_email, EmailClassifierInput
 from agents.resume_scorer import score_resume, ResumeScorerInput
 from services.resume_service import parse_contact_info
@@ -145,61 +145,131 @@ async def run_email_workflow(email_id: int, db: Session) -> Dict:
             })
             continue
 
+        # Fraud detection (Feature 1) — runs on the email's CV attachment
+        # bytes BEFORE scoring. Critical signals (white-on-white text,
+        # prompt injection telling the LLM to score 100) skip the scorer
+        # entirely so we don't reward adversarial CVs.
+        fraud_signals, fraud_score, fraud_blocked = _check_resume_fraud(em)
+
         # Score resume — pass full job context including responsibilities
         skills = json.loads(job.skills) if job.skills else []
         responsibilities = json.loads(job.responsibilities) if job.responsibilities else []
-        scorer_input = ResumeScorerInput(
-            resume_text=candidate.resume_text,
-            job_id=job.job_id,
-            job_title=job.title,
-            job_description=job.description,
-            must_have_skills=skills,
-            nice_to_have_skills=[],
-            seniority=job.seniority,
-            responsibilities=responsibilities,
-        )
-        score_result = await score_resume(scorer_input)
+        if fraud_blocked:
+            score_result = None
+        else:
+            scorer_input = ResumeScorerInput(
+                resume_text=candidate.resume_text,
+                job_id=job.job_id,
+                job_title=job.title,
+                job_description=job.description,
+                must_have_skills=skills,
+                nice_to_have_skills=[],
+                seniority=job.seniority,
+                responsibilities=responsibilities,
+            )
+            score_result = await score_resume(scorer_input)
 
-        application = Application(
-            tenant_id=em.tenant_id,
-            candidate_id=candidate.id,
-            job_id=job.id,
-            stage="matched",
-            resume_score=score_result.score,
-            resume_score_json=json.dumps({
-                "score": score_result.score,
-                "evidence": score_result.evidence,
-                "gaps": score_result.gaps,
-                "risks": score_result.risks,
-                "recommendation": score_result.recommendation,
-                "screening_questions": score_result.screening_questions,
-                "summary": score_result.summary,
-            }),
-            recommendation=score_result.recommendation,
-            ai_next_action=(
-                "Schedule voice screening" if score_result.recommendation == "advance"
-                else "Review manually" if score_result.recommendation == "hold"
-                else "Send rejection email"
-            ),
-            ai_snippets=json.dumps({
-                "why_shortlisted": score_result.why_shortlisted,
-                "key_strengths": score_result.key_strengths,
-                "main_gaps": score_result.main_gaps,
-                "interview_focus": score_result.interview_focus,
-            }),
-        )
+        if fraud_blocked:
+            # Blocked path — no LLM call, application visible to HR with the
+            # fraud banner so they can review the evidence before overriding.
+            application = Application(
+                tenant_id=em.tenant_id,
+                candidate_id=candidate.id,
+                job_id=job.id,
+                stage="matched",
+                resume_score=0,
+                resume_score_json=json.dumps({
+                    "score": 0,
+                    "summary": "Scoring blocked — resume contains adversarial content",
+                    "blocked_reason": "fraud_detected",
+                }),
+                recommendation="hold",
+                ai_next_action="Review fraud signals before scoring or rejecting",
+                ai_snippets=json.dumps({}),
+                fraud_score=fraud_score,
+                fraud_flags_count=len(fraud_signals),
+                fraud_blocked=True,
+            )
+        else:
+            application = Application(
+                tenant_id=em.tenant_id,
+                candidate_id=candidate.id,
+                job_id=job.id,
+                stage="matched",
+                resume_score=score_result.score,
+                resume_score_json=json.dumps({
+                    "score": score_result.score,
+                    "evidence": score_result.evidence,
+                    "gaps": score_result.gaps,
+                    "risks": score_result.risks,
+                    "recommendation": score_result.recommendation,
+                    "screening_questions": score_result.screening_questions,
+                    "summary": score_result.summary,
+                }),
+                recommendation=score_result.recommendation,
+                ai_next_action=(
+                    "Schedule voice screening" if score_result.recommendation == "advance"
+                    else "Review manually" if score_result.recommendation == "hold"
+                    else "Send rejection email"
+                ),
+                ai_snippets=json.dumps({
+                    "why_shortlisted": score_result.why_shortlisted,
+                    "key_strengths": score_result.key_strengths,
+                    "main_gaps": score_result.main_gaps,
+                    "interview_focus": score_result.interview_focus,
+                }),
+                fraud_score=fraud_score,
+                fraud_flags_count=len(fraud_signals),
+                fraud_blocked=False,
+            )
         db.add(application)
         db.commit()
         db.refresh(application)
+
+        # Persist fraud signal rows (now that we have application.id) and
+        # write an audit entry per blocked app so the tenant audit trail
+        # captures it.
+        if fraud_signals:
+            for sig in fraud_signals:
+                db.add(ResumeFraudSignal(
+                    tenant_id=em.tenant_id,
+                    application_id=application.id,
+                    candidate_id=candidate.id,
+                    signal_type=sig.signal_type,
+                    severity=sig.severity,
+                    evidence_json=json.dumps(sig.evidence, default=str),
+                ))
+            db.commit()
+            try:
+                from services.audit import write_audit
+                write_audit(
+                    db,
+                    action="fraud.detected" if not fraud_blocked else "fraud.blocked",
+                    actor=None,
+                    tenant_id=em.tenant_id,
+                    resource_type="application",
+                    resource_id=application.id,
+                    payload={
+                        "fraud_score": fraud_score,
+                        "flags": len(fraud_signals),
+                        "blocked": fraud_blocked,
+                        "signal_types": sorted({s.signal_type for s in fraud_signals}),
+                    },
+                    severity="critical" if fraud_blocked else "warning",
+                )
+            except Exception:
+                pass
 
         # Log event
         event = Event(
             tenant_id=em.tenant_id,
             app_id=application.id,
-            event_type="auto_workflow_matched",
+            event_type="auto_workflow_matched" if not fraud_blocked else "auto_workflow_fraud_blocked",
             payload=json.dumps({
-                "resume_score": score_result.score,
-                "recommendation": score_result.recommendation,
+                "resume_score": score_result.score if score_result else 0,
+                "recommendation": score_result.recommendation if score_result else "hold",
+                "fraud_score": fraud_score,
+                "fraud_blocked": fraud_blocked,
                 "trigger": "email_auto_workflow",
             }),
         )
@@ -207,8 +277,9 @@ async def run_email_workflow(email_id: int, db: Session) -> Dict:
         db.commit()
 
         # AUTO-INTERVIEW: If recommendation is "advance", auto-generate interview link
+        # (Skipped entirely when fraud_blocked — HR must override first.)
         interview_url = None
-        if score_result.recommendation == "advance":
+        if not fraud_blocked and score_result and score_result.recommendation == "advance":
             token = uuid.uuid4().hex
             link = InterviewLink(
                 tenant_id=em.tenant_id,
@@ -280,14 +351,22 @@ async def run_email_workflow(email_id: int, db: Session) -> Dict:
             "app_id": application.id,
             "job_id": job.id,
             "job_title": job.title,
-            "resume_score": score_result.score,
-            "recommendation": score_result.recommendation,
+            "resume_score": score_result.score if score_result else 0,
+            "recommendation": score_result.recommendation if score_result else "hold",
+            "fraud_score": fraud_score,
+            "fraud_blocked": fraud_blocked,
             "interview_url": interview_url,
         })
-        logger.info(
-            f"Matched candidate {candidate.name} → {job.title} "
-            f"(score: {score_result.score}, rec: {score_result.recommendation})"
-        )
+        if score_result:
+            logger.info(
+                f"Matched candidate {candidate.name} → {job.title} "
+                f"(score: {score_result.score}, rec: {score_result.recommendation})"
+            )
+        else:
+            logger.warning(
+                f"Fraud-blocked candidate {candidate.name} → {job.title} "
+                f"(fraud_score: {fraud_score}, flags: {len(fraud_signals)})"
+            )
 
     result["steps"].append({
         "step": "match_and_score",
@@ -317,6 +396,43 @@ async def run_workflow_for_new_emails(db: Session) -> List[Dict]:
             })
 
     return results
+
+
+def _check_resume_fraud(em: Email):
+    """Run the fraud detector against the email's CV attachment bytes.
+
+    Returns (signals, fraud_score, fraud_blocked). Empty / unblockable
+    when the email has no parsable attachment — caller treats that as
+    'no fraud signal' rather than a missing check.
+    """
+    try:
+        from services.fraud_detector import detect_fraud, compute_fraud_score
+    except Exception as e:
+        logger.warning("fraud_detector import failed: %s", e)
+        return [], 0, False
+
+    attachments = json.loads(em.attachments) if em.attachments else []
+    for att in attachments:
+        filename = att.get("filename", "")
+        content_b64 = att.get("content_b64", "")
+        if not content_b64:
+            continue
+        if not filename.lower().endswith(('.pdf', '.docx', '.doc', '.txt', '.tex')):
+            continue
+        try:
+            file_bytes = base64.b64decode(content_b64)
+        except Exception:
+            continue
+        try:
+            signals = detect_fraud(filename, file_bytes)
+        except Exception as e:
+            logger.warning("fraud detection failed for %s: %s", filename, e)
+            return [], 0, False
+        score = compute_fraud_score(signals)
+        blocked = any(s.severity == "critical" for s in signals)
+        return signals, score, blocked
+
+    return [], 0, False
 
 
 def _create_candidate_from_email(em: Email, db: Session) -> Candidate:

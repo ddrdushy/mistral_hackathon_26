@@ -390,6 +390,36 @@ class Communication(Base):
     delivered_at = Column(DateTime, nullable=True)
 
 
+class ResumeFraudSignal(Base):
+    """One row per fraud signal detected in a candidate's resume.
+
+    Feature 1 of ENTERPRISE_FEATURES.md. Detector runs on PDF/DOCX bytes
+    and emits zero or more signals; each is persisted here so HR can
+    audit AND so the timeline shows exactly what was flagged.
+
+    Severity weighting feeds Application.fraud_score:
+      critical=40, high=20, medium=10, low=5  (capped at 100)
+    Any 'critical' signal sets Application.fraud_blocked=True and the
+    workflow skips LLM scoring until an owner manually overrides.
+    """
+    __tablename__ = "resume_fraud_signals"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=True, index=True)
+    application_id = Column(Integer, ForeignKey("applications.id"), nullable=True, index=True)
+    candidate_id = Column(Integer, ForeignKey("candidates.id"), nullable=False, index=True)
+    cv_version_id = Column(Integer, ForeignKey("candidate_cv_versions.id"), nullable=True)
+
+    signal_type = Column(String, nullable=False, index=True)
+    # hidden_text_color | microtext | offpage_text | transparent_text |
+    # behind_image | prompt_injection | duplicate_content_glyph
+    severity = Column(String, nullable=False)  # low | medium | high | critical
+    evidence_json = Column(Text, default="{}")  # JSON-as-text for portability
+    detected_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    application = relationship("Application", back_populates="fraud_signals")
+
+
 class CandidateCvVersion(Base):
     """Archive of a candidate's prior CV every time it's replaced.
 
@@ -449,10 +479,26 @@ class Application(Base):
     final_score = Column(Float, nullable=True)
     final_summary = Column(Text, nullable=True)
 
+    # Resume fraud detection (Feature 1).
+    # 0-100, higher = more suspicious. >=20 surfaces a yellow banner; any
+    # critical signal sets fraud_blocked=True so the LLM scorer is skipped.
+    fraud_score = Column(Integer, default=0)
+    fraud_flags_count = Column(Integer, default=0)
+    fraud_blocked = Column(Boolean, default=False)
+    # Owner override — non-null when an owner manually unblocks an app.
+    fraud_overridden_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    fraud_override_reason = Column(Text, default="")
+    fraud_overridden_at = Column(DateTime, nullable=True)
+
     candidate = relationship("Candidate", back_populates="applications")
     job = relationship("Job", back_populates="applications")
     events = relationship("Event", back_populates="application")
     interview_links = relationship("InterviewLink", back_populates="application")
+    fraud_signals = relationship(
+        "ResumeFraudSignal",
+        back_populates="application",
+        cascade="all, delete-orphan",
+    )
 
     __table_args__ = (
         UniqueConstraint("candidate_id", "job_id", name="uq_candidate_job"),

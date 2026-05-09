@@ -2,8 +2,9 @@
 from typing import Optional
 import json
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
 from database import get_db
@@ -15,7 +16,7 @@ from schemas import (
 )
 from agents.resume_scorer import score_resume, ResumeScorerInput
 from services.csv_service import generate_applications_csv
-from auth.dependencies import current_session, CurrentSession
+from auth.dependencies import current_session, CurrentSession, require_owner
 from billing.cost_guard import check_llm_budget
 
 router = APIRouter(prefix="/api/v1/applications", tags=["applications"])
@@ -97,6 +98,11 @@ def _app_to_response(app: Application, db: Session) -> dict:
         "email_draft_sent": app.email_draft_sent or 0,
         "final_score": app.final_score,
         "final_summary": app.final_summary,
+        "fraud_score": app.fraud_score or 0,
+        "fraud_flags_count": app.fraud_flags_count or 0,
+        "fraud_blocked": bool(app.fraud_blocked),
+        "fraud_overridden_at": app.fraud_overridden_at.isoformat() if app.fraud_overridden_at else None,
+        "fraud_override_reason": app.fraud_override_reason or "",
         "interview_room_url": _get_interview_room_url(app, db),
         "thresholds": {
             "resume_min": job.resume_threshold_min if job and job.resume_threshold_min is not None else 80.0,
@@ -321,6 +327,98 @@ async def update_stage(
 
     _log_event(db, app.id, "stage_changed", {"from": old_stage, "to": req.stage}, tenant_id=session.tenant.id)
     db.commit()
+    db.refresh(app)
+    return _app_to_response(app, db)
+
+
+@router.get("/{app_id}/fraud-signals")
+async def list_fraud_signals(
+    app_id: int,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(current_session),
+):
+    """All ResumeFraudSignal rows attached to this application."""
+    from models import ResumeFraudSignal
+    app = db.query(Application).filter(
+        Application.id == app_id,
+        Application.tenant_id == session.tenant.id,
+    ).first()
+    if not app:
+        raise HTTPException(status_code=404, detail="Application not found")
+    rows = db.query(ResumeFraudSignal).filter(
+        ResumeFraudSignal.application_id == app_id,
+        ResumeFraudSignal.tenant_id == session.tenant.id,
+    ).order_by(ResumeFraudSignal.detected_at.desc()).all()
+    out = []
+    for r in rows:
+        try:
+            evidence = json.loads(r.evidence_json) if r.evidence_json else {}
+        except Exception:
+            evidence = {}
+        out.append({
+            "id": r.id,
+            "signal_type": r.signal_type,
+            "severity": r.severity,
+            "evidence": evidence,
+            "detected_at": r.detected_at.isoformat() if r.detected_at else None,
+        })
+    return {
+        "fraud_score": app.fraud_score or 0,
+        "fraud_flags_count": app.fraud_flags_count or 0,
+        "fraud_blocked": bool(app.fraud_blocked),
+        "fraud_overridden_at": app.fraud_overridden_at.isoformat() if app.fraud_overridden_at else None,
+        "fraud_override_reason": app.fraud_override_reason or "",
+        "signals": out,
+    }
+
+
+class FraudOverrideRequest(BaseModel):
+    reason: str = Field(..., min_length=10, max_length=2000, description="Why the block is being overridden — appears in the audit log")
+
+
+@router.post("/{app_id}/fraud-override")
+async def fraud_override(
+    app_id: int,
+    req: FraudOverrideRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(require_owner),
+):
+    """Owner-only: clear fraud_blocked so the LLM scorer can run on the
+    resume. Mandatory `reason` is recorded against the application AND in
+    the tenant audit log."""
+    from services.audit import write_audit
+    app = db.query(Application).filter(
+        Application.id == app_id,
+        Application.tenant_id == session.tenant.id,
+    ).first()
+    if not app:
+        raise HTTPException(status_code=404, detail="Application not found")
+    if not app.fraud_blocked:
+        return {"ok": True, "already_unblocked": True}
+
+    app.fraud_blocked = False
+    app.fraud_overridden_by_user_id = session.user.id
+    app.fraud_override_reason = req.reason.strip()
+    app.fraud_overridden_at = datetime.utcnow()
+    app.updated_at = datetime.utcnow()
+    db.commit()
+
+    write_audit(
+        db,
+        action="fraud.override",
+        actor=session.user,
+        tenant_id=session.tenant.id,
+        resource_type="application",
+        resource_id=app.id,
+        payload={
+            "fraud_score": app.fraud_score or 0,
+            "fraud_flags_count": app.fraud_flags_count or 0,
+            "reason": req.reason.strip(),
+        },
+        severity="critical",
+        request=request,
+    )
     db.refresh(app)
     return _app_to_response(app, db)
 

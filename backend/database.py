@@ -36,7 +36,7 @@ def init_db():
         Job, Email, Candidate, CandidateCvVersion, Application, Event, InterviewLink, Setting, QaSession,
         Tenant, User, EmailVerification, PasswordReset, TenantInvite, LlmUsage,
         AuditLog, Testimonial, MailAccount, JobBoardAccount, TenantIntegration, Communication,
-        CallQueue,
+        CallQueue, ResumeFraudSignal,
     )
     Base.metadata.create_all(bind=engine)
     _run_migrations()
@@ -206,6 +206,28 @@ def _run_migrations():
                     try:
                         conn.execute(text(
                             f"ALTER TABLE candidates ADD COLUMN {col_name} {col_type}"
+                        ))
+                    except Exception:
+                        pass
+
+    # Fraud detection columns on Application + new resume_fraud_signals
+    # table (Feature 1 of ENTERPRISE_FEATURES.md).
+    if "applications" in insp.get_table_names():
+        existing = {c["name"] for c in insp.get_columns("applications")}
+        fraud_cols = {
+            "fraud_score":                 "INTEGER DEFAULT 0",
+            "fraud_flags_count":           "INTEGER DEFAULT 0",
+            "fraud_blocked":               "BOOLEAN DEFAULT FALSE",
+            "fraud_overridden_by_user_id": "INTEGER",
+            "fraud_override_reason":       "TEXT DEFAULT ''",
+            "fraud_overridden_at":         "TIMESTAMP",
+        }
+        with engine.begin() as conn:
+            for col_name, col_type in fraud_cols.items():
+                if col_name not in existing:
+                    try:
+                        conn.execute(text(
+                            f"ALTER TABLE applications ADD COLUMN {col_name} {col_type}"
                         ))
                     except Exception:
                         pass

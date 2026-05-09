@@ -3,6 +3,8 @@
 import { use, useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { apiGet, apiPost, apiPatch } from "@/lib/api";
+import FraudSignalsCard from "@/components/candidates/FraudSignalsCard";
+import { useAuth } from "@/components/auth/AuthGate";
 import {
   PIPELINE_STAGES,
   STAGE_COLORS,
@@ -96,6 +98,8 @@ export default function CandidateDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = use(params);
+  const { me } = useAuth();
+  const isOwner = me?.user?.role === "owner";
 
   const [app, setApp] = useState<Application | null>(null);
   const [loading, setLoading] = useState(true);
@@ -1626,6 +1630,15 @@ export default function CandidateDetailPage({
             </Card>
           )}
 
+
+          {/* ── Resume fraud check ─────────────────────────────────────────── */}
+          {app && (
+            <FraudSignalsCard
+              appId={Number(id)}
+              isOwner={isOwner}
+              onChanged={fetchApplication}
+            />
+          )}
 
           {/* ── Send WhatsApp ──────────────────────────────────────────────── */}
           {app?.candidate_id && (

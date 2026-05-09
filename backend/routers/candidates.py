@@ -645,7 +645,7 @@ async def candidate_timeline(
         interview link generated/sent, …)
       - interview activity (interview_links opens / completes)
     """
-    from models import Application, Event, InterviewLink, Communication, CallQueue
+    from models import Application, Event, InterviewLink, Communication, CallQueue, ResumeFraudSignal
 
     c = db.query(Candidate).filter(
         Candidate.id == candidate_id,
@@ -815,6 +815,33 @@ async def candidate_timeline(
                 "purpose": cl.purpose,
                 "status": cl.status,
                 "to_phone": cl.to_phone,
+            },
+        })
+
+    # Resume fraud signals — group by application + signal type so we
+    # don't spam the timeline if a CV had 8 white-on-white spans.
+    fraud_rows = db.query(ResumeFraudSignal).filter(
+        ResumeFraudSignal.tenant_id == session.tenant.id,
+        ResumeFraudSignal.candidate_id == candidate_id,
+    ).all()
+    grouped: dict[tuple, list[ResumeFraudSignal]] = {}
+    for r in fraud_rows:
+        grouped.setdefault((r.application_id, r.signal_type), []).append(r)
+    for (app_id, sig_type), rows in grouped.items():
+        first = min(rows, key=lambda r: r.detected_at or datetime.utcnow())
+        crit = any(r.severity == "critical" for r in rows)
+        items.append({
+            "type": "fraud_detected",
+            "at": first.detected_at.isoformat() if first.detected_at else None,
+            "label": (
+                f"⚠ Fraud signal: {sig_type.replace('_', ' ')} "
+                f"(×{len(rows)}, {first.severity})"
+            ),
+            "meta": {
+                "application_id": app_id,
+                "signal_type": sig_type,
+                "count": len(rows),
+                "severity": "critical" if crit else first.severity,
             },
         })
 
