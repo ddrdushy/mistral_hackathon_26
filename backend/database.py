@@ -210,6 +210,40 @@ def _run_migrations():
                     except Exception:
                         pass
 
+    # Audit log broadening (Feature 0): the original schema was super-admin
+    # only. Add columns for tenant-level actions, generic resource pointers,
+    # severity, and a snapshot of actor_email. Make super_admin_user_id
+    # nullable in Postgres (SQLite doesn't enforce, so no-op there).
+    if "audit_log" in insp.get_table_names():
+        existing = {c["name"] for c in insp.get_columns("audit_log")}
+        new_cols = {
+            "tenant_id":         "INTEGER",
+            "actor_user_id":     "INTEGER",
+            "actor_email":       "VARCHAR",
+            "actor_user_agent":  "VARCHAR",
+            "resource_type":     "VARCHAR",
+            "resource_id":       "VARCHAR",
+            "severity":          "VARCHAR DEFAULT 'info'",
+        }
+        with engine.begin() as conn:
+            for col_name, col_type in new_cols.items():
+                if col_name not in existing:
+                    try:
+                        conn.execute(text(
+                            f"ALTER TABLE audit_log ADD COLUMN {col_name} {col_type}"
+                        ))
+                    except Exception:
+                        pass
+        # Drop NOT NULL on super_admin_user_id (Postgres only — SQLite
+        # treats this as no-op since it never enforced anyway). Best-effort.
+        try:
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE audit_log ALTER COLUMN super_admin_user_id DROP NOT NULL"
+                ))
+        except Exception:
+            pass
+
     # Heal orphaned candidate/application/event rows from the workflow bug:
     # the auto-pipeline used to create Candidate/Application/Event rows with
     # tenant_id=NULL, so the dashboard never saw them. Walk the ownership

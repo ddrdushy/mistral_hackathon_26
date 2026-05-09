@@ -122,22 +122,44 @@ class LlmUsage(Base):
 
 
 class AuditLog(Base):
-    """Append-only record of every privileged super-admin action.
+    """Append-only record of every privileged action — super-admin AND
+    tenant-level (Feature 0 of ENTERPRISE_FEATURES.md).
 
-    Stored separately from Event (which is per-tenant). Audit log is global
-    and read-only after creation.
+    Originally super-admin-only (super_admin_user_id NOT NULL). Broadened
+    to a generic actor model: actor_user_id is nullable so platform actions
+    can be recorded with NULL actor; super_admin_user_id is now an alias /
+    legacy column kept for back-compat with existing rows.
+
+    Records are immutable — no router writes UPDATE/DELETE.
     """
     __tablename__ = "audit_log"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    super_admin_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+
+    # NEW broad actor identity (preferred). actor_email is a snapshot so
+    # the record survives user deletion.
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=True, index=True)
+    actor_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    actor_email = Column(String, nullable=True)
+    actor_user_agent = Column(String, nullable=True)
+
+    # Legacy super-admin column — nullable now. Older rows still populate it.
+    super_admin_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+
+    # Action namespace — verb-style, e.g. "tenant.suspend", "candidate.tag.add",
+    # "offer.send", "fraud.detected".
     action_type = Column(String, nullable=False, index=True)
-    # e.g. "tenant.suspend", "tenant.impersonate", "tenant.plan_change",
-    #      "tenant.quota_change", "tenant.delete", "tenant.restore",
-    #      "user.password_reset", "user.disable", "superadmin.grant"
+
+    # Generic resource pointer. Coexists with target_tenant_id/target_user_id
+    # for back-compat — new code should populate resource_type + resource_id.
+    resource_type = Column(String, nullable=True, index=True)  # tenant | application | offer | ...
+    resource_id = Column(String, nullable=True, index=True)    # string to support int + uuid
+
     target_tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=True, index=True)
     target_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+
     payload = Column(Text, default="{}")  # JSON: {before:..., after:..., reason:...}
+    severity = Column(String, default="info", index=True)  # info | warning | critical
     ip_address = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
 

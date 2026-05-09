@@ -193,6 +193,9 @@ export default function TenantSettingsPage() {
       {/* ── Twilio integration (per-tenant WhatsApp / SMS) ────────────── */}
       <TwilioIntegrationPanel />
 
+      {/* ── Tenant audit log (Feature 0) ──────────────────────────────── */}
+      <AuditLogPanel />
+
       {/* ── Demo data cleanup ─────────────────────────────────────────── */}
       <DemoDataPanel />
 
@@ -565,6 +568,196 @@ function TwilioIntegrationPanel() {
             </p>
           )}
         </>
+      )}
+    </div>
+  );
+}
+
+interface AuditEntry {
+  id: number;
+  action_type: string;
+  severity: string;
+  tenant_id: number | null;
+  actor_user_id: number | null;
+  actor_email: string | null;
+  resource_type: string | null;
+  resource_id: string | null;
+  target_tenant_id: number | null;
+  target_user_id: number | null;
+  payload: Record<string, unknown>;
+  ip_address: string | null;
+  created_at: string | null;
+}
+
+const SEVERITY_BADGE: Record<string, string> = {
+  info: "bg-slate-100 text-slate-600",
+  warning: "bg-amber-100 text-amber-700",
+  critical: "bg-rose-100 text-rose-700",
+};
+
+function AuditLogPanel() {
+  const [entries, setEntries] = useState<AuditEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [actionFilter, setActionFilter] = useState("");
+  const [severityFilter, setSeverityFilter] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [openEntry, setOpenEntry] = useState<AuditEntry | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const params: Record<string, string> = { per_page: "50" };
+      if (actionFilter.trim()) params.action = actionFilter.trim();
+      if (severityFilter) params.severity = severityFilter;
+      const res = await apiGet<{ entries: AuditEntry[]; total: number }>(
+        "/audit-log",
+        params,
+      );
+      setEntries(res.entries ?? []);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load audit log");
+      setEntries([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [actionFilter, severityFilter]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-5 mb-6">
+      <div className="flex items-start justify-between gap-4 mb-4">
+        <div>
+          <h2 className="text-base font-semibold text-slate-900">Audit log</h2>
+          <p className="text-xs text-slate-500 mt-1 max-w-xl">
+            Privileged actions taken on your tenant — by your team or by
+            HireOps platform admins. Append-only.
+          </p>
+        </div>
+      </div>
+
+      <div className="flex items-center gap-2 mb-3">
+        <input
+          type="text"
+          value={actionFilter}
+          onChange={(e) => setActionFilter(e.target.value)}
+          placeholder="Filter by action prefix (e.g. integration.)"
+          className="flex-1 px-3 py-2 text-sm border border-slate-300 rounded-md focus:outline-none focus:ring-1 focus:ring-indigo-500"
+        />
+        <select
+          value={severityFilter}
+          onChange={(e) => setSeverityFilter(e.target.value)}
+          className="px-3 py-2 text-sm border border-slate-300 rounded-md focus:outline-none focus:ring-1 focus:ring-indigo-500"
+        >
+          <option value="">Any severity</option>
+          <option value="info">Info</option>
+          <option value="warning">Warning</option>
+          <option value="critical">Critical</option>
+        </select>
+      </div>
+
+      {error ? (
+        <p className="text-sm text-slate-500 bg-slate-50 rounded-md px-3 py-2">
+          {error.includes("Owner") || error.includes("403")
+            ? "Only the tenant owner can view the audit log."
+            : error}
+        </p>
+      ) : loading ? (
+        <div className="space-y-2">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="h-10 bg-slate-100 rounded animate-pulse" />
+          ))}
+        </div>
+      ) : entries.length === 0 ? (
+        <p className="text-sm text-slate-500">
+          No audit entries match. Privileged actions will appear here as they happen.
+        </p>
+      ) : (
+        <div className="border border-slate-200 rounded-md overflow-hidden">
+          <table className="min-w-full text-sm">
+            <thead className="bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
+              <tr>
+                <th className="px-3 py-2 text-left">When</th>
+                <th className="px-3 py-2 text-left">Action</th>
+                <th className="px-3 py-2 text-left">Actor</th>
+                <th className="px-3 py-2 text-left">Severity</th>
+                <th className="px-3 py-2 text-left">Resource</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {entries.map((e) => (
+                <tr
+                  key={e.id}
+                  className="hover:bg-slate-50/60 cursor-pointer"
+                  onClick={() => setOpenEntry(e)}
+                >
+                  <td className="px-3 py-2 text-xs text-slate-500 whitespace-nowrap">
+                    {e.created_at ? new Date(e.created_at).toLocaleString() : ""}
+                  </td>
+                  <td className="px-3 py-2 font-mono text-xs text-slate-800">
+                    {e.action_type}
+                  </td>
+                  <td className="px-3 py-2 text-xs text-slate-600 truncate max-w-[180px]">
+                    {e.actor_email || "—"}
+                  </td>
+                  <td className="px-3 py-2">
+                    <span
+                      className={`text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded ${
+                        SEVERITY_BADGE[e.severity] || SEVERITY_BADGE.info
+                      }`}
+                    >
+                      {e.severity}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2 text-xs text-slate-500">
+                    {e.resource_type
+                      ? `${e.resource_type}/${e.resource_id ?? "—"}`
+                      : e.target_tenant_id
+                      ? `tenant/${e.target_tenant_id}`
+                      : "—"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {openEntry && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50"
+          onClick={() => setOpenEntry(null)}
+        >
+          <div
+            className="bg-white rounded-xl shadow-xl border border-slate-200 w-full max-w-2xl max-h-[80vh] flex flex-col"
+            onClick={(ev) => ev.stopPropagation()}
+          >
+            <div className="px-6 py-3 border-b border-slate-200 flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-semibold text-slate-900 font-mono">
+                  {openEntry.action_type}
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  {openEntry.created_at
+                    ? new Date(openEntry.created_at).toLocaleString()
+                    : ""}
+                </p>
+              </div>
+              <button
+                onClick={() => setOpenEntry(null)}
+                className="text-slate-500 hover:text-slate-800"
+              >
+                ✕
+              </button>
+            </div>
+            <pre className="px-6 py-4 overflow-y-auto text-xs font-mono text-slate-800 flex-1 bg-slate-50">
+              {JSON.stringify(openEntry, null, 2)}
+            </pre>
+          </div>
+        </div>
       )}
     </div>
   );

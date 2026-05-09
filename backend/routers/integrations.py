@@ -1,7 +1,7 @@
 """Tenant integration credentials — Twilio, etc."""
 from datetime import datetime
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -9,6 +9,7 @@ from auth.dependencies import current_session, CurrentSession
 from database import get_db
 from models import TenantIntegration
 from services import twilio_service
+from services.audit import write_audit
 
 router = APIRouter(prefix="/api/v1/integrations", tags=["integrations"])
 
@@ -50,9 +51,16 @@ class TwilioUpdateRequest(BaseModel):
 @router.put("/twilio")
 def put_twilio(
     req: TwilioUpdateRequest,
+    request: Request,
     db: Session = Depends(get_db),
     session: CurrentSession = Depends(current_session),
 ):
+    existing = db.query(TenantIntegration).filter(
+        TenantIntegration.tenant_id == session.tenant.id,
+        TenantIntegration.provider == twilio_service.PROVIDER,
+    ).first()
+    is_create = existing is None
+
     row = twilio_service.upsert_config(
         db,
         tenant_id=session.tenant.id,
@@ -62,11 +70,29 @@ def put_twilio(
         sms_from=req.sms_from,
         enabled=req.enabled,
     )
+    write_audit(
+        db,
+        action="integration.twilio.create" if is_create else "integration.twilio.update",
+        actor=session.user,
+        tenant_id=session.tenant.id,
+        resource_type="integration",
+        resource_id=row.id,
+        payload={
+            "account_sid_suffix": (req.account_sid or "")[-6:],
+            "whatsapp_from": req.whatsapp_from,
+            "sms_from": req.sms_from,
+            "enabled": req.enabled,
+            "auth_token_changed": bool(req.auth_token),
+        },
+        severity="warning",
+        request=request,
+    )
     return {"integration": twilio_service.to_response(row)}
 
 
 @router.delete("/twilio")
 def delete_twilio(
+    request: Request,
     db: Session = Depends(get_db),
     session: CurrentSession = Depends(current_session),
 ):
@@ -76,8 +102,19 @@ def delete_twilio(
     ).first()
     if not row:
         raise HTTPException(status_code=404, detail="No Twilio integration to remove")
+    integration_id = row.id
     db.delete(row)
     db.commit()
+    write_audit(
+        db,
+        action="integration.twilio.delete",
+        actor=session.user,
+        tenant_id=session.tenant.id,
+        resource_type="integration",
+        resource_id=integration_id,
+        severity="warning",
+        request=request,
+    )
     return {"deleted": True}
 
 

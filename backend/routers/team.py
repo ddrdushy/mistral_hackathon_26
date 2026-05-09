@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 
@@ -111,12 +111,26 @@ def _send_invite_email(invite: TenantInvite, tenant: Tenant, inviter: User):
 
 @router.post("/clear-demo")
 def clear_demo_data(
+    request: Request,
     db: Session = Depends(get_db),
     session: CurrentSession = Depends(require_owner),
 ):
     """Owner action: remove all demo jobs/candidates/applications added at signup."""
     from services.demo_seed import clear_demo
-    return clear_demo(db, session.tenant)
+    from services.audit import write_audit
+
+    result = clear_demo(db, session.tenant)
+    if result.get("cleared"):
+        write_audit(
+            db,
+            action="tenant.clear_demo",
+            actor=session.user,
+            tenant_id=session.tenant.id,
+            payload=result,
+            severity="warning",
+            request=request,
+        )
+    return result
 
 
 @router.get("/members")
