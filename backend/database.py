@@ -37,6 +37,7 @@ def init_db():
         Tenant, User, EmailVerification, PasswordReset, TenantInvite, LlmUsage,
         AuditLog, Testimonial, MailAccount, JobBoardAccount, TenantIntegration, Communication,
         CallQueue, ResumeFraudSignal, Tag, CandidateTag, JobInterviewQuestion,
+        OfferTemplate, Offer, OfferApproval, TenantESignConfig,
     )
     Base.metadata.create_all(bind=engine)
     _run_migrations()

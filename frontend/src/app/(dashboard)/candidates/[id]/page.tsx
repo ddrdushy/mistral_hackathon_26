@@ -4,6 +4,7 @@ import { use, useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/lib/api";
 import FraudSignalsCard from "@/components/candidates/FraudSignalsCard";
+import OfferCard from "@/components/offers/OfferCard";
 import { useAuth } from "@/components/auth/AuthGate";
 import TagChip, { TagSummary } from "@/components/tags/TagChip";
 import TagPicker from "@/components/tags/TagPicker";
@@ -1637,6 +1638,16 @@ export default function CandidateDetailPage({
             </Card>
           )}
 
+
+          {/* ── Offer letter ──────────────────────────────────────────────── */}
+          {app && (
+            <OfferCard
+              applicationId={Number(id)}
+              candidateName={app.candidate_name}
+              jobTitle={app.job_title}
+              candidateEmail={app.candidate_email}
+            />
+          )}
 
           {/* ── Resume fraud check ─────────────────────────────────────────── */}
           {app && (

@@ -390,6 +390,110 @@ class Communication(Base):
     delivered_at = Column(DateTime, nullable=True)
 
 
+class OfferTemplate(Base):
+    """Tenant-defined offer letter template (Feature 7).
+
+    body_markdown supports {{merge_tag}} substitution at render time.
+    fields_json is a list[dict] describing the fields the template asks
+    for; the UI renders inputs from this schema.
+    """
+    __tablename__ = "offer_templates"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
+    name = Column(String, nullable=False)
+    body_markdown = Column(Text, nullable=False, default="")
+    fields_json = Column(Text, default="[]")
+    # [{key:"salary", label:"Salary", type:"currency", required:true}, ...]
+    requires_approval = Column(Boolean, default=False)
+    approval_chain_user_ids_json = Column(Text, default="[]")
+    is_default = Column(Boolean, default=False)
+    created_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name", name="uq_offer_templates_tenant_name"),
+    )
+
+
+class Offer(Base):
+    """A generated offer letter for a specific application/candidate.
+
+    Lifecycle:
+      draft → pending_approval → approved → sent → viewed → signed
+            ↘                                    ↘ declined / expired / withdrawn
+    """
+    __tablename__ = "offers"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
+    application_id = Column(Integer, ForeignKey("applications.id"), nullable=False, index=True)
+    candidate_id = Column(Integer, ForeignKey("candidates.id"), nullable=False, index=True)
+    template_id = Column(Integer, ForeignKey("offer_templates.id"), nullable=True)
+
+    salary_amount = Column(Float, nullable=True)
+    salary_currency = Column(String, default="USD")
+    bonus_amount = Column(Float, nullable=True)
+    equity_description = Column(Text, default="")
+    employment_type = Column(String, default="full_time")  # full_time|part_time|contract
+    start_date = Column(DateTime, nullable=True)
+    location = Column(String, default="")
+    custom_fields_json = Column(Text, default="{}")
+
+    rendered_markdown = Column(Text, default="")  # post-merge body
+    rendered_html = Column(Text, default="")      # rendered HTML (acts as PDF surrogate in v1)
+    signed_html = Column(Text, default="")        # rendered_html + signature footer
+
+    esign_provider = Column(String, default="mock")  # mock|docusign|hellosign
+    esign_envelope_id = Column(String, default="")
+    esign_signing_token = Column(String, index=True, default="")
+    signature_name = Column(String, default="")
+    signature_ip = Column(String, default="")
+
+    status = Column(String, default="draft", index=True)
+    # draft | pending_approval | approved | sent | viewed | signed | declined | expired | withdrawn
+    sent_at = Column(DateTime, nullable=True)
+    viewed_at = Column(DateTime, nullable=True)
+    signed_at = Column(DateTime, nullable=True)
+    expires_at = Column(DateTime, nullable=True)
+    declined_reason = Column(Text, default="")
+
+    created_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class OfferApproval(Base):
+    """Approval chain step for offers requiring sign-off."""
+    __tablename__ = "offer_approvals"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    offer_id = Column(Integer, ForeignKey("offers.id", ondelete="CASCADE"), nullable=False, index=True)
+    approver_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    status = Column(String, default="pending")  # pending | approved | rejected
+    comment = Column(Text, default="")
+    actioned_at = Column(DateTime, nullable=True)
+    order_index = Column(Integer, default=0)
+
+
+class TenantESignConfig(Base):
+    """Per-tenant e-sign provider credentials (DocuSign/HelloSign).
+
+    Only used when provider != 'mock'. Mock signing is the v1 default
+    and doesn't need any external integration.
+    """
+    __tablename__ = "tenant_esign_config"
+
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), primary_key=True)
+    provider = Column(String, nullable=False)  # docusign | hellosign
+    secret_encrypted = Column(Text, default="")  # Fernet-encrypted JSON
+    account_id = Column(String, default="")
+    is_sandbox = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
 class JobInterviewQuestion(Base):
     """Per-job custom interview question (Feature 4 of ENTERPRISE_FEATURES.md).
 
