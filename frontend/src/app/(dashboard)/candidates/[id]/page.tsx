@@ -2,9 +2,11 @@
 
 import { use, useState, useEffect, useCallback } from "react";
 import Link from "next/link";
-import { apiGet, apiPost, apiPatch } from "@/lib/api";
+import { apiGet, apiPost, apiPatch, apiDelete } from "@/lib/api";
 import FraudSignalsCard from "@/components/candidates/FraudSignalsCard";
 import { useAuth } from "@/components/auth/AuthGate";
+import TagChip, { TagSummary } from "@/components/tags/TagChip";
+import TagPicker from "@/components/tags/TagPicker";
 import {
   PIPELINE_STAGES,
   STAGE_COLORS,
@@ -411,6 +413,11 @@ export default function CandidateDetailPage({
                 </span>
               )}
             </div>
+
+            {/* Hand-applied tags */}
+            {app.candidate_id && (
+              <CandidateTagsRow candidateId={app.candidate_id} />
+            )}
 
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <span className="text-sm text-slate-700 font-medium">
@@ -1986,6 +1993,43 @@ function SendWhatsAppCard({
         </div>
       )}
     </Card>
+  );
+}
+
+function CandidateTagsRow({ candidateId }: { candidateId: number }) {
+  const [tags, setTags] = useState<TagSummary[]>([]);
+
+  const reload = useCallback(async () => {
+    try {
+      const data = await apiGet<{ tags: TagSummary[] }>(
+        `/candidates/${candidateId}`,
+      );
+      setTags(data.tags ?? []);
+    } catch {
+      setTags([]);
+    }
+  }, [candidateId]);
+
+  useEffect(() => {
+    reload();
+  }, [reload]);
+
+  const addTag = async (tag: TagSummary) => {
+    await apiPost(`/candidates/${candidateId}/tags`, { tag_ids: [tag.id] });
+    reload();
+  };
+  const removeTag = async (tagId: number) => {
+    await apiDelete(`/candidates/${candidateId}/tags/${tagId}`);
+    reload();
+  };
+
+  return (
+    <div className="mt-3 flex flex-wrap gap-1.5 items-center">
+      {tags.map((t) => (
+        <TagChip key={t.id} tag={t} onRemove={() => removeTag(t.id)} />
+      ))}
+      <TagPicker applied={tags} onAdd={addTag} onCreateAndAdd={addTag} />
+    </div>
   );
 }
 

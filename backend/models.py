@@ -390,6 +390,48 @@ class Communication(Base):
     delivered_at = Column(DateTime, nullable=True)
 
 
+class Tag(Base):
+    """Tenant-scoped candidate tag.
+
+    Feature 2 of ENTERPRISE_FEATURES.md. Distinct from profile_skills
+    (auto LLM tags) — these are manually applied by HR for filtering and
+    bulk operations. Names are unique per tenant (case-sensitive on
+    storage, case-insensitive on lookup is the UI's job)."""
+    __tablename__ = "tags"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
+    name = Column(String, nullable=False)
+    color = Column(String, default="indigo")  # palette key, not raw hex
+    created_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name", name="uq_tags_tenant_name"),
+        Index("idx_tags_tenant", "tenant_id"),
+    )
+
+
+class CandidateTag(Base):
+    """Many-to-many link between candidates and tags.
+
+    Composite primary key (candidate_id, tag_id) — same tag can't be
+    applied to the same candidate twice. ORM-level cascade on candidate
+    delete is enforced by the relationship; tag delete cascade is
+    enforced via DB DELETE CASCADE in the migration.
+    """
+    __tablename__ = "candidate_tags"
+
+    candidate_id = Column(Integer, ForeignKey("candidates.id", ondelete="CASCADE"), primary_key=True)
+    tag_id = Column(Integer, ForeignKey("tags.id", ondelete="CASCADE"), primary_key=True)
+    applied_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    applied_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        Index("idx_candidate_tags_tag", "tag_id"),
+    )
+
+
 class ResumeFraudSignal(Base):
     """One row per fraud signal detected in a candidate's resume.
 

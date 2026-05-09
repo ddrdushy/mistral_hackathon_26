@@ -5,7 +5,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlalchemy.orm import Session
 from database import get_db
-from models import Candidate, CandidateCvVersion, Email
+from models import Candidate, CandidateCvVersion, Email, CandidateTag, Tag
 from schemas import CandidateCreate, CandidateResponse, CandidateFromEmailResponse
 from services.resume_service import extract_resume_text, parse_contact_info
 from auth.dependencies import current_session, CurrentSession
@@ -14,7 +14,7 @@ from billing.plans import check_quota
 router = APIRouter(prefix="/api/v1/candidates", tags=["candidates"])
 
 
-def _candidate_to_response(c: Candidate) -> dict:
+def _candidate_to_response(c: Candidate, db: Optional[Session] = None) -> dict:
     try:
         skills = json.loads(c.profile_skills or "[]")
     except Exception:
@@ -23,6 +23,16 @@ def _candidate_to_response(c: Candidate) -> dict:
         key_points = json.loads(c.profile_key_points or "[]")
     except Exception:
         key_points = []
+
+    # Hand-applied HR tags (Feature 2). Optional db arg keeps the older
+    # call sites that don't have a session compatible.
+    tags: list[dict] = []
+    if db is not None:
+        rows = db.query(Tag).join(
+            CandidateTag, CandidateTag.tag_id == Tag.id,
+        ).filter(CandidateTag.candidate_id == c.id).all()
+        tags = [{"id": t.id, "name": t.name, "color": t.color or "indigo"} for t in rows]
+
     return {
         "id": c.id,
         "name": c.name,
@@ -33,6 +43,7 @@ def _candidate_to_response(c: Candidate) -> dict:
         "cv_version": c.cv_version or 1,
         "source_email_id": c.source_email_id,
         "notes": c.notes,
+        "tags": tags,
         "profile": {
             "skills": skills,
             "role": c.profile_role or "",
@@ -492,14 +503,15 @@ async def upload_resume(
 async def list_candidates(
     search: Optional[str] = None,
     talent_bank_only: bool = False,
+    tag_ids: Optional[str] = None,
     page: int = 1,
     per_page: int = 20,
     db: Session = Depends(get_db),
     session: CurrentSession = Depends(current_session),
 ):
     """List candidates. talent_bank_only=true filters to candidates with no
-    Application rows — i.e. uploaded CVs and unmatched email-sourced
-    candidates that are sitting in the talent bank waiting for a job."""
+    Application rows. tag_ids is a comma-separated list with AND semantics —
+    a candidate must have EVERY listed tag to match (Feature 2)."""
     from models import Application
     query = db.query(Candidate).filter(Candidate.tenant_id == session.tenant.id)
     if search:
@@ -513,12 +525,32 @@ async def list_candidates(
         ).distinct().subquery()
         query = query.filter(~Candidate.id.in_(applied_ids))
 
+    if tag_ids:
+        try:
+            wanted = [int(x) for x in tag_ids.split(",") if x.strip()]
+        except ValueError:
+            wanted = []
+        if wanted:
+            from sqlalchemy import func
+            # AND semantics: candidate must have ALL N tags. We GROUP BY
+            # candidate_id and require the count of matching CandidateTag
+            # rows to equal len(wanted).
+            matching_ids_subq = (
+                db.query(CandidateTag.candidate_id)
+                .filter(CandidateTag.tag_id.in_(wanted))
+                .group_by(CandidateTag.candidate_id)
+                .having(func.count(CandidateTag.tag_id.distinct()) == len(wanted))
+                .subquery()
+            )
+            query = query.filter(Candidate.id.in_(matching_ids_subq))
+
     total = query.count()
     candidates = query.order_by(Candidate.created_at.desc()).offset((page - 1) * per_page).limit(per_page).all()
 
     # Application counts in one round-trip (avoids N+1)
     cand_ids = [c.id for c in candidates]
     app_counts: dict[int, int] = {}
+    tag_map: dict[int, list[dict]] = {}
     if cand_ids:
         from sqlalchemy import func
         rows = db.query(Application.candidate_id, func.count(Application.id)).filter(
@@ -527,10 +559,24 @@ async def list_candidates(
         ).group_by(Application.candidate_id).all()
         app_counts = {cid: n for cid, n in rows}
 
+        # Hand-applied tags per candidate, batched
+        tag_rows = (
+            db.query(CandidateTag.candidate_id, Tag.id, Tag.name, Tag.color)
+            .join(Tag, Tag.id == CandidateTag.tag_id)
+            .filter(CandidateTag.candidate_id.in_(cand_ids))
+            .all()
+        )
+        for cid, tid, tname, tcolor in tag_rows:
+            tag_map.setdefault(cid, []).append({"id": tid, "name": tname, "color": tcolor or "indigo"})
+
     out = []
     for c in candidates:
+        # Pass db so _candidate_to_response can hydrate tags consistently —
+        # but the per-candidate query inside it is a per-row N+1. We
+        # prefer the batch we just computed.
         row = _candidate_to_response(c)
         row["application_count"] = app_counts.get(c.id, 0)
+        row["tags"] = tag_map.get(c.id, [])
         out.append(row)
 
     return {
@@ -553,7 +599,7 @@ async def get_candidate(
     ).first()
     if not c:
         raise HTTPException(status_code=404, detail="Candidate not found")
-    return _candidate_to_response(c)
+    return _candidate_to_response(c, db=db)
 
 
 @router.get("/{candidate_id}/cv-versions")
