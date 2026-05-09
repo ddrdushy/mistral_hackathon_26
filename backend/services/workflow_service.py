@@ -151,10 +151,18 @@ async def run_email_workflow(email_id: int, db: Session) -> Dict:
         # entirely so we don't reward adversarial CVs.
         fraud_signals, fraud_score, fraud_blocked = _check_resume_fraud(em)
 
-        # Score resume — pass full job context including responsibilities
+        # Score resume — pass full job context including responsibilities.
+        # Gate by plan: trial tenants have only the email_classifier; the
+        # auto-pipeline still creates the candidate but skips the LLM
+        # scorer and stamps the application with a "upgrade_required"
+        # recommendation so HR sees a clear CTA instead of a 0/100 score.
+        from billing.plans import is_agent_allowed
+        from models import Tenant as _Tenant
         skills = json.loads(job.skills) if job.skills else []
         responsibilities = json.loads(job.responsibilities) if job.responsibilities else []
-        if fraud_blocked:
+        tenant_row = db.query(_Tenant).filter(_Tenant.id == em.tenant_id).first() if em.tenant_id else None
+        scorer_allowed = is_agent_allowed(tenant_row, "resume_scorer") if tenant_row else True
+        if fraud_blocked or not scorer_allowed:
             score_result = None
         else:
             scorer_input = ResumeScorerInput(
@@ -189,6 +197,25 @@ async def run_email_workflow(email_id: int, db: Session) -> Dict:
                 fraud_score=fraud_score,
                 fraud_flags_count=len(fraud_signals),
                 fraud_blocked=True,
+            )
+        elif score_result is None:
+            # Trial-plan path — email_classifier ran (so the email made it
+            # this far), but resume_scorer is locked. Create the
+            # application with a soft hold + an "upgrade to score" CTA.
+            application = Application(
+                tenant_id=em.tenant_id,
+                candidate_id=candidate.id,
+                job_id=job.id,
+                stage="matched",
+                resume_score=0,
+                resume_score_json=json.dumps({
+                    "score": 0,
+                    "summary": "Resume scoring requires an upgrade",
+                    "blocked_reason": "agent_locked_by_plan",
+                }),
+                recommendation="hold",
+                ai_next_action="Upgrade your plan to unlock AI resume scoring",
+                ai_snippets=json.dumps({}),
             )
         else:
             application = Application(
@@ -277,9 +304,15 @@ async def run_email_workflow(email_id: int, db: Session) -> Dict:
         db.commit()
 
         # AUTO-INTERVIEW: If recommendation is "advance", auto-generate interview link
-        # (Skipped entirely when fraud_blocked — HR must override first.)
+        # (Skipped when fraud_blocked OR when the tenant's plan doesn't
+        # include the relevant interview agent — they need an upgrade
+        # before voice/Q&A interviews can run.)
+        from billing.plans import is_agent_allowed as _is_allowed
+        _interview_mode = (job.interview_mode or "voice")
+        _interview_agent = "qa_interview_generate" if _interview_mode == "qa" else "voice_screener"
+        _interview_allowed = _is_allowed(tenant_row, _interview_agent) if tenant_row else True
         interview_url = None
-        if not fraud_blocked and score_result and score_result.recommendation == "advance":
+        if not fraud_blocked and score_result and score_result.recommendation == "advance" and _interview_allowed:
             token = uuid.uuid4().hex
             link = InterviewLink(
                 tenant_id=em.tenant_id,
@@ -530,13 +563,23 @@ def _apply_profile(db: Session, candidate: Candidate, prof) -> None:
 async def _async_apply_profile(candidate_id: int) -> None:
     """Background fire-and-forget profile extraction for a freshly-created
     candidate. Opens its own DB session because the caller's session likely
-    closed by the time this runs."""
+    closed by the time this runs.
+
+    Skipped silently when the candidate's tenant plan doesn't include the
+    profile_extractor agent — talent-bank tagging is a paid feature.
+    """
     from agents.profile_extractor import extract_profile
+    from billing.plans import is_agent_allowed
+    from models import Tenant as _Tenant
     db = SessionLocal()
     try:
         cand = db.query(Candidate).filter(Candidate.id == candidate_id).first()
         if not cand or cand.profile_extracted_at is not None:
             return
+        if cand.tenant_id:
+            tenant_row = db.query(_Tenant).filter(_Tenant.id == cand.tenant_id).first()
+            if tenant_row and not is_agent_allowed(tenant_row, "profile_extractor"):
+                return
         prof = await extract_profile(cand.resume_text or "")
         _apply_profile(db, cand, prof)
         logger.info("Profiled candidate %s: %d skills, role=%s",

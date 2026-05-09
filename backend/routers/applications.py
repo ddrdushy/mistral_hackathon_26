@@ -18,6 +18,7 @@ from agents.resume_scorer import score_resume, ResumeScorerInput
 from services.csv_service import generate_applications_csv
 from auth.dependencies import current_session, CurrentSession, require_owner
 from billing.cost_guard import check_llm_budget
+from billing.plans import gate_agent
 
 router = APIRouter(prefix="/api/v1/applications", tags=["applications"])
 
@@ -153,6 +154,7 @@ async def match_candidate_to_job(
     if existing:
         raise HTTPException(status_code=400, detail="Application already exists for this candidate-job pair")
 
+    gate_agent(session.tenant, "resume_scorer")
     skills = json.loads(job.skills) if job.skills else []
     responsibilities = json.loads(job.responsibilities) if job.responsibilities else []
     scorer_input = ResumeScorerInput(
@@ -490,6 +492,7 @@ async def rescore_application(
             detail="No resume text available — wait for the next mailbox sync to refresh attachments, then try again",
         )
 
+    gate_agent(session.tenant, "resume_scorer")
     skills = json.loads(job.skills) if job.skills else []
     responsibilities = json.loads(job.responsibilities) if job.responsibilities else []
     scorer_input = ResumeScorerInput(

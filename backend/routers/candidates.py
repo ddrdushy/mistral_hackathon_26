@@ -9,7 +9,7 @@ from models import Candidate, CandidateCvVersion, Email, CandidateTag, Tag
 from schemas import CandidateCreate, CandidateResponse, CandidateFromEmailResponse
 from services.resume_service import extract_resume_text, parse_contact_info
 from auth.dependencies import current_session, CurrentSession
-from billing.plans import check_quota
+from billing.plans import check_quota, is_agent_allowed
 
 router = APIRouter(prefix="/api/v1/candidates", tags=["candidates"])
 
@@ -319,13 +319,17 @@ async def upload_candidate(
 
     # Run profile extraction inline so the upload response carries the LLM
     # summary + key points back to the modal — HR sees the analysis right
-    # after pressing Upload, no second click needed.
+    # after pressing Upload, no second click needed. Skipped silently if
+    # the tenant's plan doesn't include the profile_extractor agent — the
+    # candidate still gets created (so trial users can build a talent
+    # bank), just without LLM tags.
     try:
-        from agents.profile_extractor import extract_profile
-        from services.workflow_service import _apply_profile
-        prof = await extract_profile(resume_text)
-        _apply_profile(db, candidate, prof)
-        db.refresh(candidate)
+        if is_agent_allowed(session.tenant, "profile_extractor"):
+            from agents.profile_extractor import extract_profile
+            from services.workflow_service import _apply_profile
+            prof = await extract_profile(resume_text)
+            _apply_profile(db, candidate, prof)
+            db.refresh(candidate)
     except Exception:
         # If LLM fails (budget cap, network), fall back to schedule a
         # background retry — talent bank still works via lazy fill.
@@ -437,8 +441,11 @@ async def upload_candidates_bulk(
             db.refresh(candidate)
 
             # Profile extract inline — HR uploaded a stack and expects
-            # all of them to be searchable when the dialog closes.
+            # all of them to be searchable when the dialog closes. Skipped
+            # for plans that don't include the profile_extractor agent.
             try:
+                if not is_agent_allowed(session.tenant, "profile_extractor"):
+                    raise RuntimeError("profile_extractor not in plan")
                 prof = await extract_profile(resume_text)
                 _apply_profile(db, candidate, prof)
                 db.refresh(candidate)

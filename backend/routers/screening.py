@@ -24,7 +24,7 @@ from agents.qa_interview import (
     generate_question_set, score_round, aggregate_final,
 )
 from auth.dependencies import current_session, CurrentSession
-from billing.plans import check_quota
+from billing.plans import check_quota, gate_agent
 
 router = APIRouter(prefix="/api/v1/screening", tags=["screening"])
 
@@ -174,12 +174,21 @@ async def generate_interview_link(
 ):
     """Generate a unique interview link for an application."""
     check_quota(db, session.tenant, "interviews")
+    # The job's interview_mode decides which agent will run when the
+    # candidate joins. Gate at link-generation time so trial tenants
+    # don't issue links to interviews their plan can't conduct.
     app = db.query(Application).filter(
         Application.id == req.app_id,
         Application.tenant_id == session.tenant.id,
     ).first()
     if not app:
         raise HTTPException(status_code=404, detail="Application not found")
+    job = db.query(Job).filter(Job.id == app.job_id).first() if app else None
+    interview_mode = (job.interview_mode if job else "voice") or "voice"
+    if interview_mode == "qa":
+        gate_agent(session.tenant, "qa_interview_generate")
+    else:
+        gate_agent(session.tenant, "voice_screener")
 
     # Expire any existing active links for this application
     db.query(InterviewLink).filter(
@@ -602,6 +611,7 @@ async def calculate_final_score(app_id: int, db: Session = Depends(get_db), sess
 @router.get("/{app_id}/hiring-report")
 async def get_hiring_report(app_id: int, db: Session = Depends(get_db), session: CurrentSession = Depends(current_session)):
     """Generate a comprehensive autonomous hiring report for an application."""
+    gate_agent(session.tenant, "hiring_report")
     from agents.hiring_report import generate_hiring_report, HiringReportInput
     from dataclasses import asdict
 

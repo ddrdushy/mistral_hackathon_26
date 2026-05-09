@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from auth.dependencies import current_session, CurrentSession
 from billing.cost_guard import check_llm_budget
+from billing.plans import gate_agent
 from database import get_db
 from models import Job, JobInterviewQuestion
 from services.audit import write_audit
@@ -269,6 +270,7 @@ async def suggest(
     to keep before posting them via /interview-questions.
     """
     job = _ensure_job(db, job_id, session.tenant.id)
+    gate_agent(session.tenant, "interview_question_generator")
     check_llm_budget()  # raises 402 if tenant is over their daily LLM cap
 
     skills = []

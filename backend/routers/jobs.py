@@ -13,6 +13,7 @@ from agents.job_generator import generate_job_details
 from auth.dependencies import current_session, CurrentSession
 from billing.plans import check_quota
 from billing.cost_guard import check_llm_budget
+from billing.plans import gate_agent
 
 router = APIRouter(prefix="/api/v1/jobs", tags=["jobs"])
 
@@ -24,9 +25,10 @@ class JobGenerateRequest(BaseModel):
 @router.post("/generate")
 async def generate_job(
     req: JobGenerateRequest,
-    _: CurrentSession = Depends(current_session),
+    session: CurrentSession = Depends(current_session),
 ):
     """Use Mistral AI to auto-generate job posting details from a title."""
+    gate_agent(session.tenant, "job_generator")
     check_llm_budget()
     if not req.title.strip():
         raise HTTPException(status_code=400, detail="Title is required")
@@ -211,7 +213,10 @@ async def suggested_candidates(
 
     # Lazy-fill profiles for legacy rows. Bounded so a tenant with 5000
     # un-profiled candidates can't blow the LLM budget on one click.
-    if extract_missing:
+    # Only runs if the tenant's plan unlocks the profile_extractor agent —
+    # otherwise we just return whatever profiles already exist.
+    from billing.plans import is_agent_allowed
+    if extract_missing and is_agent_allowed(session.tenant, "profile_extractor"):
         missing = [c for c in candidates if not c.profile_extracted_at and (c.resume_text or "").strip()]
         for cand in missing[:PROFILE_LAZY_CAP]:
             try:

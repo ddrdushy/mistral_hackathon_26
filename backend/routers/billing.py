@@ -34,6 +34,7 @@ class PlanResponse(BaseModel):
     price_monthly_usd: int
     features: list[str]
     available: bool  # false if plan has no Stripe price configured
+    allowed_agents: list[str]  # ["*"] = all; otherwise the explicit allow-list
 
 
 class CurrentPlanResponse(BaseModel):
@@ -42,6 +43,9 @@ class CurrentPlanResponse(BaseModel):
     subscription_status: str | None
     current_period_end: str | None
     cancel_url_available: bool  # true if tenant has a stripe customer (portal works)
+    unlocked_agents: list[str]
+    locked_agents: list[str]
+    is_trial: bool  # true when on the free plan with the email-classifier-only gate
 
 
 class UsageItem(BaseModel):
@@ -83,20 +87,28 @@ def list_plans(_: CurrentSession = Depends(current_session)):
             price_monthly_usd=p.price_monthly_usd,
             features=p.features,
             available=(p.name == "free") or bool(p.stripe_price_id),
+            allowed_agents=sorted(p.allowed_agents),
         ))
     return out
 
 
 @router.get("/me", response_model=CurrentPlanResponse)
 def current_plan(session: CurrentSession = Depends(current_session)):
+    from billing.plans import locked_agents_for, unlocked_agents_for, ALL_AGENTS
     t = session.tenant
     p = get_plan(t.plan)
+    locked = locked_agents_for(t)
+    unlocked = unlocked_agents_for(t)
     return CurrentPlanResponse(
         plan=p.name,
         display_name=p.display_name,
         subscription_status=t.subscription_status,
         current_period_end=t.current_period_end.isoformat() if t.current_period_end else None,
         cancel_url_available=bool(t.stripe_customer_id) and stripe_service.configured(),
+        unlocked_agents=unlocked,
+        locked_agents=locked,
+        # "Trial" = on the free plan AND only the inbox classifier is on.
+        is_trial=(p.name == "free" and ALL_AGENTS not in p.allowed_agents and len(p.allowed_agents) <= 1),
     )
 
 

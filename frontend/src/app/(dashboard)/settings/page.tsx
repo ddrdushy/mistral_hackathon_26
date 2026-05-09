@@ -209,6 +209,9 @@ export default function TenantSettingsPage() {
         </div>
       </div>
 
+      {/* ── Plan & AI agents ─────────────────────────────────────────── */}
+      <PlanAgentsPanel />
+
       {/* ── ElevenLabs voice usage ────────────────────────────────────── */}
       <VoiceUsagePanel />
 
@@ -299,6 +302,141 @@ export default function TenantSettingsPage() {
             No AI usage in the last {days} day{days === 1 ? "" : "s"}. Connect an inbox or run a workflow to see numbers here.
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+interface CurrentPlan {
+  plan: string;
+  display_name: string;
+  subscription_status: string | null;
+  current_period_end: string | null;
+  cancel_url_available: boolean;
+  unlocked_agents: string[];
+  locked_agents: string[];
+  is_trial: boolean;
+}
+
+const AGENT_LABELS: Record<string, string> = {
+  email_classifier: "Inbox classifier",
+  resume_scorer: "Resume scorer",
+  profile_extractor: "Talent-bank tagger",
+  interview_question_generator: "AI interview-question suggest",
+  voice_screener: "Voice screening (ElevenLabs)",
+  qa_interview_generate: "Q&A interview generator",
+  qa_interview_score_technical: "Q&A technical scorer",
+  interview_evaluator: "Interview evaluator",
+  hiring_report: "Hiring report generator",
+  talent_search: "External talent search (Apollo)",
+  job_generator: "Job description auto-fill",
+};
+
+function PlanAgentsPanel() {
+  const router = useRouter();
+  const [plan, setPlan] = useState<CurrentPlan | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancel = false;
+    (async () => {
+      try {
+        const res = await apiGet<CurrentPlan>("/billing/me");
+        if (!cancel) setPlan(res);
+      } catch {
+        if (!cancel) setPlan(null);
+      } finally {
+        if (!cancel) setLoading(false);
+      }
+    })();
+    return () => {
+      cancel = true;
+    };
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="rounded-xl border border-slate-200 bg-white p-5 mb-6">
+        <div className="h-24 bg-slate-100 rounded-md animate-pulse" />
+      </div>
+    );
+  }
+  if (!plan) return null;
+
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-5 mb-6">
+      <div className="flex items-start justify-between gap-4 mb-4">
+        <div>
+          <h2 className="text-base font-semibold text-slate-900 flex items-center gap-2">
+            Plan &amp; AI agents
+            {plan.is_trial && (
+              <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">
+                Trial
+              </span>
+            )}
+            <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700">
+              {plan.display_name}
+            </span>
+          </h2>
+          <p className="text-xs text-slate-500 mt-1 max-w-2xl">
+            {plan.is_trial
+              ? "You're on a free trial — only the inbox classifier is enabled. Upgrade to unlock resume scoring, talent bank, voice interviews, and more."
+              : "Agents enabled on your current plan. Upgrade to unlock the rest."}
+          </p>
+        </div>
+        {plan.locked_agents.length > 0 && (
+          <button
+            type="button"
+            onClick={() => router.push("/settings/billing")}
+            className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-md whitespace-nowrap"
+          >
+            Upgrade
+          </button>
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+          <p className="text-[11px] font-medium text-slate-500 uppercase tracking-wider mb-2">
+            Unlocked ({plan.unlocked_agents.length})
+          </p>
+          <ul className="space-y-1">
+            {plan.unlocked_agents.map((a) => (
+              <li key={a} className="flex items-center gap-2 text-sm">
+                <span className="inline-block w-4 h-4 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center text-[10px] font-bold flex-shrink-0">
+                  ✓
+                </span>
+                <span className="text-slate-700">
+                  {AGENT_LABELS[a] || a}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+        <div>
+          <p className="text-[11px] font-medium text-slate-500 uppercase tracking-wider mb-2">
+            Locked ({plan.locked_agents.length})
+          </p>
+          {plan.locked_agents.length === 0 ? (
+            <p className="text-sm text-slate-500">
+              All AI agents are unlocked on your plan.
+            </p>
+          ) : (
+            <ul className="space-y-1">
+              {plan.locked_agents.map((a) => (
+                <li
+                  key={a}
+                  className="flex items-center gap-2 text-sm text-slate-500"
+                >
+                  <span className="inline-block w-4 h-4 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center text-[10px] flex-shrink-0">
+                    🔒
+                  </span>
+                  <span>{AGENT_LABELS[a] || a}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       </div>
     </div>
   );
