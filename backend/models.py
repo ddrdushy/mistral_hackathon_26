@@ -20,6 +20,10 @@ class Tenant(Base):
     slug = Column(String, unique=True, nullable=False, index=True)
     name = Column(String, nullable=False)
     plan = Column(String, default="free", nullable=False)  # free/starter/pro
+    # Per-tenant agent overrides on top of plan defaults. Stored as JSON
+    # of {"add": [...], "remove": [...]} — superadmin can grant or revoke
+    # individual agents without changing the tenant's plan tier.
+    agent_overrides_json = Column(Text, default='{"add": [], "remove": []}')
 
     # Stripe (filled in Phase 3 — billing)
     stripe_customer_id = Column(String, nullable=True)

@@ -141,7 +141,77 @@ PLANS: dict[PlanName, Plan] = {
 
 
 def get_plan(name: str) -> Plan:
-    return PLANS.get(name, PLANS["free"])  # unknown defaults to free
+    """Resolve a plan by name. DB-stored overrides (set via super-admin)
+    are layered on top of the static defaults so the platform owner can
+    edit prices/limits without redeploying."""
+    base = PLANS.get(name, PLANS["free"])
+    overrides = _load_plan_overrides().get(base.name)
+    if not overrides:
+        return base
+    # Build a Plan with overrides merged. Don't mutate PLANS.
+    return Plan(
+        name=base.name,
+        display_name=overrides.get("display_name") or base.display_name,
+        price_monthly_usd=int(overrides.get("price_monthly_usd")) if overrides.get("price_monthly_usd") is not None else base.price_monthly_usd,
+        stripe_price_id=overrides.get("stripe_price_id") if overrides.get("stripe_price_id") is not None else base.stripe_price_id,
+        max_jobs=int(overrides.get("max_jobs")) if overrides.get("max_jobs") is not None else base.max_jobs,
+        max_candidates=int(overrides.get("max_candidates")) if overrides.get("max_candidates") is not None else base.max_candidates,
+        max_interviews_per_month=int(overrides.get("max_interviews_per_month")) if overrides.get("max_interviews_per_month") is not None else base.max_interviews_per_month,
+        daily_llm_budget_usd=float(overrides.get("daily_llm_budget_usd")) if overrides.get("daily_llm_budget_usd") is not None else base.daily_llm_budget_usd,
+        features=overrides.get("features") if overrides.get("features") is not None else base.features,
+        allowed_agents=set(overrides.get("allowed_agents")) if overrides.get("allowed_agents") is not None else base.allowed_agents,
+    )
+
+
+# ── DB-stored plan overrides (super-admin editable) ──────────────────────
+
+
+_OVERRIDES_CACHE: dict[str, dict] = {}
+_OVERRIDES_TS: float = 0.0
+_OVERRIDES_TTL_SECONDS = 30
+
+
+def _load_plan_overrides() -> dict[str, dict]:
+    """Read overrides from the `settings` table. Cached for 30s so we don't
+    run a query on every gate_agent call. Settings keys look like
+    `plan_override.{plan_name}` and store JSON of the override dict."""
+    global _OVERRIDES_CACHE, _OVERRIDES_TS
+    import time
+    import json as _json
+    now = time.time()
+    if (now - _OVERRIDES_TS) < _OVERRIDES_TTL_SECONDS and _OVERRIDES_CACHE:
+        return _OVERRIDES_CACHE
+    try:
+        from database import SessionLocal
+        from models import Setting
+        db = SessionLocal()
+        try:
+            rows = db.query(Setting).filter(
+                Setting.tenant_id.is_(None),
+                Setting.key.like("plan_override.%"),
+            ).all()
+            out: dict[str, dict] = {}
+            for r in rows:
+                pname = r.key.replace("plan_override.", "", 1)
+                try:
+                    out[pname] = _json.loads(r.value or "{}")
+                except Exception:
+                    out[pname] = {}
+            _OVERRIDES_CACHE = out
+            _OVERRIDES_TS = now
+            return out
+        finally:
+            db.close()
+    except Exception:
+        return _OVERRIDES_CACHE
+
+
+def invalidate_plan_overrides_cache() -> None:
+    """Called from the super-admin endpoint after a plan override is
+    written, so the change takes effect immediately instead of waiting
+    for the TTL."""
+    global _OVERRIDES_TS
+    _OVERRIDES_TS = 0.0
 
 
 def effective_quota(tenant: Tenant, attr: str) -> int:
@@ -180,8 +250,35 @@ def count_interviews_this_month(db: Session, tenant: Tenant) -> int:
 # ── Agent-level gating ────────────────────────────────────────────────────
 
 
+def _tenant_overrides(tenant: Tenant) -> tuple[set[str], set[str]]:
+    """Return (added_agents, removed_agents) for a tenant. Empty sets if
+    the tenant has no overrides or the JSON is malformed."""
+    if not tenant or not getattr(tenant, "agent_overrides_json", None):
+        return set(), set()
+    import json as _json
+    try:
+        data = _json.loads(tenant.agent_overrides_json)
+    except Exception:
+        return set(), set()
+    add = {str(a) for a in (data.get("add") or [])}
+    remove = {str(a) for a in (data.get("remove") or [])}
+    return add, remove
+
+
 def is_agent_allowed(tenant: Tenant, agent_name: str) -> bool:
-    """Pure check — does this tenant's plan allow this agent?"""
+    """Pure check — does this tenant's plan (plus per-tenant overrides)
+    allow this agent?
+
+    Order of precedence:
+      1. tenant.agent_overrides.remove → blocked, even on Pro
+      2. tenant.agent_overrides.add    → allowed, even on Free
+      3. plan default
+    """
+    add, remove = _tenant_overrides(tenant)
+    if agent_name in remove:
+        return False
+    if agent_name in add:
+        return True
     plan = get_plan(tenant.plan if tenant else "free")
     if ALL_AGENTS in plan.allowed_agents:
         return True
@@ -210,20 +307,15 @@ def gate_agent(tenant: Tenant, agent_name: str) -> None:
 
 
 def locked_agents_for(tenant: Tenant) -> list[str]:
-    """Sorted list of known agents NOT included in the tenant's plan.
-    Drives the Settings UI 'Locked' badges + upgrade CTAs."""
-    plan = get_plan(tenant.plan if tenant else "free")
-    if ALL_AGENTS in plan.allowed_agents:
-        return []
-    return sorted(set(ALL_KNOWN_AGENTS) - plan.allowed_agents)
+    """Sorted list of known agents NOT included for the tenant after
+    applying overrides. Drives the Settings UI 'Locked' badges."""
+    return sorted([a for a in ALL_KNOWN_AGENTS if not is_agent_allowed(tenant, a)])
 
 
 def unlocked_agents_for(tenant: Tenant) -> list[str]:
-    """Sorted list of agents this tenant CAN currently use."""
-    plan = get_plan(tenant.plan if tenant else "free")
-    if ALL_AGENTS in plan.allowed_agents:
-        return list(ALL_KNOWN_AGENTS)
-    return sorted(plan.allowed_agents)
+    """Sorted list of agents this tenant CAN currently use, with
+    per-tenant overrides applied."""
+    return sorted([a for a in ALL_KNOWN_AGENTS if is_agent_allowed(tenant, a)])
 
 
 # ── Quota enforcement ─────────────────────────────────────────────────────

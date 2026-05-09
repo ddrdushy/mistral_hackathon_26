@@ -23,7 +23,7 @@ from database import get_db
 from models import (
     Tenant, User, Job, Candidate, Application, InterviewLink, LlmUsage, AuditLog,
     Email, Event, QaSession, EmailVerification, PasswordReset, TenantInvite,
-    Testimonial,
+    Testimonial, Setting,
 )
 from auth.security import issue_jwt, COOKIE_NAME, JWT_TTL_DAYS, hash_password, new_token
 from auth.dependencies import require_superadmin, CurrentSession
@@ -1315,3 +1315,231 @@ async def delete_testimonial(
         request=request, payload={"id": testimonial_id, "author": author},
     )
     return {"status": "deleted", "id": testimonial_id}
+
+
+# ── Per-tenant agent overrides ────────────────────────────────────────────
+
+
+class TenantAgentOverridesResponse(BaseModel):
+    tenant_id: int
+    plan: str
+    plan_default_agents: list[str]
+    add: list[str]
+    remove: list[str]
+    effective_unlocked: list[str]
+    effective_locked: list[str]
+
+
+class TenantAgentOverridesUpdate(BaseModel):
+    add: list[str] = []
+    remove: list[str] = []
+
+
+@router.get("/tenants/{tenant_id}/agent-overrides", response_model=TenantAgentOverridesResponse)
+def get_tenant_agent_overrides(
+    tenant_id: int,
+    db: Session = Depends(get_db),
+    _: CurrentSession = Depends(require_superadmin),
+):
+    from billing.plans import (
+        ALL_AGENTS, ALL_KNOWN_AGENTS, get_plan,
+        unlocked_agents_for, locked_agents_for, _tenant_overrides,
+    )
+    t = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+    if not t:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    plan = get_plan(t.plan)
+    plan_defaults = (
+        list(ALL_KNOWN_AGENTS) if ALL_AGENTS in plan.allowed_agents
+        else sorted(plan.allowed_agents)
+    )
+    add, remove = _tenant_overrides(t)
+    return TenantAgentOverridesResponse(
+        tenant_id=t.id,
+        plan=t.plan,
+        plan_default_agents=plan_defaults,
+        add=sorted(add),
+        remove=sorted(remove),
+        effective_unlocked=unlocked_agents_for(t),
+        effective_locked=locked_agents_for(t),
+    )
+
+
+@router.put("/tenants/{tenant_id}/agent-overrides", response_model=TenantAgentOverridesResponse)
+def put_tenant_agent_overrides(
+    tenant_id: int,
+    req: TenantAgentOverridesUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(require_superadmin),
+):
+    from billing.plans import ALL_KNOWN_AGENTS
+    t = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+    if not t:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    # Validate agent names against the catalogue. Silent dropping of
+    # unknown names beats letting a typo permanently lock an agent.
+    valid = set(ALL_KNOWN_AGENTS)
+    add = sorted(set(req.add) & valid)
+    remove = sorted(set(req.remove) & valid)
+    # If the same agent appears in both lists, remove wins (more restrictive).
+    add = [a for a in add if a not in remove]
+
+    t.agent_overrides_json = json.dumps({"add": add, "remove": remove})
+    db.commit()
+    db.refresh(t)
+    record_audit(
+        db, actor=session.user, action="tenant.agent_overrides.update",
+        target_tenant_id=tenant_id,
+        payload={"add": add, "remove": remove},
+        request=request,
+    )
+
+    return get_tenant_agent_overrides(tenant_id, db, session)
+
+
+# ── Plan editor (price + limits + features + allowed agents) ──────────────
+
+
+class PlanConfigResponse(BaseModel):
+    name: str
+    display_name: str
+    price_monthly_usd: int
+    stripe_price_id: str | None
+    max_jobs: int
+    max_candidates: int
+    max_interviews_per_month: int
+    daily_llm_budget_usd: float
+    features: list[str]
+    allowed_agents: list[str]
+    has_override: bool
+
+
+class PlanConfigUpdate(BaseModel):
+    display_name: str | None = None
+    price_monthly_usd: int | None = None
+    stripe_price_id: str | None = None
+    max_jobs: int | None = None
+    max_candidates: int | None = None
+    max_interviews_per_month: int | None = None
+    daily_llm_budget_usd: float | None = None
+    features: list[str] | None = None
+    allowed_agents: list[str] | None = None  # use ["*"] to mean ALL
+
+
+@router.get("/plan-configs", response_model=list[PlanConfigResponse])
+def list_plan_configs(
+    db: Session = Depends(get_db),
+    _: CurrentSession = Depends(require_superadmin),
+):
+    from billing.plans import ALL_AGENTS, PLANS, get_plan, _load_plan_overrides
+    overrides_map = _load_plan_overrides()
+    out: list[PlanConfigResponse] = []
+    for pname in PLANS.keys():
+        p = get_plan(pname)
+        out.append(PlanConfigResponse(
+            name=p.name,
+            display_name=p.display_name,
+            price_monthly_usd=p.price_monthly_usd,
+            stripe_price_id=p.stripe_price_id,
+            max_jobs=p.max_jobs,
+            max_candidates=p.max_candidates,
+            max_interviews_per_month=p.max_interviews_per_month,
+            daily_llm_budget_usd=p.daily_llm_budget_usd,
+            features=list(p.features),
+            allowed_agents=(
+                ["*"] if ALL_AGENTS in p.allowed_agents else sorted(p.allowed_agents)
+            ),
+            has_override=pname in overrides_map and bool(overrides_map[pname]),
+        ))
+    return out
+
+
+@router.put("/plan-configs/{plan_name}", response_model=PlanConfigResponse)
+def update_plan_config(
+    plan_name: str,
+    req: PlanConfigUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(require_superadmin),
+):
+    from billing.plans import (
+        ALL_AGENTS, ALL_KNOWN_AGENTS, PLANS, _load_plan_overrides,
+        invalidate_plan_overrides_cache,
+    )
+    if plan_name not in PLANS:
+        raise HTTPException(status_code=404, detail=f"Unknown plan '{plan_name}'")
+
+    # Validate allowed_agents
+    if req.allowed_agents is not None:
+        if req.allowed_agents == ["*"]:
+            pass  # sentinel for "all"
+        else:
+            valid = set(ALL_KNOWN_AGENTS)
+            unknown = set(req.allowed_agents) - valid
+            if unknown:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Unknown agent names: {sorted(unknown)}",
+                )
+
+    # Merge req with existing overrides — only the fields supplied are
+    # changed. None values mean "fall back to the env-driven default".
+    existing = _load_plan_overrides().get(plan_name, {})
+    payload = dict(existing)
+    for field_name in [
+        "display_name", "price_monthly_usd", "stripe_price_id",
+        "max_jobs", "max_candidates", "max_interviews_per_month",
+        "daily_llm_budget_usd", "features", "allowed_agents",
+    ]:
+        val = getattr(req, field_name)
+        if val is not None:
+            payload[field_name] = val
+
+    setting_key = f"plan_override.{plan_name}"
+    row = db.query(Setting).filter(
+        Setting.tenant_id.is_(None),
+        Setting.key == setting_key,
+    ).first()
+    if row:
+        row.value = json.dumps(payload)
+    else:
+        db.add(Setting(tenant_id=None, key=setting_key, value=json.dumps(payload)))
+    db.commit()
+    invalidate_plan_overrides_cache()
+
+    record_audit(
+        db, actor=session.user, action="plan_config.update",
+        payload={"plan": plan_name, "changes": list(payload.keys())},
+        request=request,
+    )
+
+    return [p for p in list_plan_configs(db, session) if p.name == plan_name][0]
+
+
+@router.delete("/plan-configs/{plan_name}")
+def delete_plan_config(
+    plan_name: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(require_superadmin),
+):
+    """Drop the override row, restoring the env-driven defaults."""
+    from billing.plans import PLANS, invalidate_plan_overrides_cache
+    if plan_name not in PLANS:
+        raise HTTPException(status_code=404, detail=f"Unknown plan '{plan_name}'")
+    row = db.query(Setting).filter(
+        Setting.tenant_id.is_(None),
+        Setting.key == f"plan_override.{plan_name}",
+    ).first()
+    if row:
+        db.delete(row)
+        db.commit()
+    invalidate_plan_overrides_cache()
+    record_audit(
+        db, actor=session.user, action="plan_config.reset",
+        payload={"plan": plan_name},
+        request=request,
+    )
+    return {"reset": True}

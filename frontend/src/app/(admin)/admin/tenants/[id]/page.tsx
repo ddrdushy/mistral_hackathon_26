@@ -25,7 +25,7 @@ import {
   YAxis,
 } from "recharts";
 
-import { apiGet, apiPost, apiPatch, apiDelete } from "@/lib/api";
+import { apiGet, apiPost, apiPatch, apiDelete, apiPut } from "@/lib/api";
 import type { AdminTenantDetail, PlanName } from "@/types/index";
 import { timeAgo } from "@/lib/constants";
 import LoadingSpinner from "@/components/ui/LoadingSpinner";
@@ -471,6 +471,10 @@ export default function TenantDetailPage({
         </Card>
       </div>
 
+      {/* Per-tenant agent overrides */}
+      <TenantAgentOverridesPanel tenantId={t.id} />
+
+
       {/* Members */}
       <Card title={`Members (${t.members.length})`}>
         <div className="overflow-x-auto -mx-6">
@@ -543,5 +547,178 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
       <span className="text-xs uppercase tracking-wide text-slate-500 font-semibold">{label}</span>
       <span className="text-slate-700 truncate max-w-[60%]">{value}</span>
     </div>
+  );
+}
+
+interface AgentOverridesResponse {
+  tenant_id: number;
+  plan: string;
+  plan_default_agents: string[];
+  add: string[];
+  remove: string[];
+  effective_unlocked: string[];
+  effective_locked: string[];
+}
+
+const AGENT_LABELS: Record<string, string> = {
+  email_classifier: "Inbox classifier",
+  resume_scorer: "Resume scorer",
+  profile_extractor: "Talent-bank tagger",
+  interview_question_generator: "AI interview-question suggest",
+  voice_screener: "Voice screening (ElevenLabs)",
+  qa_interview_generate: "Q&A interview generator",
+  qa_interview_score_technical: "Q&A technical scorer",
+  interview_evaluator: "Interview evaluator",
+  hiring_report: "Hiring report generator",
+  talent_search: "External talent search (Apollo)",
+  job_generator: "Job description auto-fill",
+};
+
+const ALL_AGENTS_FE = Object.keys(AGENT_LABELS);
+
+function TenantAgentOverridesPanel({ tenantId }: { tenantId: number }) {
+  const [data, setData] = useState<AgentOverridesResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [feedback, setFeedback] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      setLoading(true);
+      const res = await apiGet<AgentOverridesResponse>(
+        `/admin/tenants/${tenantId}/agent-overrides`,
+      );
+      setData(res);
+    } catch (err) {
+      setFeedback(err instanceof Error ? err.message : "Load failed");
+    } finally {
+      setLoading(false);
+    }
+  }, [tenantId]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const setAgent = async (agent: string, mode: "default" | "force_on" | "force_off") => {
+    if (!data) return;
+    const add = new Set(data.add);
+    const remove = new Set(data.remove);
+    add.delete(agent);
+    remove.delete(agent);
+    if (mode === "force_on") add.add(agent);
+    if (mode === "force_off") remove.add(agent);
+    try {
+      setBusy(true);
+      setFeedback(null);
+      const res = await apiPut<AgentOverridesResponse>(
+        `/admin/tenants/${tenantId}/agent-overrides`,
+        { add: Array.from(add), remove: Array.from(remove) },
+      );
+      setData(res);
+      setFeedback(`Updated ${AGENT_LABELS[agent] || agent}`);
+    } catch (err) {
+      setFeedback(err instanceof Error ? err.message : "Update failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <Card title="Agent overrides">
+        <div className="h-24 bg-slate-100 rounded animate-pulse" />
+      </Card>
+    );
+  }
+  if (!data) return null;
+
+  const planDefault = new Set(data.plan_default_agents);
+  const addSet = new Set(data.add);
+  const removeSet = new Set(data.remove);
+
+  const stateOf = (agent: string): "default" | "force_on" | "force_off" => {
+    if (removeSet.has(agent)) return "force_off";
+    if (addSet.has(agent)) return "force_on";
+    return "default";
+  };
+
+  return (
+    <Card
+      title="Agent overrides"
+      action={
+        feedback && (
+          <span className="text-xs text-emerald-700">{feedback}</span>
+        )
+      }
+    >
+      <p className="text-xs text-slate-500 mb-3">
+        Tenant is on the <strong className="text-slate-700">{data.plan}</strong> plan.
+        Use <em>Force on</em> to grant access to an agent beyond their plan,
+        or <em>Force off</em> to revoke an agent that the plan would normally include.
+        Both write to <code className="font-mono text-[10px]">tenants.agent_overrides_json</code> and audit-log on every save.
+      </p>
+      <div className="overflow-hidden border border-slate-200 rounded-md">
+        <table className="min-w-full text-sm">
+          <thead className="bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
+            <tr>
+              <th className="px-3 py-2 text-left">Agent</th>
+              <th className="px-3 py-2 text-center">Plan default</th>
+              <th className="px-3 py-2 text-center">Override</th>
+              <th className="px-3 py-2 text-center">Effective</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {ALL_AGENTS_FE.map((a) => {
+              const inPlan = planDefault.has(a);
+              const state = stateOf(a);
+              const effective =
+                state === "force_off" ? false :
+                state === "force_on" ? true :
+                inPlan;
+              return (
+                <tr key={a} className="hover:bg-slate-50/60">
+                  <td className="px-3 py-2 font-medium text-slate-800">
+                    {AGENT_LABELS[a] || a}
+                  </td>
+                  <td className="px-3 py-2 text-center">
+                    {inPlan ? (
+                      <span className="text-emerald-700">✓</span>
+                    ) : (
+                      <span className="text-slate-300">—</span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2 text-center">
+                    <select
+                      disabled={busy}
+                      value={state}
+                      onChange={(e) =>
+                        setAgent(a, e.target.value as "default" | "force_on" | "force_off")
+                      }
+                      className="text-xs border border-slate-300 rounded px-1.5 py-0.5"
+                    >
+                      <option value="default">Use plan</option>
+                      <option value="force_on">Force on</option>
+                      <option value="force_off">Force off</option>
+                    </select>
+                  </td>
+                  <td className="px-3 py-2 text-center">
+                    <span
+                      className={`text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded font-semibold ${
+                        effective
+                          ? "bg-emerald-100 text-emerald-700"
+                          : "bg-slate-100 text-slate-500"
+                      }`}
+                    >
+                      {effective ? "Unlocked" : "Locked"}
+                    </span>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </Card>
   );
 }

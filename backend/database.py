@@ -163,6 +163,15 @@ def _run_migrations():
                     conn.execute(text("ALTER TABLE tenants ADD COLUMN deleted_at TIMESTAMP"))
                 except Exception:
                     pass
+        if "agent_overrides_json" not in existing:
+            with engine.begin() as conn:
+                try:
+                    conn.execute(text(
+                        "ALTER TABLE tenants ADD COLUMN agent_overrides_json TEXT "
+                        "DEFAULT '{\"add\": [], \"remove\": []}'"
+                    ))
+                except Exception:
+                    pass
 
     # Milestone 3: per-user disable
     if "users" in insp.get_table_names():
