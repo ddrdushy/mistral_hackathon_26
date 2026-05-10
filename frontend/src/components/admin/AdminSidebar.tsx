@@ -19,6 +19,7 @@ const navItems = [
   { label: "Tenants", href: "/admin", icon: BuildingOffice2Icon, match: /^\/admin(\/tenants(\/.*)?)?$/ },
   { label: "Users", href: "/admin/users", icon: UsersIcon, match: /^\/admin\/users/ },
   { label: "Plans", href: "/admin/plans", icon: CurrencyDollarIcon, match: /^\/admin\/plans/ },
+  { label: "Stripe", href: "/admin/stripe", icon: CurrencyDollarIcon, match: /^\/admin\/stripe/ },
   { label: "Analytics", href: "/admin/analytics", icon: ChartBarIcon, match: /^\/admin\/analytics/ },
   { label: "Testimonials", href: "/admin/testimonials", icon: ChatBubbleLeftRightIcon, match: /^\/admin\/testimonials/ },
   { label: "Audit log", href: "/admin/audit-log", icon: DocumentTextIcon, match: /^\/admin\/audit-log/ },

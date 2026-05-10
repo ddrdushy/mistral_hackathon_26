@@ -1543,3 +1543,128 @@ def delete_plan_config(
         request=request,
     )
     return {"reset": True}
+
+
+# ── Stripe configuration (sandbox + prod, with active-mode toggle) ────────
+
+
+class StripeModeCredentials(BaseModel):
+    secret_key: str
+    publishable_key: str
+    webhook_secret: str
+    starter_price_id: str
+    pro_price_id: str
+    secret_key_set: bool
+    publishable_key_set: bool
+    webhook_secret_set: bool
+    starter_price_id_set: bool
+    pro_price_id_set: bool
+
+
+class StripeConfigResponse(BaseModel):
+    mode: str
+    sandbox: StripeModeCredentials
+    prod: StripeModeCredentials
+    env_fallbacks_present: dict[str, bool]
+
+
+class StripeModeUpdate(BaseModel):
+    mode: str  # "sandbox" | "prod"
+
+
+class StripeCredentialsUpdate(BaseModel):
+    secret_key: Optional[str] = None
+    publishable_key: Optional[str] = None
+    webhook_secret: Optional[str] = None
+    starter_price_id: Optional[str] = None
+    pro_price_id: Optional[str] = None
+
+
+@router.get("/stripe-config", response_model=StripeConfigResponse)
+def get_stripe_config(
+    _: CurrentSession = Depends(require_superadmin),
+):
+    from services.stripe_config import status_summary
+    return status_summary()
+
+
+@router.put("/stripe-config/mode", response_model=StripeConfigResponse)
+def set_stripe_mode(
+    req: StripeModeUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(require_superadmin),
+):
+    from services import stripe_config
+    if req.mode not in ("sandbox", "prod"):
+        raise HTTPException(status_code=400, detail="mode must be 'sandbox' or 'prod'")
+    stripe_config.set_mode(req.mode)  # type: ignore[arg-type]
+    record_audit(
+        db,
+        actor=session.user,
+        action="stripe.mode.update",
+        payload={"mode": req.mode},
+        request=request,
+    )
+    return stripe_config.status_summary()
+
+
+@router.put("/stripe-config/{mode}", response_model=StripeConfigResponse)
+def update_stripe_credentials(
+    mode: str,
+    req: StripeCredentialsUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(require_superadmin),
+):
+    """Update one or more credentials for sandbox or prod. Pass empty
+    string for a field to clear it (e.g. {"webhook_secret": ""})."""
+    from services import stripe_config
+    if mode not in ("sandbox", "prod"):
+        raise HTTPException(status_code=404, detail="mode must be 'sandbox' or 'prod'")
+
+    fields = {k: v for k, v in req.model_dump(exclude_unset=True).items() if v is not None}
+    if not fields:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    try:
+        stripe_config.set_credentials(mode, **fields)  # type: ignore[arg-type]
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    record_audit(
+        db,
+        actor=session.user,
+        action="stripe.credentials.update",
+        payload={
+            "mode": mode,
+            "fields": list(fields.keys()),
+            # never log the actual secret values
+        },
+        severity="warning",
+        request=request,
+    )
+    return stripe_config.status_summary()
+
+
+@router.delete("/stripe-config/{mode}")
+def clear_stripe_credentials(
+    mode: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(require_superadmin),
+):
+    """Wipe every key for the given mode. Falls back to env vars after."""
+    from services import stripe_config
+    if mode not in ("sandbox", "prod"):
+        raise HTTPException(status_code=404, detail="mode must be 'sandbox' or 'prod'")
+    stripe_config.clear_credentials(mode)  # type: ignore[arg-type]
+    record_audit(
+        db,
+        actor=session.user,
+        action="stripe.credentials.clear",
+        payload={"mode": mode},
+        severity="warning",
+        request=request,
+    )
+    return {"cleared": True, "mode": mode}

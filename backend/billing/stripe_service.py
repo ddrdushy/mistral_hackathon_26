@@ -28,7 +28,33 @@ logger = logging.getLogger("hireops.billing")
 
 
 def _api_key() -> str | None:
-    return os.getenv("STRIPE_SECRET_KEY")
+    """Active mode's secret key — sandbox or prod, depending on the
+    super-admin's setting. Falls back to the env var
+    STRIPE_SECRET_KEY when no DB value is set for the active mode."""
+    from services.stripe_config import get_value
+    val = get_value("secret_key")
+    return val or None
+
+
+def _webhook_secret() -> str:
+    from services.stripe_config import get_value
+    return get_value("webhook_secret") or ""
+
+
+def _price_id_for_plan(plan_name: str) -> Optional[str]:
+    """Active-mode price ID for the named plan. Falls back to plan
+    config (which itself can be DB-overridden via /admin/plan-configs)."""
+    from services.stripe_config import get_value
+    if plan_name == "starter":
+        v = get_value("starter_price_id")
+        if v:
+            return v
+    elif plan_name == "pro":
+        v = get_value("pro_price_id")
+        if v:
+            return v
+    plan = get_plan(plan_name)
+    return plan.stripe_price_id
 
 
 def configured() -> bool:
@@ -40,7 +66,8 @@ def _stripe():
     key = _api_key()
     if not key:
         raise RuntimeError(
-            "Stripe is not configured. Set STRIPE_SECRET_KEY in the backend env."
+            "Stripe is not configured. Set the secret key for the active mode "
+            "in /admin/stripe (or STRIPE_SECRET_KEY in the backend env)."
         )
     stripe.api_key = key
     return stripe
@@ -75,10 +102,11 @@ def create_checkout_session(db: Session, tenant: Tenant, user: User, plan_name: 
     plan = get_plan(plan_name)
     if plan.name == "free":
         raise ValueError("Cannot checkout to the free plan")
-    if not plan.stripe_price_id:
+    price_id = _price_id_for_plan(plan.name)
+    if not price_id:
         raise ValueError(
-            f"Plan '{plan.name}' has no STRIPE_*_PRICE_ID configured. "
-            f"Set it in backend env and restart."
+            f"Plan '{plan.name}' has no Stripe price ID configured for the "
+            f"active mode. Set it in /admin/stripe."
         )
 
     s = _stripe()
@@ -86,7 +114,7 @@ def create_checkout_session(db: Session, tenant: Tenant, user: User, plan_name: 
     session = s.checkout.Session.create(
         mode="subscription",
         customer=customer_id,
-        line_items=[{"price": plan.stripe_price_id, "quantity": 1}],
+        line_items=[{"price": price_id, "quantity": 1}],
         success_url=f"{_frontend_url()}/settings/billing?upgraded=1",
         cancel_url=f"{_frontend_url()}/settings/billing?canceled=1",
         metadata={"tenant_id": str(tenant.id), "plan": plan.name},
@@ -113,11 +141,17 @@ def create_portal_session(db: Session, tenant: Tenant, user: User) -> str:
 
 
 def verify_webhook(payload: bytes, signature: str) -> dict:
-    """Verify Stripe webhook signature. Raises stripe.SignatureVerificationError on bad sig."""
-    secret = os.getenv("STRIPE_WEBHOOK_SECRET", "")
+    """Verify Stripe webhook signature. Raises stripe.SignatureVerificationError on bad sig.
+
+    Reads the webhook secret for the active mode (sandbox vs prod). When
+    you toggle modes in /admin/stripe, make sure both Stripe webhooks
+    point at the same backend URL — the active mode determines which
+    signing secret we'll accept."""
+    secret = _webhook_secret()
     if not secret:
         raise RuntimeError(
-            "STRIPE_WEBHOOK_SECRET not set — cannot verify webhook signatures."
+            "Stripe webhook secret not set for active mode — cannot verify "
+            "signatures. Configure it in /admin/stripe."
         )
     return stripe.Webhook.construct_event(payload, signature, secret)
 
