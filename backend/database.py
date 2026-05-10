@@ -276,6 +276,19 @@ def _run_migrations():
         except Exception:
             pass
 
+    # Feature 5: events.actioned_by_user_id (per-recruiter productivity).
+    # Nullable so historical rows survive untouched.
+    if "events" in insp.get_table_names():
+        existing = {c["name"] for c in insp.get_columns("events")}
+        if "actioned_by_user_id" not in existing:
+            with engine.begin() as conn:
+                try:
+                    conn.execute(text(
+                        "ALTER TABLE events ADD COLUMN actioned_by_user_id INTEGER"
+                    ))
+                except Exception:
+                    pass
+
     # Heal orphaned candidate/application/event rows from the workflow bug:
     # the auto-pipeline used to create Candidate/Application/Event rows with
     # tenant_id=NULL, so the dashboard never saw them. Walk the ownership

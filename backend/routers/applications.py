@@ -115,12 +115,20 @@ def _app_to_response(app: Application, db: Session) -> dict:
     }
 
 
-def _log_event(db: Session, app_id: int, event_type: str, payload: dict, tenant_id: int | None = None):
+def _log_event(
+    db: Session,
+    app_id: int,
+    event_type: str,
+    payload: dict,
+    tenant_id: int | None = None,
+    actor_user_id: int | None = None,
+):
     event = Event(
         app_id=app_id,
         event_type=event_type,
         payload=json.dumps(payload),
         tenant_id=tenant_id,
+        actioned_by_user_id=actor_user_id,
     )
     db.add(event)
 
@@ -199,7 +207,7 @@ async def match_candidate_to_job(
     db.commit()
     db.refresh(application)
 
-    _log_event(db, application.id, "matched", {"resume_score": score_result.score, "recommendation": score_result.recommendation}, tenant_id=session.tenant.id)
+    _log_event(db, application.id, "matched", {"resume_score": score_result.score, "recommendation": score_result.recommendation}, tenant_id=session.tenant.id, actor_user_id=session.user.id)
     db.commit()
 
     return {
@@ -327,7 +335,7 @@ async def update_stage(
     app.stage = req.stage
     app.updated_at = datetime.utcnow()
 
-    _log_event(db, app.id, "stage_changed", {"from": old_stage, "to": req.stage}, tenant_id=session.tenant.id)
+    _log_event(db, app.id, "stage_changed", {"from": old_stage, "to": req.stage}, tenant_id=session.tenant.id, actor_user_id=session.user.id)
     db.commit()
     db.refresh(app)
     return _app_to_response(app, db)
@@ -529,6 +537,7 @@ async def rescore_application(
         db, app.id, "rescored",
         {"resume_score": score_result.score, "recommendation": score_result.recommendation},
         tenant_id=session.tenant.id,
+        actor_user_id=session.user.id,
     )
     db.commit()
     db.refresh(app)
@@ -579,7 +588,7 @@ async def bulk_update_stage(
             old_stage = app.stage
             app.stage = req.stage
             app.updated_at = datetime.utcnow()
-            _log_event(db, app.id, "stage_changed", {"from": old_stage, "to": req.stage}, tenant_id=session.tenant.id)
+            _log_event(db, app.id, "stage_changed", {"from": old_stage, "to": req.stage}, tenant_id=session.tenant.id, actor_user_id=session.user.id)
             updated += 1
 
     db.commit()

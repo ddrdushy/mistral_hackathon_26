@@ -31,12 +31,20 @@ router = APIRouter(prefix="/api/v1/screening", tags=["screening"])
 WEBHOOK_SECRET = os.getenv("ELEVENLABS_WEBHOOK_SECRET", "")
 
 
-def _log_event(db: Session, app_id: int, event_type: str, payload: dict, tenant_id: int | None = None):
+def _log_event(
+    db: Session,
+    app_id: int,
+    event_type: str,
+    payload: dict,
+    tenant_id: int | None = None,
+    actor_user_id: int | None = None,
+):
     event = Event(
         app_id=app_id,
         event_type=event_type,
         payload=json.dumps(payload),
         tenant_id=tenant_id,
+        actioned_by_user_id=actor_user_id,
     )
     db.add(event)
 
@@ -212,7 +220,7 @@ async def generate_interview_link(
     app.ai_next_action = "Interview link generated — send to candidate"
     app.updated_at = datetime.utcnow()
 
-    _log_event(db, app.id, "interview_link_generated", {"token": token, "expires_hours": req.expires_hours})
+    _log_event(db, app.id, "interview_link_generated", {"token": token, "expires_hours": req.expires_hours}, tenant_id=session.tenant.id, actor_user_id=session.user.id)
     db.commit()
     db.refresh(link)
 
@@ -311,7 +319,7 @@ async def send_rejection_email(app_id: int, db: Session = Depends(get_db), sessi
         app.recommendation = "reject"
         app.ai_next_action = "Rejection email sent"
         app.updated_at = datetime.utcnow()
-        _log_event(db, app.id, "rejection_email_sent", {"to_email": candidate.email})
+        _log_event(db, app.id, "rejection_email_sent", {"to_email": candidate.email}, tenant_id=session.tenant.id, actor_user_id=session.user.id)
         db.commit()
 
     return result
@@ -408,7 +416,7 @@ async def book_interview_slot(app_id: int, body: dict, db: Session = Depends(get
         "interview_dt": interview_dt.isoformat(),
         "interview_url": interview_url,
         "round": 2,
-    })
+    }, tenant_id=session.tenant.id, actor_user_id=session.user.id)
 
     # ── 4. Generate .ics calendar invite ──
     from services.ics_generator import generate_ics
@@ -590,7 +598,7 @@ async def calculate_final_score(app_id: int, db: Session = Depends(get_db), sess
         "resume_score": resume_score,
         "interview_score": interview_score,
         "final_score": final_score,
-    })
+    }, tenant_id=session.tenant.id, actor_user_id=session.user.id)
 
     # Apply threshold-based auto-decision
     threshold_result = {}
@@ -1242,7 +1250,7 @@ async def evaluate_screening(body: dict, db: Session = Depends(get_db), session:
         "decision": threshold_result["decision"],
         "final_score": final_score,
         "threshold_result": threshold_result,
-    })
+    }, tenant_id=session.tenant.id, actor_user_id=session.user.id)
     db.commit()
     db.refresh(app)
 

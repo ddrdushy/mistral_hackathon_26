@@ -193,13 +193,21 @@ export default function ReportsPage() {
       {/* ---- Header with job filter ---- */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <h1 className="text-2xl font-semibold text-slate-900">Reports</h1>
-        <Select
-          value={selectedJob}
-          onChange={setSelectedJob}
-          options={jobs}
-          placeholder="Filter by job..."
-          className="w-full sm:w-64"
-        />
+        <div className="flex items-center gap-2 w-full sm:w-auto">
+          <a
+            href="/reports/recruiters"
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-slate-700 border border-slate-300 hover:bg-slate-50 rounded-md whitespace-nowrap"
+          >
+            Recruiter productivity →
+          </a>
+          <Select
+            value={selectedJob}
+            onChange={setSelectedJob}
+            options={jobs}
+            placeholder="Filter by job..."
+            className="w-full sm:w-64"
+          />
+        </div>
       </div>
 
       {/* ---- Loading state ---- */}

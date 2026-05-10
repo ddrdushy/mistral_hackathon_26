@@ -701,12 +701,17 @@ class Event(Base):
     app_id = Column(Integer, ForeignKey("applications.id"), nullable=True)
     event_type = Column(String, nullable=False)
     payload = Column(Text, default="{}")  # JSON
+    # Recruiter who triggered this event. Nullable for system-generated
+    # events (auto-pipeline, listeners) and for the historical rows that
+    # predate Feature 5. Drives /reports/recruiters productivity metrics.
+    actioned_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     application = relationship("Application", back_populates="events")
 
     __table_args__ = (
         Index("idx_events_app", "app_id"),
+        Index("idx_events_actor_created", "actioned_by_user_id", "created_at"),
     )
 
 
