@@ -19,7 +19,7 @@ from services.secrets import apply_db_secrets_to_env
 _secret_sources = apply_db_secrets_to_env()
 
 from app_limiter import limiter
-from routers import inbox, jobs, candidates, applications, screening, reports, settings, auth, admin, team, billing, testimonials, metrics, talent, integrations, communications, calls, audit, tags, interview_questions, offer_templates, offers, metrics_recruiters
+from routers import inbox, jobs, candidates, applications, screening, reports, settings, auth, admin, team, billing, testimonials, metrics, talent, integrations, communications, calls, audit, tags, interview_questions, offer_templates, offers, metrics_recruiters, outreach
 
 logger = logging.getLogger("hireops")
 logger.info("Global secrets sources: %s", _secret_sources)
@@ -92,6 +92,7 @@ app.include_router(offer_templates.router)
 app.include_router(offers.router)
 app.include_router(offers.app_offers_router)
 app.include_router(metrics_recruiters.router)
+app.include_router(outreach.router)
 
 
 @app.on_event("startup")
@@ -135,6 +136,13 @@ async def on_startup():
     except Exception as e:
         logger.warning(f"Call queue worker startup failed: {e}")
 
+    # Outreach worker (Feature 6) — polls outreach_messages every 60s.
+    try:
+        from services import outreach_worker
+        await outreach_worker.start_worker()
+    except Exception as e:
+        logger.warning(f"Outreach worker startup failed: {e}")
+
 
 @app.on_event("shutdown")
 async def on_shutdown():
@@ -148,6 +156,11 @@ async def on_shutdown():
         await call_queue.stop_worker()
     except Exception as e:
         logger.warning(f"Call queue worker shutdown failed: {e}")
+    try:
+        from services import outreach_worker
+        await outreach_worker.stop_worker()
+    except Exception as e:
+        logger.warning(f"Outreach worker shutdown failed: {e}")
 
 
 @app.get("/health")

@@ -93,7 +93,20 @@ async def _poll_loop(account_id: int) -> None:
                     backoff = min(backoff * 2, MAX_BACKOFF_SECONDS)
                     continue
 
-                # 2) Run the workflow on each new email. Failures are per-email,
+                # 2) Reply detection (Feature 6) — if the sender matches a
+                # candidate enrolled in an active outreach sequence, stop
+                # the enrollment. Done BEFORE the classifier so we don't
+                # accidentally enroll the candidate again via the workflow.
+                try:
+                    from services.outreach_worker import stop_enrollments_on_reply
+                    for em in new_emails:
+                        from_addr = (em.from_address or "").strip().lower()
+                        if from_addr and account.tenant_id:
+                            stop_enrollments_on_reply(db, account.tenant_id, from_addr)
+                except Exception as e:
+                    logger.warning("Outreach reply-detection failed: %s", e)
+
+                # 3) Run the workflow on each new email. Failures are per-email,
                 # so one bad message doesn't stop the rest of the batch.
                 for em in new_emails:
                     try:

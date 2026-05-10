@@ -38,6 +38,7 @@ def init_db():
         AuditLog, Testimonial, MailAccount, JobBoardAccount, TenantIntegration, Communication,
         CallQueue, ResumeFraudSignal, Tag, CandidateTag, JobInterviewQuestion,
         OfferTemplate, Offer, OfferApproval, TenantESignConfig,
+        OutreachSequence, OutreachStep, OutreachEnrollment, OutreachMessage,
     )
     Base.metadata.create_all(bind=engine)
     _run_migrations()

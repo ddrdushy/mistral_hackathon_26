@@ -53,10 +53,11 @@ export default function TalentBankPage() {
   const [tags, setTags] = useState<TenantTag[]>([]);
   const [activeTagIds, setActiveTagIds] = useState<number[]>([]);
 
-  // Multi-select for bulk-tagging
+  // Multi-select for bulk-tagging / bulk-enroll
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkResult, setBulkResult] = useState<string | null>(null);
+  const [enrollOpen, setEnrollOpen] = useState(false);
 
   const fetchTags = useCallback(async () => {
     try {
@@ -229,6 +230,13 @@ export default function TalentBankPage() {
           )}
           <button
             type="button"
+            onClick={() => setEnrollOpen(true)}
+            className="text-xs font-medium px-2 py-1 rounded bg-indigo-600 hover:bg-indigo-700 text-white"
+          >
+            Enroll in sequence
+          </button>
+          <button
+            type="button"
             onClick={clearSelection}
             className="ml-auto text-xs font-medium text-slate-600 hover:text-slate-900"
           >
@@ -236,6 +244,18 @@ export default function TalentBankPage() {
           </button>
         </div>
       )}
+
+      <EnrollInSequenceModal
+        open={enrollOpen}
+        onClose={() => setEnrollOpen(false)}
+        onEnrolled={(msg) => {
+          setEnrollOpen(false);
+          setBulkResult(msg);
+          clearSelection();
+          setRefreshKey((n) => n + 1);
+        }}
+        candidateIds={Array.from(selectedIds)}
+      />
       {bulkResult && (
         <p className="text-xs bg-emerald-50 border border-emerald-200 text-emerald-800 rounded px-3 py-2">
           {bulkResult}
@@ -842,6 +862,138 @@ function UploadCvDialog({
           )}
         </div>
       </form>
+    </div>
+  );
+}
+
+function EnrollInSequenceModal({
+  open,
+  onClose,
+  onEnrolled,
+  candidateIds,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onEnrolled: (msg: string) => void;
+  candidateIds: number[];
+}) {
+  interface SeqOpt {
+    id: number;
+    name: string;
+    is_active: boolean;
+  }
+  const [sequences, setSequences] = useState<SeqOpt[]>([]);
+  const [seqId, setSeqId] = useState<number | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancel = false;
+    (async () => {
+      try {
+        const res = await apiGet<{ sequences: SeqOpt[] }>("/outreach/sequences");
+        if (cancel) return;
+        const active = (res.sequences ?? []).filter((s) => s.is_active);
+        setSequences(active);
+        setSeqId(active[0]?.id ?? null);
+      } catch {
+        setSequences([]);
+      }
+    })();
+    return () => {
+      cancel = true;
+    };
+  }, [open]);
+
+  if (!open) return null;
+
+  const submit = async () => {
+    if (!seqId) return;
+    try {
+      setBusy(true);
+      setError(null);
+      const res = await apiPost<{ enrolled: number; skipped_already_active: number[] }>(
+        "/outreach/enrollments",
+        { sequence_id: seqId, candidate_ids: candidateIds },
+      );
+      onEnrolled(
+        `Enrolled ${res.enrolled} candidate(s)${
+          res.skipped_already_active.length
+            ? ` · ${res.skipped_already_active.length} already in this sequence`
+            : ""
+        }`,
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Enroll failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-xl shadow-xl border border-slate-200 w-full max-w-md"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="px-6 py-4 border-b border-slate-200">
+          <h2 className="text-base font-semibold text-slate-900">
+            Enroll in sequence
+          </h2>
+          <p className="text-xs text-slate-500 mt-0.5">
+            {candidateIds.length} candidate
+            {candidateIds.length === 1 ? "" : "s"} selected
+          </p>
+        </div>
+        <div className="px-6 py-4">
+          {sequences.length === 0 ? (
+            <p className="text-sm text-slate-500">
+              No active sequences yet.{" "}
+              <a href="/outreach" className="text-indigo-600 hover:underline">
+                Create one →
+              </a>
+            </p>
+          ) : (
+            <select
+              value={seqId ?? ""}
+              onChange={(e) => setSeqId(Number(e.target.value))}
+              className="w-full px-3 py-2 text-sm border border-slate-300 rounded-md focus:outline-none focus:ring-1 focus:ring-indigo-500"
+            >
+              {sequences.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+          )}
+          {error && (
+            <p className="mt-3 text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-md px-3 py-2">
+              {error}
+            </p>
+          )}
+        </div>
+        <div className="px-6 py-3 border-t border-slate-200 flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-100 rounded-md"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={submit}
+            disabled={busy || !seqId}
+            className="px-4 py-1.5 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-md disabled:opacity-50"
+          >
+            {busy ? "Enrolling..." : "Enroll"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

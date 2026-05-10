@@ -394,6 +394,104 @@ class Communication(Base):
     delivered_at = Column(DateTime, nullable=True)
 
 
+class OutreachSequence(Base):
+    """A multi-step outbound sequence (Feature 6).
+
+    HR creates a sequence ("Cold candidate outreach"), defines its steps
+    (Day 0 email → Day 3 SMS → Day 7 WhatsApp), then enrolls candidates.
+    The outreach worker dispatches each step at the configured delay.
+    Reply detection auto-stops the enrollment when stop_on_reply is set.
+    """
+    __tablename__ = "outreach_sequences"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
+    name = Column(String, nullable=False)
+    description = Column(Text, default="")
+    is_active = Column(Boolean, default=True)
+    stop_on_reply = Column(Boolean, default=True)
+    stop_on_meeting_booked = Column(Boolean, default=True)
+    created_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name", name="uq_outreach_seq_tenant_name"),
+    )
+
+
+class OutreachStep(Base):
+    """One step within an outreach sequence."""
+    __tablename__ = "outreach_steps"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    sequence_id = Column(Integer, ForeignKey("outreach_sequences.id", ondelete="CASCADE"), nullable=False, index=True)
+    order_index = Column(Integer, nullable=False, default=0)
+    channel = Column(String, nullable=False)  # email | sms | whatsapp
+    # Delay relative to the previous step's send_at. Step 0 fires
+    # delay_hours after enrollment.
+    delay_hours = Column(Integer, default=0, nullable=False)
+    template_subject = Column(String, default="")  # email only
+    template_body = Column(Text, nullable=False, default="")
+    conditions_json = Column(Text, default="{}")
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class OutreachEnrollment(Base):
+    """A candidate's run through an outreach sequence."""
+    __tablename__ = "outreach_enrollments"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
+    sequence_id = Column(Integer, ForeignKey("outreach_sequences.id"), nullable=False, index=True)
+    candidate_id = Column(Integer, ForeignKey("candidates.id"), nullable=False, index=True)
+    application_id = Column(Integer, ForeignKey("applications.id"), nullable=True)
+
+    # Index of the most recently SCHEDULED step. Worker advances this
+    # forward after each successful send.
+    current_step_index = Column(Integer, default=0)
+    status = Column(String, default="active")
+    # active | completed | stopped | failed | paused
+    paused_reason = Column(String, default="")
+    # replied | meeting_booked | manual | error
+
+    started_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    completed_at = Column(DateTime, nullable=True)
+    enrolled_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+
+    __table_args__ = (
+        # A candidate can only be in a given sequence once at a time —
+        # unique on (sequence, candidate, status='active'). Postgres
+        # partial unique indexes are nice but SQLite doesn't support
+        # them, so we enforce in the router instead.
+        Index("idx_outreach_enroll_status", "tenant_id", "status"),
+    )
+
+
+class OutreachMessage(Base):
+    """One message dispatched (or scheduled) for an enrollment."""
+    __tablename__ = "outreach_messages"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
+    enrollment_id = Column(Integer, ForeignKey("outreach_enrollments.id", ondelete="CASCADE"), nullable=False, index=True)
+    step_id = Column(Integer, ForeignKey("outreach_steps.id"), nullable=False)
+    channel = Column(String, nullable=False)
+
+    scheduled_for = Column(DateTime, nullable=False, index=True)
+    sent_at = Column(DateTime, nullable=True, index=True)
+    delivery_status = Column(String, default="scheduled")
+    # scheduled | sent | delivered | failed | skipped
+    external_message_id = Column(String, default="")
+    error_message = Column(Text, default="")
+    rendered_subject = Column(String, default="")
+    rendered_body = Column(Text, default="")
+    to_address = Column(String, default="")
+
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 class OfferTemplate(Base):
     """Tenant-defined offer letter template (Feature 7).
 

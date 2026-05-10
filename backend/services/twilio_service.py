@@ -115,6 +115,42 @@ def send_whatsapp(
     return res.json()
 
 
+def send_sms(
+    config: TwilioConfig,
+    to: str,
+    body: str,
+    timeout_s: float = 15.0,
+) -> dict:
+    """Send a plain SMS via Twilio. Same auth as WhatsApp; uses sms_from
+    instead of whatsapp:from. Falls back to whatsapp_from if sms_from is
+    blank — most tenants only configure one number."""
+    sender = config.sms_from or config.whatsapp_from
+    if not sender:
+        raise TwilioConfigError("Twilio sms_from / whatsapp_from not configured")
+    if not to or not body:
+        raise ValueError("to and body are required")
+    url = f"{TWILIO_API_BASE}/Accounts/{config.account_sid}/Messages.json"
+    data = {
+        "From": sender,
+        "To": to,
+        "Body": body[:1600],
+    }
+    try:
+        with httpx.Client(timeout=timeout_s) as c:
+            res = c.post(url, data=data, auth=(config.account_sid, config.auth_token))
+    except httpx.RequestError as e:
+        raise RuntimeError(f"Twilio request failed: {e}")
+    if res.status_code >= 400:
+        try:
+            err_body = res.json()
+        except Exception:
+            err_body = {"message": res.text}
+        raise RuntimeError(
+            f"Twilio API {res.status_code}: {err_body.get('message') or err_body}"
+        )
+    return res.json()
+
+
 def send_test_message(config: TwilioConfig, to: str) -> dict:
     """Tenant-pressed Test button. Sends a fixed body so the tenant can verify
     that creds + the WhatsApp sender pairing work."""
