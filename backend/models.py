@@ -221,6 +221,11 @@ class Job(Base):
     # First-round interview mode: "voice" (ElevenLabs) or "qa" (LLM-generated written Q&A)
     interview_mode = Column(String, default="voice")
 
+    # Custom hiring stages (Feature 3). Nullable so existing jobs keep
+    # working via the legacy string-stage path until they're migrated to
+    # a template.
+    pipeline_template_id = Column(Integer, ForeignKey("pipeline_templates.id"), nullable=True)
+
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -392,6 +397,76 @@ class Communication(Base):
     sent_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     sent_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
     delivered_at = Column(DateTime, nullable=True)
+
+
+class PipelineTemplate(Base):
+    """Tenant-defined hiring pipeline (Feature 3).
+
+    Each tenant gets one auto-seeded default template at signup with the
+    legacy 7-stage flow (new → classified → matched → screening_scheduled
+    → screened → shortlisted | rejected) so existing string-based code
+    keeps working. Custom templates can be cloned from any other.
+
+    The KEY CONTRACT: every system / default template carries the legacy
+    keys above as `key`. The auto-pipeline (workflow_service) looks up
+    stages by key, so as long as a template exposes those keys it stays
+    compatible. Custom-key-only templates will fall back to writing the
+    string `Application.stage` and the auto-pipeline will skip the
+    current_stage_id update (graceful degradation).
+    """
+    __tablename__ = "pipeline_templates"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
+    name = Column(String, nullable=False)
+    description = Column(Text, default="")
+    is_default = Column(Boolean, default=False)
+    is_system = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name", name="uq_pipeline_template_tenant_name"),
+    )
+
+
+class PipelineStage(Base):
+    """One stage inside a PipelineTemplate. Unique on (template, key)
+    so existing code can look up by stable key string."""
+    __tablename__ = "pipeline_stages"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    template_id = Column(Integer, ForeignKey("pipeline_templates.id", ondelete="CASCADE"), nullable=False, index=True)
+    key = Column(String, nullable=False)
+    label = Column(String, nullable=False)
+    order_index = Column(Integer, nullable=False, default=0)
+    is_terminal = Column(Boolean, default=False)
+    terminal_outcome = Column(String, default="")  # hired | rejected | withdrawn | ""
+    auto_advance_threshold = Column(Integer, nullable=True)
+    color = Column(String, default="slate")  # palette key, mirrors Tag colors
+
+    __table_args__ = (
+        UniqueConstraint("template_id", "key", name="uq_stage_template_key"),
+    )
+
+
+class ApplicationStageTransition(Base):
+    """Audit trail of every stage move for an application. Driven by the
+    PATCH /applications/{id}/stage endpoint (and the auto-pipeline)."""
+    __tablename__ = "application_stage_transitions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=True, index=True)
+    application_id = Column(Integer, ForeignKey("applications.id", ondelete="CASCADE"), nullable=False, index=True)
+    from_stage_id = Column(Integer, ForeignKey("pipeline_stages.id"), nullable=True)
+    to_stage_id = Column(Integer, ForeignKey("pipeline_stages.id"), nullable=False)
+    # Snapshot of the string keys at the time of transition — survives
+    # template stage renames/reorders.
+    from_stage_key = Column(String, default="")
+    to_stage_key = Column(String, default="")
+    transitioned_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    actioned_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    note = Column(Text, default="")
 
 
 class OutreachSequence(Base):
@@ -731,7 +806,10 @@ class Application(Base):
     tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=True, index=True)
     candidate_id = Column(Integer, ForeignKey("candidates.id"), nullable=False)
     job_id = Column(Integer, ForeignKey("jobs.id"), nullable=False)
-    stage = Column(String, default="new")
+    stage = Column(String, default="new")  # legacy string stage — kept for back-compat
+    # Feature 3: pointer to a PipelineStage row. Populated when the
+    # application's job uses a custom template; nullable for old apps.
+    current_stage_id = Column(Integer, ForeignKey("pipeline_stages.id"), nullable=True, index=True)
     resume_score = Column(Float, nullable=True)
     resume_score_json = Column(Text, nullable=True)
     interview_score = Column(Float, nullable=True)

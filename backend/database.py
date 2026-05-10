@@ -39,12 +39,14 @@ def init_db():
         CallQueue, ResumeFraudSignal, Tag, CandidateTag, JobInterviewQuestion,
         OfferTemplate, Offer, OfferApproval, TenantESignConfig,
         OutreachSequence, OutreachStep, OutreachEnrollment, OutreachMessage,
+        PipelineTemplate, PipelineStage, ApplicationStageTransition,
     )
     Base.metadata.create_all(bind=engine)
     _run_migrations()
     _backfill_demo_tenant()
     _apply_superadmin_emails()
     _seed_default_testimonials()
+    _seed_default_pipeline_templates()
 
 
 def _run_migrations():
@@ -277,6 +279,24 @@ def _run_migrations():
         except Exception:
             pass
 
+    # Feature 3: jobs.pipeline_template_id + applications.current_stage_id
+    if "jobs" in insp.get_table_names():
+        existing = {c["name"] for c in insp.get_columns("jobs")}
+        if "pipeline_template_id" not in existing:
+            with engine.begin() as conn:
+                try:
+                    conn.execute(text("ALTER TABLE jobs ADD COLUMN pipeline_template_id INTEGER"))
+                except Exception:
+                    pass
+    if "applications" in insp.get_table_names():
+        existing = {c["name"] for c in insp.get_columns("applications")}
+        if "current_stage_id" not in existing:
+            with engine.begin() as conn:
+                try:
+                    conn.execute(text("ALTER TABLE applications ADD COLUMN current_stage_id INTEGER"))
+                except Exception:
+                    pass
+
     # Feature 5: events.actioned_by_user_id (per-recruiter productivity).
     # Nullable so historical rows survive untouched.
     if "events" in insp.get_table_names():
@@ -395,6 +415,95 @@ def _backfill_demo_tenant():
                     )
                 except Exception:
                     pass
+    finally:
+        db.close()
+
+
+def _seed_default_pipeline_templates():
+    """Feature 3: each tenant gets one auto-seeded default pipeline
+    template matching the legacy 7-stage flow. Idempotent — only runs
+    for tenants that don't already have a default template.
+
+    Stage keys are stable identifiers used by the auto-pipeline
+    (workflow_service) to look up "matched", "screening_scheduled",
+    "shortlisted" etc. Tenants can edit / clone the template freely; as
+    long as their custom template exposes those keys the auto-pipeline
+    keeps working.
+
+    Also backfills jobs.pipeline_template_id and applications.current_
+    stage_id from their existing string `stage` column.
+    """
+    from models import Tenant, PipelineTemplate, PipelineStage, Job, Application
+    db = SessionLocal()
+    try:
+        # Default stage definitions — must include every legacy enum value
+        # plus their colours / terminal flags.
+        legacy_stages = [
+            ("new", "New", "slate", False, ""),
+            ("classified", "Classified", "slate", False, ""),
+            ("matched", "Matched", "indigo", False, ""),
+            ("screening_scheduled", "Screening scheduled", "violet", False, ""),
+            ("screened", "Screened", "amber", False, ""),
+            ("shortlisted", "Shortlisted", "emerald", True, "hired"),
+            ("rejected", "Rejected", "rose", True, "rejected"),
+        ]
+
+        for tenant in db.query(Tenant).all():
+            existing_default = db.query(PipelineTemplate).filter(
+                PipelineTemplate.tenant_id == tenant.id,
+                PipelineTemplate.is_default == True,  # noqa: E712
+            ).first()
+            if existing_default:
+                continue
+
+            tmpl = PipelineTemplate(
+                tenant_id=tenant.id,
+                name="Default",
+                description="Auto-seeded legacy 7-stage pipeline.",
+                is_default=True,
+                is_system=True,
+            )
+            db.add(tmpl)
+            db.flush()
+
+            for idx, (key, label, color, is_terminal, outcome) in enumerate(legacy_stages):
+                db.add(PipelineStage(
+                    template_id=tmpl.id,
+                    key=key,
+                    label=label,
+                    order_index=idx,
+                    is_terminal=is_terminal,
+                    terminal_outcome=outcome,
+                    color=color,
+                ))
+            db.flush()
+
+            # Build stage-key → stage-id lookup for the backfills below.
+            stages_by_key = {
+                s.key: s.id
+                for s in db.query(PipelineStage).filter(
+                    PipelineStage.template_id == tmpl.id
+                ).all()
+            }
+
+            # Backfill Job.pipeline_template_id for this tenant's jobs
+            db.query(Job).filter(
+                Job.tenant_id == tenant.id,
+                Job.pipeline_template_id.is_(None),
+            ).update({Job.pipeline_template_id: tmpl.id}, synchronize_session=False)
+
+            # Backfill Application.current_stage_id from its string stage.
+            # Done one stage at a time (cheap; few rows).
+            for key, sid in stages_by_key.items():
+                db.query(Application).filter(
+                    Application.tenant_id == tenant.id,
+                    Application.stage == key,
+                    Application.current_stage_id.is_(None),
+                ).update({Application.current_stage_id: sid}, synchronize_session=False)
+
+        db.commit()
+    except Exception:
+        db.rollback()
     finally:
         db.close()
 

@@ -176,6 +176,25 @@ export default function TenantSettingsPage() {
         </Link>
 
         <Link
+          href="/settings/pipeline-templates"
+          className="block bg-white rounded-xl shadow-sm border border-slate-200 p-5 hover:border-indigo-300 hover:shadow-md transition-all"
+        >
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 rounded-lg bg-violet-50 text-violet-600 flex items-center justify-center flex-shrink-0">
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h7" />
+              </svg>
+            </div>
+            <div className="min-w-0">
+              <div className="text-sm font-semibold text-slate-900">Pipeline Templates</div>
+              <div className="text-xs text-slate-500 mt-0.5">
+                Define hiring stages per template &amp; assign per job.
+              </div>
+            </div>
+          </div>
+        </Link>
+
+        <Link
           href="/settings/offer-templates"
           className="block bg-white rounded-xl shadow-sm border border-slate-200 p-5 hover:border-indigo-300 hover:shadow-md transition-all"
         >

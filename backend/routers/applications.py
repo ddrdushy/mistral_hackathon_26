@@ -324,6 +324,18 @@ async def update_stage(
     db: Session = Depends(get_db),
     session: CurrentSession = Depends(current_session),
 ):
+    """Move an application to a new stage.
+
+    Feature 3: ApplicationStageUpdate carries either:
+      - `stage` (legacy string key — looked up against the job's
+        pipeline template), or
+      - `stage_id` (explicit PipelineStage.id)
+    Either way we update Application.stage (string, back-compat) AND
+    Application.current_stage_id (FK), AND write an
+    ApplicationStageTransition row for the audit trail.
+    """
+    from models import PipelineStage, PipelineTemplate, ApplicationStageTransition
+
     app = db.query(Application).filter(
         Application.id == app_id,
         Application.tenant_id == session.tenant.id,
@@ -331,11 +343,57 @@ async def update_stage(
     if not app:
         raise HTTPException(status_code=404, detail="Application not found")
 
-    old_stage = app.stage
-    app.stage = req.stage
+    # Resolve target stage from either stage_id or stage (key).
+    target_stage: Optional[PipelineStage] = None
+    new_stage_key = req.stage or ""
+    new_stage_id = getattr(req, "stage_id", None)
+    note = (getattr(req, "note", None) or "")[:2000]
+
+    job = db.query(Job).filter(Job.id == app.job_id).first() if app.job_id else None
+    template_id = job.pipeline_template_id if job else None
+
+    if new_stage_id:
+        target_stage = db.query(PipelineStage).filter(PipelineStage.id == new_stage_id).first()
+        # Verify the stage's template belongs to this tenant.
+        if target_stage:
+            tmpl = db.query(PipelineTemplate).filter(
+                PipelineTemplate.id == target_stage.template_id,
+                PipelineTemplate.tenant_id == session.tenant.id,
+            ).first()
+            if not tmpl:
+                raise HTTPException(status_code=400, detail="Stage does not belong to this tenant")
+            new_stage_key = target_stage.key
+    elif new_stage_key and template_id:
+        target_stage = db.query(PipelineStage).filter(
+            PipelineStage.template_id == template_id,
+            PipelineStage.key == new_stage_key,
+        ).first()
+
+    old_stage_key = app.stage or ""
+    old_stage_id = app.current_stage_id
+
+    app.stage = new_stage_key or app.stage
+    if target_stage:
+        app.current_stage_id = target_stage.id
     app.updated_at = datetime.utcnow()
 
-    _log_event(db, app.id, "stage_changed", {"from": old_stage, "to": req.stage}, tenant_id=session.tenant.id, actor_user_id=session.user.id)
+    if target_stage and old_stage_id != target_stage.id:
+        db.add(ApplicationStageTransition(
+            tenant_id=session.tenant.id,
+            application_id=app.id,
+            from_stage_id=old_stage_id,
+            to_stage_id=target_stage.id,
+            from_stage_key=old_stage_key,
+            to_stage_key=target_stage.key,
+            actioned_by_user_id=session.user.id,
+            note=note,
+        ))
+
+    _log_event(
+        db, app.id, "stage_changed",
+        {"from": old_stage_key, "to": new_stage_key, "note": note},
+        tenant_id=session.tenant.id, actor_user_id=session.user.id,
+    )
     db.commit()
     db.refresh(app)
     return _app_to_response(app, db)

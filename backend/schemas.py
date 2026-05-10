@@ -188,7 +188,14 @@ class ApplicationListResponse(BaseModel):
 
 
 class ApplicationStageUpdate(BaseModel):
-    stage: PipelineStage
+    # Either a legacy string stage OR an explicit pipeline stage id.
+    # Caller supplies one; the router resolves the other from the job's
+    # template. Note: the type is named `PipelineStage` here for the
+    # legacy enum literal (kept for back-compat); the new PipelineStage
+    # FK is referenced via `stage_id`.
+    stage: Optional[PipelineStage] = None
+    stage_id: Optional[int] = None
+    note: Optional[str] = None
 
 
 class ApplicationNotesUpdate(BaseModel):
