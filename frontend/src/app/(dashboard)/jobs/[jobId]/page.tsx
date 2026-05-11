@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useRouter, useParams } from "next/navigation";
-import { apiGet, apiDelete } from "@/lib/api";
+import { apiGet, apiPut, apiDelete } from "@/lib/api";
 import { timeAgo, STAGE_COLORS, STAGE_LABELS } from "@/lib/constants";
 import type { Job, Application, ApplicationListResponse } from "@/types/index";
 import TalentSearchPanel from "@/components/talent/TalentSearchPanel";
@@ -181,6 +181,7 @@ export default function JobDetailPage() {
   const [appsLoading, setAppsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [statusUpdating, setStatusUpdating] = useState(false);
 
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
 
@@ -234,6 +235,30 @@ export default function JobDetailPage() {
       const message = err instanceof Error ? err.message : "Failed to delete job";
       showToast(message, "error");
       setDeleting(false);
+    }
+  };
+
+  const handleStatusChange = async (nextStatus: "open" | "closed") => {
+    if (!job) return;
+    const verb = nextStatus === "closed" ? "Close" : "Reopen";
+    if (
+      nextStatus === "closed" &&
+      !confirm(
+        "Close this job? It will be hidden from the default list and no new applications will auto-match to it. You can reopen it any time.",
+      )
+    ) {
+      return;
+    }
+    setStatusUpdating(true);
+    try {
+      const updated = await apiPut<Job>(`/jobs/${jobId}`, { status: nextStatus });
+      setJob(updated);
+      showToast(`${verb}d successfully`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : `Failed to ${verb.toLowerCase()} job`;
+      showToast(message, "error");
+    } finally {
+      setStatusUpdating(false);
     }
   };
 
@@ -341,7 +366,7 @@ export default function JobDetailPage() {
           </div>
 
           {/* Action buttons */}
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <button
               onClick={() => router.push(`/jobs/${jobId}/edit`)}
               className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg text-indigo-700 bg-indigo-50 hover:bg-indigo-100 transition-colors"
@@ -351,6 +376,29 @@ export default function JobDetailPage() {
               </svg>
               Edit
             </button>
+            {job.status === "open" ? (
+              <button
+                onClick={() => handleStatusChange("closed")}
+                disabled={statusUpdating}
+                className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg text-amber-800 bg-amber-50 hover:bg-amber-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M18 12H6" />
+                </svg>
+                {statusUpdating ? "Closing..." : "Close job"}
+              </button>
+            ) : (
+              <button
+                onClick={() => handleStatusChange("open")}
+                disabled={statusUpdating}
+                className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg text-emerald-700 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v12m6-6H6" />
+                </svg>
+                {statusUpdating ? "Reopening..." : "Reopen job"}
+              </button>
+            )}
             <button
               onClick={handleDelete}
               disabled={deleting}
@@ -360,6 +408,24 @@ export default function JobDetailPage() {
             </button>
           </div>
         </div>
+
+        {/* Expiry banner — appears when expires_at is set */}
+        {job.expires_at && (
+          <div
+            className={`mt-3 inline-flex items-center gap-2 rounded-md px-2.5 py-1 text-xs font-medium ${
+              job.is_expired
+                ? "bg-rose-50 text-rose-700 border border-rose-200"
+                : "bg-slate-50 text-slate-600 border border-slate-200"
+            }`}
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            {job.is_expired
+              ? `Expired on ${new Date(job.expires_at).toLocaleDateString()} — auto-pipeline skips this job`
+              : `Expires on ${new Date(job.expires_at).toLocaleDateString()}`}
+          </div>
+        )}
       </div>
 
       {/* Skills Section */}

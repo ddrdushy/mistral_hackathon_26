@@ -21,6 +21,7 @@ export default function EditJobPage() {
     qualifications: [],
     description: "",
     interview_mode: "voice",
+    expires_at: "",
   });
   const [originalJobId, setOriginalJobId] = useState<string>("");
   const [skillInput, setSkillInput] = useState("");
@@ -44,6 +45,9 @@ export default function EditJobPage() {
         qualifications: data.qualifications || [],
         description: data.description || "",
         interview_mode: data.interview_mode || "voice",
+        // backend returns full ISO timestamp; <input type="date"> only
+        // accepts YYYY-MM-DD, so slice the date portion.
+        expires_at: data.expires_at ? data.expires_at.slice(0, 10) : "",
       });
       setOriginalJobId(data.job_id || "");
     } catch {
@@ -111,7 +115,16 @@ export default function EditJobPage() {
 
     setSubmitting(true);
     try {
-      await apiPut<Job>(`/jobs/${jobId}`, form);
+      // Coerce expires_at: empty string → null (clears the date).
+      // Date-only input → ISO at UTC midnight so the backend stores a
+      // timezone-aware end-of-day-ish moment without surprises.
+      const payload = {
+        ...form,
+        expires_at: form.expires_at
+          ? `${form.expires_at}T00:00:00.000Z`
+          : null,
+      };
+      await apiPut<Job>(`/jobs/${jobId}`, payload);
       router.push(`/jobs/${jobId}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save changes");
@@ -254,6 +267,38 @@ export default function EditJobPage() {
                 );
               })}
             </div>
+          </div>
+
+          {/* Expiry date */}
+          <div>
+            <label htmlFor="expires_at" className="block text-sm font-medium text-slate-700 mb-1">
+              Expiry date <span className="text-slate-400 font-normal">(optional)</span>
+            </label>
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                id="expires_at"
+                type="date"
+                value={form.expires_at || ""}
+                onChange={(e) =>
+                  setForm((prev) => ({ ...prev, expires_at: e.target.value }))
+                }
+                min={new Date().toISOString().slice(0, 10)}
+                className="px-3 py-2 rounded-lg border border-slate-300 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+              />
+              {form.expires_at && (
+                <button
+                  type="button"
+                  onClick={() => setForm((prev) => ({ ...prev, expires_at: "" }))}
+                  className="text-xs font-medium text-slate-600 hover:text-slate-900"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+            <p className="mt-1 text-xs text-slate-500">
+              After this date the job is treated as closed: the auto-pipeline
+              stops matching new candidates and the default jobs list hides it.
+            </p>
           </div>
 
           {/* Skills */}

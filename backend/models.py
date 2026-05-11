@@ -219,6 +219,11 @@ class Job(Base):
     description = Column(Text, default="")
     status = Column(String, default="open")  # open/closed/paused
 
+    # Optional expiry date. When set and in the past, the auto-pipeline +
+    # /jobs?status=open queries treat the job as closed. Recruiters can
+    # still reopen it by clearing the date or extending it.
+    expires_at = Column(DateTime, nullable=True)
+
     # Score thresholds for auto-decision
     resume_threshold_min = Column(Float, default=80.0)      # Min resume score to advance (80-100%)
     interview_threshold_min = Column(Float, default=75.0)   # Min interview score to advance (75-95%)

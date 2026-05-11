@@ -112,7 +112,15 @@ async def run_email_workflow(email_id: int, db: Session) -> Dict:
     # Tenant-scope the lookup. Without this we'd match the email's candidate
     # against another tenant's open jobs and silently create cross-tenant
     # Applications that the dashboard can't see.
-    job_query = db.query(Job).filter(Job.status == "open")
+    # Respect expires_at: a job past its expiry is treated as closed so
+    # the auto-pipeline doesn't keep matching candidates into a slot
+    # that's no longer hiring. Jobs without an expiry behave as before.
+    now = datetime.utcnow()
+    job_query = (
+        db.query(Job)
+        .filter(Job.status == "open")
+        .filter((Job.expires_at == None) | (Job.expires_at > now))  # noqa: E711
+    )
     if em.tenant_id is not None:
         job_query = job_query.filter(Job.tenant_id == em.tenant_id)
     open_jobs = job_query.all()

@@ -30,6 +30,7 @@ class JobCreate(BaseModel):
     qualifications: List[str] = []
     description: str = ""
     interview_mode: InterviewMode = "voice"
+    expires_at: Optional[datetime] = None
 
 
 class JobUpdate(BaseModel):
@@ -43,6 +44,8 @@ class JobUpdate(BaseModel):
     description: Optional[str] = None
     status: Optional[str] = None
     interview_mode: Optional[InterviewMode] = None
+    # Pass null to clear an existing expiry; omit to leave unchanged.
+    expires_at: Optional[datetime] = None
 
 
 class JobResponse(BaseModel):

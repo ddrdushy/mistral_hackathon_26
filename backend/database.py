@@ -299,6 +299,17 @@ def _run_migrations():
                 except Exception:
                     pass
 
+    # jobs.expires_at — optional auto-close date (recruiter productivity
+    # follow-up). Nullable; existing rows stay open until manually closed.
+    if "jobs" in insp.get_table_names():
+        existing = {c["name"] for c in insp.get_columns("jobs")}
+        if "expires_at" not in existing:
+            with engine.begin() as conn:
+                try:
+                    conn.execute(text("ALTER TABLE jobs ADD COLUMN expires_at TIMESTAMP"))
+                except Exception:
+                    pass
+
     # Feature 5: events.actioned_by_user_id (per-recruiter productivity).
     # Nullable so historical rows survive untouched.
     if "events" in insp.get_table_names():

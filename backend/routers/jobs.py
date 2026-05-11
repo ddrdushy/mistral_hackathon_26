@@ -68,6 +68,8 @@ def _generate_job_id(db: Session, tenant_id: int) -> str:
 
 def _job_to_response(job: Job, db: Session) -> dict:
     candidate_count = db.query(Application).filter(Application.job_id == job.id).count()
+    expires_at = getattr(job, "expires_at", None)
+    is_expired = bool(expires_at and expires_at < datetime.utcnow())
     return {
         "id": job.id,
         "job_id": job.job_id,
@@ -83,6 +85,8 @@ def _job_to_response(job: Job, db: Session) -> dict:
         "interview_mode": job.interview_mode or "voice",
         "created_at": job.created_at.isoformat() if job.created_at else None,
         "updated_at": job.updated_at.isoformat() if job.updated_at else None,
+        "expires_at": expires_at.isoformat() if expires_at else None,
+        "is_expired": is_expired,
         "candidate_count": candidate_count,
     }
 

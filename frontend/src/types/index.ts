@@ -211,6 +211,8 @@ export interface Job {
   interview_mode: InterviewMode;
   created_at: string;
   updated_at: string;
+  expires_at: string | null;
+  is_expired: boolean;
   candidate_count: number;
 }
 
@@ -229,6 +231,9 @@ export interface JobCreate {
   qualifications: string[];
   description: string;
   interview_mode: InterviewMode;
+  // ISO date string (YYYY-MM-DD) — backend coerces to UTC midnight.
+  // Empty/undefined leaves no expiry.
+  expires_at?: string | null;
 }
 
 // ═══════════════════════════════════════
