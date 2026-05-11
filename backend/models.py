@@ -399,6 +399,28 @@ class Communication(Base):
     delivered_at = Column(DateTime, nullable=True)
 
 
+class PipelineForecast(Base):
+    """Cached forecast result (Feature 8).
+
+    `forecast_service.forecast_pipeline()` reads from the latest row for
+    (tenant_id, job_id, window_days) and recomputes when older than 6h.
+    Manual recompute writes a fresh row regardless of staleness.
+    """
+    __tablename__ = "pipeline_forecasts"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
+    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True, index=True)
+    window_days = Column(Integer, nullable=False)
+    run_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    expected_hires = Column(Float, default=0.0)
+    confidence_low = Column(Float, default=0.0)
+    confidence_high = Column(Float, default=0.0)
+    open_applications = Column(Integer, default=0)
+    breakdown_json = Column(Text, default="{}")
+    notes = Column(Text, default="")
+
+
 class PipelineTemplate(Base):
     """Tenant-defined hiring pipeline (Feature 3).
 

@@ -40,6 +40,7 @@ def init_db():
         OfferTemplate, Offer, OfferApproval, TenantESignConfig,
         OutreachSequence, OutreachStep, OutreachEnrollment, OutreachMessage,
         PipelineTemplate, PipelineStage, ApplicationStageTransition,
+        PipelineForecast,
     )
     Base.metadata.create_all(bind=engine)
     _run_migrations()

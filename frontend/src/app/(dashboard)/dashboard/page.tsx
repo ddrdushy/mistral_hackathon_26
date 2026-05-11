@@ -32,6 +32,7 @@ import {
 } from "recharts";
 
 import { apiGet } from "@/lib/api";
+import PipelineForecastCard from "@/components/forecasts/PipelineForecastCard";
 import {
   ActivityEvent,
   Application,
@@ -241,6 +242,9 @@ export default function DashboardPage() {
           trend={shortlistRate >= 20 ? "up" : shortlistRate > 0 ? "neutral" : "neutral"}
         />
       </div>
+
+      {/* Row 1.5: Hiring forecast (Feature 8) */}
+      <PipelineForecastCard title="Hiring forecast" />
 
       {/* Row 2: Pipeline funnel + Decisions donut */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

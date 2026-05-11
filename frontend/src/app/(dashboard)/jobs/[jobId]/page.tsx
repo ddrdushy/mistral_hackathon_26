@@ -7,6 +7,7 @@ import { timeAgo, STAGE_COLORS, STAGE_LABELS } from "@/lib/constants";
 import type { Job, Application, ApplicationListResponse } from "@/types/index";
 import TalentSearchPanel from "@/components/talent/TalentSearchPanel";
 import InterviewQuestionsEditor from "@/components/jobs/InterviewQuestionsEditor";
+import PipelineForecastCard from "@/components/forecasts/PipelineForecastCard";
 
 const STATUS_BADGE: Record<string, string> = {
   open: "bg-green-100 text-green-800",
@@ -429,6 +430,11 @@ export default function JobDetailPage() {
           </div>
         </div>
       )}
+
+      {/* Pipeline forecast (Feature 8) */}
+      <div className="mb-6">
+        <PipelineForecastCard jobId={Number(jobId)} title="Job forecast" />
+      </div>
 
       {/* Custom interview questions (Feature 4) */}
       <div className="mb-6">
