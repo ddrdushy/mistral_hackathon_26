@@ -558,6 +558,7 @@ async def list_candidates(
     cand_ids = [c.id for c in candidates]
     app_counts: dict[int, int] = {}
     tag_map: dict[int, list[dict]] = {}
+    first_app_id: dict[int, int] = {}
     if cand_ids:
         from sqlalchemy import func
         rows = db.query(Application.candidate_id, func.count(Application.id)).filter(
@@ -565,6 +566,20 @@ async def list_candidates(
             Application.candidate_id.in_(cand_ids),
         ).group_by(Application.candidate_id).all()
         app_counts = {cid: n for cid, n in rows}
+
+        # Most recent application per candidate — so the Talent Bank can
+        # link "View detail" straight to that app's page. Talent-bank-only
+        # candidates (no apps) skip this and link to the match flow instead.
+        latest_rows = (
+            db.query(Application.candidate_id, func.max(Application.id))
+            .filter(
+                Application.tenant_id == session.tenant.id,
+                Application.candidate_id.in_(cand_ids),
+            )
+            .group_by(Application.candidate_id)
+            .all()
+        )
+        first_app_id = {cid: aid for cid, aid in latest_rows}
 
         # Hand-applied tags per candidate, batched
         tag_rows = (
@@ -583,6 +598,7 @@ async def list_candidates(
         # prefer the batch we just computed.
         row = _candidate_to_response(c)
         row["application_count"] = app_counts.get(c.id, 0)
+        row["first_application_id"] = first_app_id.get(c.id)
         row["tags"] = tag_map.get(c.id, [])
         out.append(row)
 

@@ -28,6 +28,9 @@ interface TalentBankCandidate {
   resume_filename: string;
   cv_version?: number;
   application_count: number;
+  // Most-recent application id, when the candidate has at least one.
+  // Used to link the card to that app's detail page.
+  first_application_id?: number | null;
   tags?: { id: number; name: string; color: string }[];
   profile?: {
     role?: string;
@@ -381,7 +384,16 @@ export default function TalentBankPage() {
                         <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0">
                             <div className="text-sm font-semibold text-slate-900 truncate">
-                              {c.name}
+                              {c.first_application_id ? (
+                                <a
+                                  href={`/candidates/${c.first_application_id}`}
+                                  className="hover:text-indigo-700 hover:underline"
+                                >
+                                  {c.name}
+                                </a>
+                              ) : (
+                                <span>{c.name}</span>
+                              )}
                             </div>
                             <div className="text-xs text-slate-500 truncate">
                               {c.email}
@@ -392,6 +404,37 @@ export default function TalentBankPage() {
                               {c.profile?.years_experience != null &&
                                 c.profile.years_experience > 0 &&
                                 ` · ${c.profile.years_experience}y`}
+                            </div>
+                            {/* Always-visible details so the card is useful
+                                BEFORE the LLM profile extractor has run.
+                                Resolves TC-4.1 — a manually-uploaded CV is
+                                now visibly represented even on a fresh
+                                tenant. */}
+                            <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-slate-500">
+                              {c.resume_filename && (
+                                <span
+                                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-100 text-slate-600"
+                                  title={c.resume_filename}
+                                >
+                                  📄 {c.resume_filename}
+                                  {c.cv_version && c.cv_version > 1
+                                    ? ` · v${c.cv_version}`
+                                    : ""}
+                                </span>
+                              )}
+                              {c.phone && (
+                                <span className="inline-flex items-center gap-1 text-slate-500">
+                                  ☎ {c.phone}
+                                </span>
+                              )}
+                              {!c.profile?.extracted_at && (
+                                <span
+                                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-50 text-amber-700"
+                                  title="The AI hasn't finished extracting the role / skills / summary for this CV yet. This usually happens within a minute of upload; refresh to check."
+                                >
+                                  ⏳ Profile pending
+                                </span>
+                              )}
                             </div>
                           </div>
                           <div className="flex-shrink-0">

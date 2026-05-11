@@ -213,6 +213,9 @@ export interface Job {
   updated_at: string;
   expires_at: string | null;
   is_expired: boolean;
+  resume_threshold_min: number;
+  interview_threshold_min: number;
+  final_threshold_reject: number;
   candidate_count: number;
 }
 
@@ -234,6 +237,11 @@ export interface JobCreate {
   // ISO date string (YYYY-MM-DD) — backend coerces to UTC midnight.
   // Empty/undefined leaves no expiry.
   expires_at?: string | null;
+  // Optional auto-decision thresholds (0–100). Backend has sensible
+  // defaults so these can be omitted.
+  resume_threshold_min?: number;
+  interview_threshold_min?: number;
+  final_threshold_reject?: number;
 }
 
 // ═══════════════════════════════════════

@@ -87,6 +87,9 @@ def _job_to_response(job: Job, db: Session) -> dict:
         "updated_at": job.updated_at.isoformat() if job.updated_at else None,
         "expires_at": expires_at.isoformat() if expires_at else None,
         "is_expired": is_expired,
+        "resume_threshold_min": job.resume_threshold_min if job.resume_threshold_min is not None else 80.0,
+        "interview_threshold_min": job.interview_threshold_min if job.interview_threshold_min is not None else 75.0,
+        "final_threshold_reject": job.final_threshold_reject if job.final_threshold_reject is not None else 50.0,
         "candidate_count": candidate_count,
     }
 

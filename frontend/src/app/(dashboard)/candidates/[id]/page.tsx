@@ -470,6 +470,58 @@ export default function CandidateDetailPage({
             </select>
           </div>
         </div>
+
+        {/* Quick-action toolbar — jumps to relevant card lower on the page
+            so testers + users don't have to scroll the long detail view to
+            find offers, calls, WhatsApp, fraud signals. */}
+        {app && (
+          <div className="mt-4 flex flex-wrap gap-2 border-t border-slate-200 pt-3">
+            <a
+              href="#offer-card"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-50 text-indigo-700 text-xs font-medium hover:bg-indigo-100 transition-colors"
+            >
+              <DocumentTextIcon className="w-4 h-4" />
+              Generate offer
+            </a>
+            <a
+              href="#call-queue-card"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-100 text-slate-700 text-xs font-medium hover:bg-slate-200 transition-colors"
+            >
+              <PhoneIcon className="w-4 h-4" />
+              Add to call queue
+            </a>
+            {app.candidate_phone && (
+              <a
+                href="#whatsapp-card"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 text-xs font-medium hover:bg-emerald-100 transition-colors"
+              >
+                <ChatBubbleLeftRightIcon className="w-4 h-4" />
+                Send WhatsApp
+              </a>
+            )}
+            <a
+              href="#fraud-card"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-50 text-amber-800 text-xs font-medium hover:bg-amber-100 transition-colors"
+            >
+              <ShieldCheckIcon className="w-4 h-4" />
+              Fraud signals
+            </a>
+            <Link
+              href="/outreach"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-100 text-slate-700 text-xs font-medium hover:bg-slate-200 transition-colors"
+            >
+              <EnvelopeIcon className="w-4 h-4" />
+              Outreach sequences
+            </Link>
+            <Link
+              href={`/candidates?match_for=${app.candidate_id ?? ""}`}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-100 text-slate-700 text-xs font-medium hover:bg-slate-200 transition-colors"
+            >
+              <MagnifyingGlassIcon className="w-4 h-4" />
+              Match to another job
+            </Link>
+          </div>
+        )}
       </Card>
 
       {/* ═══════════════════════════════════════════════════════════════════ */}
@@ -1641,40 +1693,48 @@ export default function CandidateDetailPage({
 
           {/* ── Offer letter ──────────────────────────────────────────────── */}
           {app && (
-            <OfferCard
-              applicationId={Number(id)}
-              candidateName={app.candidate_name}
-              jobTitle={app.job_title}
-              candidateEmail={app.candidate_email}
-            />
+            <div id="offer-card" className="scroll-mt-20">
+              <OfferCard
+                applicationId={Number(id)}
+                candidateName={app.candidate_name}
+                jobTitle={app.job_title}
+                candidateEmail={app.candidate_email}
+              />
+            </div>
           )}
 
           {/* ── Resume fraud check ─────────────────────────────────────────── */}
           {app && (
-            <FraudSignalsCard
-              appId={Number(id)}
-              isOwner={isOwner}
-              onChanged={fetchApplication}
-            />
+            <div id="fraud-card" className="scroll-mt-20">
+              <FraudSignalsCard
+                appId={Number(id)}
+                isOwner={isOwner}
+                onChanged={fetchApplication}
+              />
+            </div>
           )}
 
           {/* ── Send WhatsApp ──────────────────────────────────────────────── */}
           {app?.candidate_id && (
-            <SendWhatsAppCard
-              candidateId={app.candidate_id}
-              candidateName={app.candidate_name}
-              candidatePhone={app.candidate_phone}
-              onSent={fetchApplication}
-            />
+            <div id="whatsapp-card" className="scroll-mt-20">
+              <SendWhatsAppCard
+                candidateId={app.candidate_id}
+                candidateName={app.candidate_name}
+                candidatePhone={app.candidate_phone}
+                onSent={fetchApplication}
+              />
+            </div>
           )}
 
           {/* ── Phone queue (schedule + recent calls) ──────────────────────── */}
           {app?.candidate_id && (
-            <CallQueueCard
-              candidateId={app.candidate_id}
-              candidatePhone={app.candidate_phone}
-              appId={app.id}
-            />
+            <div id="call-queue-card" className="scroll-mt-20">
+              <CallQueueCard
+                candidateId={app.candidate_id}
+                candidatePhone={app.candidate_phone}
+                appId={app.id}
+              />
+            </div>
           )}
 
           {/* ── History timeline + CV versions ─────────────────────────────── */}

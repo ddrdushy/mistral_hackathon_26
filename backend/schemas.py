@@ -31,6 +31,10 @@ class JobCreate(BaseModel):
     description: str = ""
     interview_mode: InterviewMode = "voice"
     expires_at: Optional[datetime] = None
+    # Auto-decision thresholds (0–100). Defaults match the model columns.
+    resume_threshold_min: Optional[float] = Field(default=None, ge=0, le=100)
+    interview_threshold_min: Optional[float] = Field(default=None, ge=0, le=100)
+    final_threshold_reject: Optional[float] = Field(default=None, ge=0, le=100)
 
 
 class JobUpdate(BaseModel):
@@ -46,6 +50,9 @@ class JobUpdate(BaseModel):
     interview_mode: Optional[InterviewMode] = None
     # Pass null to clear an existing expiry; omit to leave unchanged.
     expires_at: Optional[datetime] = None
+    resume_threshold_min: Optional[float] = Field(default=None, ge=0, le=100)
+    interview_threshold_min: Optional[float] = Field(default=None, ge=0, le=100)
+    final_threshold_reject: Optional[float] = Field(default=None, ge=0, le=100)
 
 
 class JobResponse(BaseModel):

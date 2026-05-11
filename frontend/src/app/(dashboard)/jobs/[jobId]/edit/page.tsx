@@ -22,6 +22,9 @@ export default function EditJobPage() {
     description: "",
     interview_mode: "voice",
     expires_at: "",
+    resume_threshold_min: 80,
+    interview_threshold_min: 75,
+    final_threshold_reject: 50,
   });
   const [originalJobId, setOriginalJobId] = useState<string>("");
   const [skillInput, setSkillInput] = useState("");
@@ -48,6 +51,9 @@ export default function EditJobPage() {
         // backend returns full ISO timestamp; <input type="date"> only
         // accepts YYYY-MM-DD, so slice the date portion.
         expires_at: data.expires_at ? data.expires_at.slice(0, 10) : "",
+        resume_threshold_min: data.resume_threshold_min ?? 80,
+        interview_threshold_min: data.interview_threshold_min ?? 75,
+        final_threshold_reject: data.final_threshold_reject ?? 50,
       });
       setOriginalJobId(data.job_id || "");
     } catch {
@@ -298,6 +304,105 @@ export default function EditJobPage() {
             <p className="mt-1 text-xs text-slate-500">
               After this date the job is treated as closed: the auto-pipeline
               stops matching new candidates and the default jobs list hides it.
+            </p>
+          </div>
+
+          {/* Score thresholds — drive auto-advance / auto-reject in screening */}
+          <div>
+            <div className="flex items-baseline justify-between mb-2">
+              <label className="block text-sm font-medium text-slate-700">
+                Score thresholds
+              </label>
+              <button
+                type="button"
+                onClick={() =>
+                  setForm((prev) => ({
+                    ...prev,
+                    resume_threshold_min: 80,
+                    interview_threshold_min: 75,
+                    final_threshold_reject: 50,
+                  }))
+                }
+                className="text-[11px] font-medium text-slate-500 hover:text-slate-900"
+              >
+                Reset to defaults
+              </button>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div>
+                <label htmlFor="resume_threshold_min" className="block text-xs text-slate-600 mb-1">
+                  Resume min (advance)
+                </label>
+                <div className="relative">
+                  <input
+                    id="resume_threshold_min"
+                    type="number"
+                    min={0}
+                    max={100}
+                    step={1}
+                    value={form.resume_threshold_min ?? 80}
+                    onChange={(e) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        resume_threshold_min: Number(e.target.value),
+                      }))
+                    }
+                    className="w-full pl-3 pr-7 py-2 rounded-lg border border-slate-300 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                  />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">%</span>
+                </div>
+              </div>
+              <div>
+                <label htmlFor="interview_threshold_min" className="block text-xs text-slate-600 mb-1">
+                  Interview min (advance)
+                </label>
+                <div className="relative">
+                  <input
+                    id="interview_threshold_min"
+                    type="number"
+                    min={0}
+                    max={100}
+                    step={1}
+                    value={form.interview_threshold_min ?? 75}
+                    onChange={(e) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        interview_threshold_min: Number(e.target.value),
+                      }))
+                    }
+                    className="w-full pl-3 pr-7 py-2 rounded-lg border border-slate-300 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                  />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">%</span>
+                </div>
+              </div>
+              <div>
+                <label htmlFor="final_threshold_reject" className="block text-xs text-slate-600 mb-1">
+                  Final reject below
+                </label>
+                <div className="relative">
+                  <input
+                    id="final_threshold_reject"
+                    type="number"
+                    min={0}
+                    max={100}
+                    step={1}
+                    value={form.final_threshold_reject ?? 50}
+                    onChange={(e) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        final_threshold_reject: Number(e.target.value),
+                      }))
+                    }
+                    className="w-full pl-3 pr-7 py-2 rounded-lg border border-slate-300 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                  />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">%</span>
+                </div>
+              </div>
+            </div>
+            <p className="mt-1.5 text-xs text-slate-500 leading-snug">
+              Auto-advance when resume score ≥ resume-min <em>and</em>{" "}
+              interview score ≥ interview-min. Auto-reject when final score &lt;
+              reject-below. Otherwise the candidate is held for manual review.
             </p>
           </div>
 
