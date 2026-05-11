@@ -253,20 +253,6 @@ async def run_email_workflow(email_id: int, db: Session) -> Dict:
         db.commit()
         db.refresh(application)
 
-        # Feature 9 push hook: announce the new candidate+application to
-        # every connected HRIS/ATS. Fire-and-forget — never blocks the
-        # workflow and never raises. Skipped when fraud-blocked so we
-        # don't ship suspect candidates to payroll/ATS.
-        if not fraud_blocked:
-            try:
-                from services.integrations.push_hooks import (
-                    push_application_created, schedule_push,
-                )
-                schedule_push(push_application_created(application.id))
-            except Exception as e:
-                logger.warning("HRIS push hook (created) failed for app %s: %s",
-                               application.id, e)
-
         # Persist fraud signal rows (now that we have application.id) and
         # write an audit entry per blocked app so the tenant audit trail
         # captures it.

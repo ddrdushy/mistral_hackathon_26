@@ -167,23 +167,6 @@ def _apply_threshold_decision(app: Application, job: Job, db: Session) -> dict:
         })
 
     app.updated_at = datetime.utcnow()
-
-    # Feature 9 push hook: auto-advance / auto-reject changes the
-    # stage server-side without going through the PATCH /stage route,
-    # so we have to push to HRIS here too. Fire-and-forget.
-    try:
-        from services.integrations.push_hooks import (
-            push_stage_changed, push_hire, schedule_push,
-        )
-        decision = result.get("decision", "")
-        if decision == "advance":
-            schedule_push(push_stage_changed(app.id, "shortlisted"))
-            schedule_push(push_hire(app.id))
-        elif decision == "reject":
-            schedule_push(push_stage_changed(app.id, "rejected"))
-    except Exception:
-        pass
-
     return result
 
 
