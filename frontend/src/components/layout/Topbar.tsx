@@ -14,8 +14,9 @@ import {
   LifebuoyIcon,
 } from "@heroicons/react/24/outline";
 import Link from "next/link";
-import { startTour } from "@/components/tour/tourEvents";
 import { useAuth } from "@/components/auth/AuthGate";
+import HelpDrawer from "@/components/help/HelpDrawer";
+import { resolveHelp } from "@/lib/help/registry";
 
 interface TopbarProps {
   onMenuToggle: () => void;
@@ -76,6 +77,9 @@ export default function Topbar({ onMenuToggle }: TopbarProps) {
       pathname === "/candidates" ? urlParams.get("search") || "" : "",
     );
   }, [pathname, urlParams]);
+
+  const [helpOpen, setHelpOpen] = useState(false);
+  const helpEntry = resolveHelp(pathname || "");
 
   const submitSearch = () => {
     const q = search.trim();
@@ -145,13 +149,13 @@ export default function Topbar({ onMenuToggle }: TopbarProps) {
           />
         </form>
 
-        {/* Help / replay tour */}
+        {/* Help — opens the contextual drawer for the current page */}
         <button
           type="button"
-          onClick={() => startTour()}
-          className="p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors"
-          aria-label="Take a tour"
-          title="Take a tour"
+          onClick={() => setHelpOpen(true)}
+          className="p-2 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+          aria-label="Help for this page"
+          title={`Help: ${helpEntry.title}`}
         >
           <QuestionMarkCircleIcon className="w-5 h-5" />
         </button>
@@ -242,6 +246,12 @@ export default function Topbar({ onMenuToggle }: TopbarProps) {
           )}
         </div>
       </div>
+
+      <HelpDrawer
+        open={helpOpen}
+        onClose={() => setHelpOpen(false)}
+        entry={helpEntry}
+      />
     </header>
   );
 }
