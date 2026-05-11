@@ -7,7 +7,7 @@ import {
   CheckCircleIcon,
   TrashIcon,
 } from "@heroicons/react/24/outline";
-import { apiGet, apiPut, apiDelete } from "@/lib/api";
+import { apiGet, apiPut, apiPost, apiDelete } from "@/lib/api";
 
 type Mode = "sandbox" | "prod";
 
@@ -284,6 +284,11 @@ function ModeCard({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{
+    ok: boolean;
+    checks: { name: string; ok: boolean; detail: string }[];
+  } | null>(null);
 
   // Pre-populate non-secret values from server state
   useEffect(() => {
@@ -334,6 +339,24 @@ function ModeCard({
       setError(e instanceof Error ? e.message : "Save failed");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const runTest = async () => {
+    try {
+      setTesting(true);
+      setError(null);
+      setFeedback(null);
+      setTestResult(null);
+      const res = await apiPost<{
+        ok: boolean;
+        checks: { name: string; ok: boolean; detail: string }[];
+      }>(`/admin/stripe-config/${mode}/test`);
+      setTestResult(res);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Test failed");
+    } finally {
+      setTesting(false);
     }
   };
 
@@ -430,7 +453,54 @@ function ModeCard({
           </p>
         )}
 
-        <div className="flex justify-end pt-1">
+        {testResult && (
+          <div
+            className={`rounded-md border p-2 space-y-1 text-xs ${
+              testResult.ok
+                ? "bg-emerald-50 border-emerald-200"
+                : "bg-rose-50 border-rose-200"
+            }`}
+          >
+            <p
+              className={`font-semibold ${
+                testResult.ok ? "text-emerald-800" : "text-rose-800"
+              }`}
+            >
+              {testResult.ok
+                ? "All checks passed"
+                : `${testResult.checks.filter((c) => !c.ok).length} check(s) failed`}
+            </p>
+            <ul className="space-y-0.5">
+              {testResult.checks.map((c) => (
+                <li key={c.name} className="flex items-start gap-1.5">
+                  {c.ok ? (
+                    <CheckCircleIcon className="h-3.5 w-3.5 mt-px text-emerald-600 shrink-0" />
+                  ) : (
+                    <ExclamationTriangleIcon className="h-3.5 w-3.5 mt-px text-rose-600 shrink-0" />
+                  )}
+                  <span className="font-mono text-[11px] text-slate-600">
+                    {c.name}:
+                  </span>
+                  <span
+                    className={c.ok ? "text-slate-700" : "text-rose-800"}
+                  >
+                    {c.detail}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        <div className="flex justify-end gap-2 pt-1">
+          <button
+            type="button"
+            onClick={runTest}
+            disabled={testing || saving || busy}
+            className="px-3 py-1.5 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-md hover:bg-slate-50 disabled:opacity-50"
+          >
+            {testing ? "Testing..." : "Test connection"}
+          </button>
           <button
             type="button"
             onClick={save}

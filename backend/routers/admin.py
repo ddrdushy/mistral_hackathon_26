@@ -1668,3 +1668,154 @@ def clear_stripe_credentials(
         request=request,
     )
     return {"cleared": True, "mode": mode}
+
+
+@router.post("/stripe-config/{mode}/test")
+def test_stripe_credentials(
+    mode: str,
+    session: CurrentSession = Depends(require_superadmin),
+):
+    """Exercise the saved Stripe credentials against the real Stripe API.
+
+    Per-field pass/fail so the admin UI can show exactly which value is
+    wrong. Does NOT mutate anything in Stripe or in our DB — read-only
+    Account.retrieve + Price.retrieve calls. Read-only by design so it's
+    safe to call repeatedly.
+
+    Returns: {
+      ok: bool,
+      checks: [{ name, ok, detail }]
+    }
+    """
+    from services import stripe_config
+    import stripe as stripe_sdk  # type: ignore[import-not-found]
+
+    if mode not in ("sandbox", "prod"):
+        raise HTTPException(status_code=404, detail="mode must be 'sandbox' or 'prod'")
+
+    secret_key = stripe_config.get_value("secret_key", mode)  # type: ignore[arg-type]
+    publishable_key = stripe_config.get_value("publishable_key", mode)  # type: ignore[arg-type]
+    webhook_secret = stripe_config.get_value("webhook_secret", mode)  # type: ignore[arg-type]
+    starter_price_id = stripe_config.get_value("starter_price_id", mode)  # type: ignore[arg-type]
+    pro_price_id = stripe_config.get_value("pro_price_id", mode)  # type: ignore[arg-type]
+
+    checks: list[dict] = []
+
+    # 1. Secret key — must reach Stripe successfully.
+    if not secret_key:
+        checks.append({"name": "secret_key", "ok": False, "detail": "Not set"})
+    else:
+        try:
+            stripe_sdk.api_key = secret_key
+            account = stripe_sdk.Account.retrieve()
+            account_id = getattr(account, "id", "") if account else ""
+            mode_mismatch = (
+                (mode == "sandbox" and not secret_key.startswith("sk_test_"))
+                or (mode == "prod" and not secret_key.startswith("sk_live_"))
+            )
+            detail = f"Connected to account {account_id}"
+            if mode_mismatch:
+                detail += " ⚠ key prefix doesn't match selected mode"
+            checks.append({
+                "name": "secret_key",
+                "ok": True,
+                "detail": detail,
+            })
+        except stripe_sdk.error.AuthenticationError as e:  # type: ignore[attr-defined]
+            checks.append({
+                "name": "secret_key",
+                "ok": False,
+                "detail": f"Auth failed: {str(e)[:200]}",
+            })
+        except Exception as e:
+            checks.append({
+                "name": "secret_key",
+                "ok": False,
+                "detail": f"Stripe error: {str(e)[:200]}",
+            })
+
+    # 2. Publishable key — format check only (no live API for this).
+    if not publishable_key:
+        checks.append({"name": "publishable_key", "ok": False, "detail": "Not set"})
+    elif not publishable_key.startswith(("pk_test_", "pk_live_")):
+        checks.append({
+            "name": "publishable_key",
+            "ok": False,
+            "detail": "Must start with pk_test_ or pk_live_",
+        })
+    else:
+        expected_prefix = "pk_test_" if mode == "sandbox" else "pk_live_"
+        ok = publishable_key.startswith(expected_prefix)
+        checks.append({
+            "name": "publishable_key",
+            "ok": True,
+            "detail": "Format OK" if ok else f"⚠ prefix doesn't match {mode}",
+        })
+
+    # 3. Webhook secret — format check (can't live-verify without a real event).
+    if not webhook_secret:
+        checks.append({
+            "name": "webhook_secret",
+            "ok": False,
+            "detail": "Not set — webhook events will be rejected",
+        })
+    elif not webhook_secret.startswith("whsec_"):
+        checks.append({
+            "name": "webhook_secret",
+            "ok": False,
+            "detail": "Must start with whsec_",
+        })
+    else:
+        checks.append({
+            "name": "webhook_secret",
+            "ok": True,
+            "detail": "Format OK (use Stripe's 'Send test event' to verify end-to-end)",
+        })
+
+    # 4 + 5. Price ids — Stripe Price.retrieve. Catches the prod_ vs price_
+    # confusion that the UI can't catch at save time.
+    for name, value in (("starter_price_id", starter_price_id), ("pro_price_id", pro_price_id)):
+        if not value:
+            checks.append({"name": name, "ok": False, "detail": "Not set"})
+            continue
+        if not value.startswith("price_"):
+            checks.append({
+                "name": name,
+                "ok": False,
+                "detail": f"Must start with 'price_' (got '{value[:8]}…'). Copy the Price ID, not the Product ID.",
+            })
+            continue
+        if not secret_key:
+            checks.append({
+                "name": name,
+                "ok": False,
+                "detail": "Skipped — secret key missing",
+            })
+            continue
+        try:
+            stripe_sdk.api_key = secret_key
+            price = stripe_sdk.Price.retrieve(value)
+            unit = (getattr(price, "unit_amount", 0) or 0) / 100
+            currency = (getattr(price, "currency", "") or "").upper()
+            recurring = getattr(price, "recurring", None)
+            interval = recurring.get("interval", "") if recurring else "one-off"
+            checks.append({
+                "name": name,
+                "ok": True,
+                "detail": f"{currency} {unit:.2f} / {interval}",
+            })
+        except stripe_sdk.error.InvalidRequestError as e:  # type: ignore[attr-defined]
+            checks.append({
+                "name": name,
+                "ok": False,
+                "detail": f"Not found in Stripe: {str(e)[:200]}",
+            })
+        except Exception as e:
+            checks.append({
+                "name": name,
+                "ok": False,
+                "detail": f"Stripe error: {str(e)[:200]}",
+            })
+
+    ok_overall = all(c["ok"] for c in checks)
+    return {"ok": ok_overall, "mode": mode, "checks": checks}
