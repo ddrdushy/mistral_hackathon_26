@@ -39,7 +39,23 @@ export async function api<T>(path: string, options: ApiOptions = {}): Promise<T>
 
   if (!res.ok) {
     const error = await res.json().catch(() => ({ detail: "Request failed" }));
-    throw new Error(error.detail || `API error: ${res.status}`);
+    let message: string;
+    if (typeof error.detail === "string") {
+      message = error.detail;
+    } else if (Array.isArray(error.detail)) {
+      // FastAPI Pydantic validation errors come as
+      // { detail: [{type, loc, msg, ...}] } — flatten to a readable line.
+      message = error.detail
+        .map((d: { msg?: string; loc?: unknown[] }) => {
+          const field = Array.isArray(d.loc) ? d.loc.slice(1).join(".") : "";
+          return field ? `${field}: ${d.msg || ""}` : d.msg || "";
+        })
+        .filter(Boolean)
+        .join("; ") || `API error: ${res.status}`;
+    } else {
+      message = `API error: ${res.status}`;
+    }
+    throw new Error(message);
   }
 
   if (res.headers.get("content-type")?.includes("text/csv")) {
