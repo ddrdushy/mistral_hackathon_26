@@ -27,6 +27,8 @@ from billing.plans import get_plan
 
 # Active tenant for the current request. Set by auth dependency.
 _active_tenant: ContextVar[Optional[int]] = ContextVar("active_tenant", default=None)
+# Active user for per-recruiter LLM cost attribution (Feature 5).
+_active_user: ContextVar[Optional[int]] = ContextVar("active_user", default=None)
 
 
 def set_active_tenant(tenant_id: Optional[int]) -> None:
@@ -35,6 +37,14 @@ def set_active_tenant(tenant_id: Optional[int]) -> None:
 
 def get_active_tenant() -> Optional[int]:
     return _active_tenant.get()
+
+
+def set_active_user(user_id: Optional[int]) -> None:
+    _active_user.set(user_id)
+
+
+def get_active_user() -> Optional[int]:
+    return _active_user.get()
 
 
 def _today_utc_start() -> datetime:
@@ -97,13 +107,20 @@ def record_llm_usage(
     latency_ms: int,
     status_str: str = "success",
     tenant_id: Optional[int] = None,
+    user_id: Optional[int] = None,
 ) -> None:
-    """Persist a usage record. Called from llm_tracker after each call."""
+    """Persist a usage record. Called from llm_tracker after each call.
+
+    user_id falls back to the request-scoped contextvar so call sites
+    don't have to thread it through. Background workers leave it None.
+    """
     tid = tenant_id if tenant_id is not None else get_active_tenant()
+    uid = user_id if user_id is not None else get_active_user()
     db = SessionLocal()
     try:
         record = LlmUsage(
             tenant_id=tid,
+            user_id=uid,
             agent_name=agent_name,
             model=model,
             input_tokens=input_tokens,

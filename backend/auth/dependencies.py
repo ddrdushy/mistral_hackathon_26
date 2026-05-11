@@ -63,8 +63,9 @@ def current_session(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
         )
-    from billing.cost_guard import set_active_tenant
+    from billing.cost_guard import set_active_tenant, set_active_user
     set_active_tenant(s.tenant.id)
+    set_active_user(s.user.id)
     return s
 
 

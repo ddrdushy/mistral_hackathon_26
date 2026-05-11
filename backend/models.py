@@ -106,11 +106,16 @@ class LlmUsage(Base):
 
     tenant_id is nullable for legacy/system calls. Daily spend is computed by
     summing cost_usd over (tenant_id, date).
+
+    user_id (Feature 5) attributes the call to the recruiter that triggered
+    it, so the recruiter leaderboard can show per-person AI spend. Nullable
+    because background workers + auto-pipeline runs aren't user-driven.
     """
     __tablename__ = "llm_usage"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     agent_name = Column(String, nullable=False)
     model = Column(String, default="")
     input_tokens = Column(Integer, default=0)
@@ -122,6 +127,7 @@ class LlmUsage(Base):
 
     __table_args__ = (
         Index("idx_llm_usage_tenant_day", "tenant_id", "created_at"),
+        Index("idx_llm_usage_user_day", "user_id", "created_at"),
     )
 
 

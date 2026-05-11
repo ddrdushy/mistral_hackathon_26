@@ -312,6 +312,19 @@ def _run_migrations():
                 except Exception:
                     pass
 
+    # Feature 5: llm_usage.user_id (per-recruiter LLM cost attribution).
+    # Nullable — historical rows + background-worker rows have no actor.
+    if "llm_usage" in insp.get_table_names():
+        existing = {c["name"] for c in insp.get_columns("llm_usage")}
+        if "user_id" not in existing:
+            with engine.begin() as conn:
+                try:
+                    conn.execute(text(
+                        "ALTER TABLE llm_usage ADD COLUMN user_id INTEGER"
+                    ))
+                except Exception:
+                    pass
+
     # Heal orphaned candidate/application/event rows from the workflow bug:
     # the auto-pipeline used to create Candidate/Application/Event rows with
     # tenant_id=NULL, so the dashboard never saw them. Walk the ownership

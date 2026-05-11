@@ -4,6 +4,7 @@ router. Keep provider strings in sync with ExternalIntegration.provider.
 from __future__ import annotations
 
 import json
+import os
 from typing import Type
 
 from .base import IntegrationAdapter
@@ -37,7 +38,9 @@ def available_providers() -> list[dict]:
             "id": "merge",
             "name": "Merge.dev (unified ATS)",
             "description": "One connection, 40+ ATS/HRIS providers (Greenhouse, Lever, Workday, BambooHR, ADP, iCIMS, …).",
-            "enabled": False,
+            # Enabled when the platform MERGE_API_KEY is configured.
+            # Without it, tenants would just hit a 401 on every call.
+            "enabled": bool(os.getenv("MERGE_API_KEY", "").strip()),
             "auth_method": "public_token",
             "logo": None,
         },

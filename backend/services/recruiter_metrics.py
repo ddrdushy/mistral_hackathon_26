@@ -218,10 +218,21 @@ def recruiters_summary(
         conv_a_to_s = round(screened_count / applied_count, 3) if applied_count else 0.0
         conv_s_to_o = round(offers_extended / screened_count, 3) if screened_count else 0.0
 
-        # LLM cost attribution — currently llm_usage doesn't have actor;
-        # we surface it as 0 for now and document in the response. When
-        # we wire actor attribution into LLMCallTimer, this lights up.
-        llm_cost_usd = 0.0
+        # LLM cost attribution — sums every LlmUsage row this user
+        # triggered via the auth dependency contextvar. Background-
+        # worker rows (user_id IS NULL) are excluded so they don't
+        # inflate any single recruiter's totals.
+        llm_cost_usd = float(
+            db.query(func.coalesce(func.sum(LlmUsage.cost_usd), 0.0))
+            .filter(
+                LlmUsage.tenant_id == tenant_id,
+                LlmUsage.user_id == uid,
+                LlmUsage.created_at >= start,
+                LlmUsage.created_at < end,
+            )
+            .scalar() or 0.0
+        )
+        llm_cost_usd = round(llm_cost_usd, 4)
 
         out_recruiters.append({
             "user_id": uid,

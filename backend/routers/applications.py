@@ -396,6 +396,25 @@ async def update_stage(
     )
     db.commit()
     db.refresh(app)
+
+    # Feature 9 push hooks: announce stage change (and hire, for
+    # terminal_outcome='hired') to every connected HRIS/ATS.
+    # Fire-and-forget — never blocks the response.
+    if new_stage_key and new_stage_key != old_stage_key:
+        try:
+            from services.integrations.push_hooks import (
+                push_stage_changed, push_hire, schedule_push,
+            )
+            schedule_push(push_stage_changed(app.id, new_stage_key))
+            is_hire = (
+                (target_stage and getattr(target_stage, "terminal_outcome", "") == "hired")
+                or new_stage_key in ("hired", "shortlisted")
+            )
+            if is_hire:
+                schedule_push(push_hire(app.id))
+        except Exception:
+            pass
+
     return _app_to_response(app, db)
 
 
@@ -637,6 +656,7 @@ async def bulk_update_stage(
     session: CurrentSession = Depends(current_session),
 ):
     updated = 0
+    changed_app_ids: list[int] = []
     for app_id in req.application_ids:
         app = db.query(Application).filter(
             Application.id == app_id,
@@ -648,6 +668,21 @@ async def bulk_update_stage(
             app.updated_at = datetime.utcnow()
             _log_event(db, app.id, "stage_changed", {"from": old_stage, "to": req.stage}, tenant_id=session.tenant.id, actor_user_id=session.user.id)
             updated += 1
+            if old_stage != req.stage:
+                changed_app_ids.append(app.id)
 
     db.commit()
+
+    # Feature 9 push hooks: same propagation as single-app stage change.
+    try:
+        from services.integrations.push_hooks import (
+            push_stage_changed, push_hire, schedule_push,
+        )
+        for aid in changed_app_ids:
+            schedule_push(push_stage_changed(aid, req.stage))
+            if req.stage in ("hired", "shortlisted"):
+                schedule_push(push_hire(aid))
+    except Exception:
+        pass
+
     return {"updated": updated}
