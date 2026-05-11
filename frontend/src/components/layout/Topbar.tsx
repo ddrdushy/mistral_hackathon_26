@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   Bars3Icon,
   MagnifyingGlassIcon,
@@ -58,10 +58,32 @@ function initials(name: string, email: string): string {
 
 export default function Topbar({ onMenuToggle }: TopbarProps) {
   const pathname = usePathname();
+  const router = useRouter();
+  const urlParams = useSearchParams();
   const pageTitle = getPageTitle(pathname);
   const { me, logout } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+
+  // Pre-fill from URL when the user is already on /candidates with a
+  // search active — so refocusing the top bar shows their current term.
+  const [search, setSearch] = useState(
+    pathname === "/candidates" ? urlParams.get("search") || "" : "",
+  );
+  useEffect(() => {
+    setSearch(
+      pathname === "/candidates" ? urlParams.get("search") || "" : "",
+    );
+  }, [pathname, urlParams]);
+
+  const submitSearch = () => {
+    const q = search.trim();
+    if (!q) {
+      router.push("/candidates");
+      return;
+    }
+    router.push(`/candidates?search=${encodeURIComponent(q)}`);
+  };
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -97,16 +119,30 @@ export default function Topbar({ onMenuToggle }: TopbarProps) {
 
       {/* Right section */}
       <div className="ml-auto flex items-center gap-3">
-        {/* Search input (decorative) */}
-        <div className="hidden md:flex items-center gap-2 bg-slate-100 rounded-lg px-3 py-2">
-          <MagnifyingGlassIcon className="w-4 h-4 text-slate-400" />
+        {/* Search input — submits to /candidates?search=... on Enter */}
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            submitSearch();
+          }}
+          className="hidden md:flex items-center gap-2 bg-slate-100 rounded-lg px-3 py-2 focus-within:bg-white focus-within:ring-2 focus-within:ring-indigo-300 transition-colors"
+        >
+          <button
+            type="submit"
+            aria-label="Search candidates"
+            className="text-slate-400 hover:text-slate-600"
+          >
+            <MagnifyingGlassIcon className="w-4 h-4" />
+          </button>
           <input
-            type="text"
-            placeholder="Search..."
+            type="search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search candidates..."
+            aria-label="Search candidates"
             className="bg-transparent text-sm text-slate-700 placeholder-slate-400 outline-none w-48"
-            readOnly
           />
-        </div>
+        </form>
 
         {/* Help / replay tour */}
         <button
