@@ -246,11 +246,15 @@ async def llm_usage_report(
     total_latency_weighted = 0.0
     for name, calls, in_tokens, out_tokens, cost, avg_latency in agent_rows:
         calls_i = int(calls or 0)
+        total_tokens = int((in_tokens or 0) + (out_tokens or 0))
         by_agent[name] = {
             "calls": calls_i,
             "input_tokens": int(in_tokens or 0),
             "output_tokens": int(out_tokens or 0),
-            "total_tokens": int((in_tokens or 0) + (out_tokens or 0)),
+            "total_tokens": total_tokens,
+            # Frontend reads `tokens` (the old in-memory shape) on the
+            # Usage-by-Agent table; aliased so both shapes work.
+            "tokens": total_tokens,
             "cost_usd": round(float(cost or 0.0), 4),
             "avg_latency_ms": int(avg_latency or 0),
             "errors": err_by_agent.get(name, 0),
