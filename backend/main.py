@@ -19,7 +19,7 @@ from services.secrets import apply_db_secrets_to_env
 _secret_sources = apply_db_secrets_to_env()
 
 from app_limiter import limiter
-from routers import inbox, jobs, candidates, applications, screening, reports, settings, auth, admin, team, billing, testimonials, metrics, talent, integrations, communications, calls, audit, tags, interview_questions, offer_templates, offers, metrics_recruiters, outreach, pipelines, forecasts
+from routers import inbox, jobs, candidates, applications, screening, reports, settings, auth, admin, team, billing, testimonials, metrics, talent, integrations, communications, calls, audit, tags, interview_questions, offer_templates, offers, metrics_recruiters, outreach, pipelines, forecasts, integrations_hris
 
 logger = logging.getLogger("hireops")
 logger.info("Global secrets sources: %s", _secret_sources)
@@ -95,6 +95,7 @@ app.include_router(metrics_recruiters.router)
 app.include_router(outreach.router)
 app.include_router(pipelines.router)
 app.include_router(forecasts.router)
+app.include_router(integrations_hris.router)
 
 
 @app.on_event("startup")
@@ -145,6 +146,14 @@ async def on_startup():
     except Exception as e:
         logger.warning(f"Outreach worker startup failed: {e}")
 
+    # HRIS sync worker (Feature 9) — polls every 15 min, dispatches a
+    # pull cycle per active integration.
+    try:
+        from services.integrations import sync_engine as hris_sync
+        await hris_sync.start_worker()
+    except Exception as e:
+        logger.warning(f"HRIS sync worker startup failed: {e}")
+
 
 @app.on_event("shutdown")
 async def on_shutdown():
@@ -163,6 +172,11 @@ async def on_shutdown():
         await outreach_worker.stop_worker()
     except Exception as e:
         logger.warning(f"Outreach worker shutdown failed: {e}")
+    try:
+        from services.integrations import sync_engine as hris_sync
+        await hris_sync.stop_worker()
+    except Exception as e:
+        logger.warning(f"HRIS sync worker shutdown failed: {e}")
 
 
 @app.get("/health")

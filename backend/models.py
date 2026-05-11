@@ -399,6 +399,75 @@ class Communication(Base):
     delivered_at = Column(DateTime, nullable=True)
 
 
+class ExternalIntegration(Base):
+    """HRIS / ATS integration credentials (Feature 9).
+
+    One row per (tenant, provider) connection. Credentials Fernet-
+    encrypted via services.secrets_crypto — same path as MailAccount.
+    settings_json carries the provider-specific field/stage mappings
+    so the sync engine knows how to translate.
+    """
+    __tablename__ = "external_integrations"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
+    provider = Column(String, nullable=False)
+    # mock | merge | greenhouse | lever | workday | bamboohr | ...
+    provider_account_id = Column(String, default="")
+    encrypted_credentials = Column(Text, default="")  # Fernet JSON blob
+    sync_enabled = Column(Boolean, default=True)
+    sync_status = Column(String, default="active")
+    # active | paused | error | auth_failed | disconnected
+    last_synced_at = Column(DateTime, nullable=True)
+    last_error = Column(Text, default="")
+    settings_json = Column(Text, default="{}")
+    push_ai_signals = Column(Boolean, default=False)  # privacy default: off
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "provider", name="uq_external_int_tenant_provider"),
+    )
+
+
+class ExternalIdMapping(Base):
+    """Maps a HireOps entity (candidate/job/application) to its
+    counterpart in an external system. Used by the sync engine to
+    decide create-vs-update on every push."""
+    __tablename__ = "external_id_mappings"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
+    integration_id = Column(Integer, ForeignKey("external_integrations.id", ondelete="CASCADE"), nullable=False, index=True)
+    internal_type = Column(String, nullable=False)  # candidate | job | application
+    internal_id = Column(String, nullable=False)    # stored as string to support int + uuid
+    external_id = Column(String, nullable=False)
+    last_synced_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("integration_id", "internal_type", "internal_id", name="uq_idmap_internal"),
+        UniqueConstraint("integration_id", "internal_type", "external_id", name="uq_idmap_external"),
+    )
+
+
+class IntegrationSyncLog(Base):
+    """One row per sync run (pull or push). Surfaces in the integration
+    detail UI as a run history."""
+    __tablename__ = "integration_sync_logs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
+    integration_id = Column(Integer, ForeignKey("external_integrations.id", ondelete="CASCADE"), nullable=False, index=True)
+    started_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    finished_at = Column(DateTime, nullable=True)
+    direction = Column(String, default="pull")   # pull | push
+    status = Column(String, default="running")   # running | success | partial | failed
+    records_processed = Column(Integer, default=0)
+    records_failed = Column(Integer, default=0)
+    error_summary = Column(Text, default="")
+    payload_summary_json = Column(Text, default="{}")
+
+
 class PipelineForecast(Base):
     """Cached forecast result (Feature 8).
 

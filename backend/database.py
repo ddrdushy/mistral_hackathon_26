@@ -41,6 +41,7 @@ def init_db():
         OutreachSequence, OutreachStep, OutreachEnrollment, OutreachMessage,
         PipelineTemplate, PipelineStage, ApplicationStageTransition,
         PipelineForecast,
+        ExternalIntegration, ExternalIdMapping, IntegrationSyncLog,
     )
     Base.metadata.create_all(bind=engine)
     _run_migrations()
