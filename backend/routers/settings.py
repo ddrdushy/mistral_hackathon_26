@@ -194,18 +194,24 @@ async def llm_usage_report(
     session: CurrentSession = Depends(current_session),
 ):
     """LLM usage report. By default scoped to the caller's tenant. A superadmin
-    may pass include_all=true to see the global aggregate (every tenant)."""
+    may pass include_all=true to see the global aggregate (every tenant).
+
+    Both branches read from the LlmUsage DB table. We do NOT use the
+    in-memory llm_tracker because that list resets on every backend
+    restart, which made the admin's global view look permanently empty.
+    """
     if include_all and not session.user.is_superadmin:
         raise HTTPException(status_code=403, detail="Superadmin required")
 
-    if include_all:
-        # Global view — superadmin only. Use the in-memory tracker (already aggregated).
-        return get_usage_report(days)
-
-    # Tenant view — read directly from the LlmUsage table filtered by tenant_id.
     cutoff = datetime.utcnow() - timedelta(days=days)
-    rows = (
-        db.query(
+
+    base_q = db.query(LlmUsage).filter(LlmUsage.created_at >= cutoff)
+    if not include_all:
+        base_q = base_q.filter(LlmUsage.tenant_id == session.tenant.id)
+
+    # Per-agent breakdown (cheap aggregate query).
+    agent_rows = (
+        base_q.with_entities(
             LlmUsage.agent_name,
             func.count(LlmUsage.id),
             func.coalesce(func.sum(LlmUsage.input_tokens), 0),
@@ -213,42 +219,112 @@ async def llm_usage_report(
             func.coalesce(func.sum(LlmUsage.cost_usd), 0.0),
             func.coalesce(func.avg(LlmUsage.latency_ms), 0),
         )
-        .filter(
-            LlmUsage.tenant_id == session.tenant.id,
-            LlmUsage.created_at >= cutoff,
-        )
         .group_by(LlmUsage.agent_name)
         .all()
     )
 
-    by_agent = {}
+    # Per-agent error counts — separate query because mixing a filtered
+    # count with the unfiltered aggregate above requires a CASE expr
+    # that's awkward across SQLite / Postgres. Two queries is fine; each
+    # hits an indexed column.
+    err_rows = (
+        base_q.with_entities(
+            LlmUsage.agent_name,
+            func.count(LlmUsage.id),
+        )
+        .filter(LlmUsage.status == "error")
+        .group_by(LlmUsage.agent_name)
+        .all()
+    )
+    err_by_agent = {name: int(n or 0) for name, n in err_rows}
+
+    by_agent: dict[str, dict] = {}
     total_calls = 0
     total_in = 0
     total_out = 0
     total_cost = 0.0
-    for name, calls, in_tokens, out_tokens, cost, avg_latency in rows:
+    total_latency_weighted = 0.0
+    for name, calls, in_tokens, out_tokens, cost, avg_latency in agent_rows:
+        calls_i = int(calls or 0)
         by_agent[name] = {
-            "calls": int(calls or 0),
+            "calls": calls_i,
             "input_tokens": int(in_tokens or 0),
             "output_tokens": int(out_tokens or 0),
             "total_tokens": int((in_tokens or 0) + (out_tokens or 0)),
             "cost_usd": round(float(cost or 0.0), 4),
             "avg_latency_ms": int(avg_latency or 0),
+            "errors": err_by_agent.get(name, 0),
         }
-        total_calls += int(calls or 0)
+        total_calls += calls_i
         total_in += int(in_tokens or 0)
         total_out += int(out_tokens or 0)
         total_cost += float(cost or 0.0)
+        total_latency_weighted += float(avg_latency or 0) * calls_i
+
+    avg_latency_overall = (
+        int(total_latency_weighted / total_calls) if total_calls > 0 else 0
+    )
+    total_errors = sum(err_by_agent.values())
+    error_rate = round((total_errors / total_calls * 100), 1) if total_calls > 0 else 0.0
+
+    # Hourly trend (last 24h only) — fetch raw rows and bucket in Python
+    # so we work on both SQLite (dev) and Postgres (prod) without
+    # date_trunc / strftime gymnastics. 24h of rows is small.
+    one_day_ago = datetime.utcnow() - timedelta(days=1)
+    hourly_q = db.query(
+        LlmUsage.created_at,
+        LlmUsage.input_tokens,
+        LlmUsage.output_tokens,
+        LlmUsage.cost_usd,
+    ).filter(LlmUsage.created_at >= one_day_ago)
+    if not include_all:
+        hourly_q = hourly_q.filter(LlmUsage.tenant_id == session.tenant.id)
+    buckets: dict[str, dict] = {}
+    for ts, in_t, out_t, cost in hourly_q.all():
+        if not ts:
+            continue
+        key = ts.strftime("%Y-%m-%d %H:00")
+        b = buckets.setdefault(key, {"calls": 0, "tokens": 0, "cost_usd": 0.0})
+        b["calls"] += 1
+        b["tokens"] += int((in_t or 0) + (out_t or 0))
+        b["cost_usd"] = round(b["cost_usd"] + float(cost or 0.0), 4)
+    hourly_trend = [{"hour": k, **v} for k, v in sorted(buckets.items())]
+
+    # Recent calls — last 20 rows for the table at the bottom of the page.
+    recent_q = base_q.order_by(LlmUsage.created_at.desc()).limit(20)
+    recent_calls = []
+    for r in recent_q.all():
+        recent_calls.append({
+            "timestamp": r.created_at.isoformat() if r.created_at else "",
+            "agent_name": r.agent_name,
+            "model": r.model or "",
+            "input_tokens": int(r.input_tokens or 0),
+            "output_tokens": int(r.output_tokens or 0),
+            "total_tokens": int((r.input_tokens or 0) + (r.output_tokens or 0)),
+            "cost_usd": round(float(r.cost_usd or 0.0), 6),
+            "latency_ms": int(r.latency_ms or 0),
+            "status": r.status or "success",
+        })
+    # Reverse so the frontend's `.slice().reverse()` puts newest first.
+    recent_calls.reverse()
 
     return {
-        "scope": "tenant",
+        "scope": "global" if include_all else "tenant",
+        "period_days": days,
         "days": days,
         "total_calls": total_calls,
         "total_input_tokens": total_in,
         "total_output_tokens": total_out,
         "total_tokens": total_in + total_out,
         "total_cost_usd": round(total_cost, 4),
+        "avg_latency_ms": avg_latency_overall,
+        "error_count": total_errors,
+        "error_rate": error_rate,
         "by_agent": by_agent,
+        "agent_breakdown": by_agent,
+        "model_breakdown": {},  # kept for shape parity with old in-memory tracker
+        "hourly_trend": hourly_trend,
+        "recent_calls": recent_calls,
     }
 
 
