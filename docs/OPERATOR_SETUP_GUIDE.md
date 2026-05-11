@@ -135,7 +135,41 @@ The actual secret/publishable/webhook keys live in DB (Stripe page). See
 | `STARTER_PRICE_USD` | `49` | Display price on the billing page. |
 | `PRO_PRICE_USD` | `199` | Display price. |
 
-### 2.9 Frontend
+### 2.9 Job-board OAuth (LinkedIn + Facebook)
+
+When tenants click "Sign in with LinkedIn" or "Sign in with Facebook"
+on `/settings/job-boards`, we redirect them through standard OAuth.
+The platform-level app credentials below identify HireOps to the
+provider — each tenant brings their own Page admin login.
+
+| Variable | Where to get it |
+| --- | --- |
+| `LINKEDIN_APP_CLIENT_ID` | LinkedIn → Developer Portal → your app → Auth tab |
+| `LINKEDIN_APP_CLIENT_SECRET` | Same page (click "Generate") |
+| `FACEBOOK_APP_ID` | Meta for Developers → your app → Settings → Basic |
+| `FACEBOOK_APP_SECRET` | Same page (click "Show") |
+
+**Redirect URIs** you must register in each provider's console:
+- LinkedIn: `{BACKEND_PUBLIC_URL}/api/v1/job-boards/linkedin/oauth/callback`
+- Facebook: `{BACKEND_PUBLIC_URL}/api/v1/job-boards/facebook/oauth/callback`
+
+**Scopes** the app must request:
+- LinkedIn: `r_liteprofile`, `w_member_social`, `w_organization_social`, `r_organization_admin`
+- Facebook: `pages_show_list`, `pages_manage_posts`, `pages_read_engagement`
+
+Both providers will require **App review** before non-admin users can
+authorise. Submission flow:
+- LinkedIn → "Marketing Developer Platform" review (sometimes called
+  "Community Management API" — pick the path that includes
+  `w_organization_social`). 1–2 weeks.
+- Meta → "App Review" → submit screencast of a tenant clicking
+  "Connect Facebook" → picking a Page → publishing a sample post →
+  seeing it on the live Page. 1–2 weeks.
+
+Until each app passes review, only the developer-account user(s)
+listed under "Roles" → "Developers" / "Testers" can authorise.
+
+### 2.10 Frontend
 
 ```env
 # frontend/.env

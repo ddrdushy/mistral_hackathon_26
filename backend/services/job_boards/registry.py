@@ -24,43 +24,69 @@ _ADAPTER_CLASSES: dict[str, Type[JobBoardAdapter]] = {
 
 
 def available_providers() -> list[dict]:
-    """Provider catalog for the UI. Real providers are gated by an
-    env flag so they don't surface as 'Connect' buttons before the
-    network code is filled in."""
+    """Provider catalog for the UI.
+
+    auth_mode tells the frontend how to render the Connect button:
+      - "oauth"  → render a single 'Connect with X' button that calls
+                   GET /api/v1/job-boards/{provider}/oauth/start and
+                   redirects the browser to the returned authorize URL.
+      - "manual" → render a form with the listed auth_fields (used by
+                   the Mock provider and providers without OAuth).
+      - "feed"   → no creds needed; we serve a per-tenant XML feed at
+                   a stable URL and tenant adds it on the provider side.
+    """
+    linkedin_app_set = bool(os.getenv("LINKEDIN_APP_CLIENT_ID", "").strip())
+    facebook_app_set = bool(os.getenv("FACEBOOK_APP_ID", "").strip())
     return [
         {
             "id": "mock",
             "name": "Mock provider",
             "description": "In-memory test board. Always works; useful for demos and CI.",
             "enabled": True,
+            "auth_mode": "manual",
             "auth_fields": ["seed"],
         },
         {
             "id": "linkedin",
-            "name": "LinkedIn Jobs",
-            "description": "Publish via the LinkedIn Talent Solutions Job Postings API. Requires a LinkedIn partner agreement.",
-            "enabled": bool(os.getenv("LINKEDIN_PARTNER_KEY", "").strip()),
-            "auth_fields": ["access_token", "organization_id"],
+            "name": "LinkedIn",
+            "description": "Publish to your LinkedIn Company Page. Sign in with the account that admins the Page.",
+            "enabled": linkedin_app_set,
+            "auth_mode": "oauth",
+            "auth_fields": [],
+            "disabled_reason": (
+                None
+                if linkedin_app_set
+                else "Platform admin must set LINKEDIN_APP_CLIENT_ID + LINKEDIN_APP_CLIENT_SECRET."
+            ),
+        },
+        {
+            "id": "facebook",
+            "name": "Facebook Page",
+            "description": "Publish as a post on your Facebook Page. Sign in with the account that admins the Page.",
+            "enabled": facebook_app_set,
+            "auth_mode": "oauth",
+            "auth_fields": [],
+            "disabled_reason": (
+                None
+                if facebook_app_set
+                else "Platform admin must set FACEBOOK_APP_ID + FACEBOOK_APP_SECRET."
+            ),
         },
         {
             "id": "indeed",
             "name": "Indeed",
-            "description": "XML feed or Indeed Sponsored Jobs partner API. Pulls every few hours when feed-mode.",
-            "enabled": bool(os.getenv("INDEED_PARTNER_KEY", "").strip()),
-            "auth_fields": ["api_key", "employer_id"],
-        },
-        {
-            "id": "facebook",
-            "name": "Facebook Pages",
-            "description": "Publishes the job as a Page post via Graph API. Requires page admin token.",
-            "enabled": bool(os.getenv("FACEBOOK_APP_ID", "").strip()),
-            "auth_fields": ["page_id", "page_access_token"],
+            "description": "Indeed pulls jobs from a per-tenant XML feed every few hours. No password needed — just add our feed URL to your Indeed Employer dashboard.",
+            "enabled": False,  # feed endpoint pending — flip when /feeds/{slug}/indeed.xml ships
+            "auth_mode": "feed",
+            "auth_fields": [],
+            "disabled_reason": "Per-tenant XML feed endpoint pending.",
         },
         {
             "id": "myfuturejobs",
             "name": "MyFutureJobs (Malaysia)",
-            "description": "Malaysia's national job portal (PERKESO / SOCSO). Requires partner agreement.",
+            "description": "Malaysia's national job portal (PERKESO / SOCSO). Requires partner agreement — no public OAuth.",
             "enabled": bool(os.getenv("MYFUTUREJOBS_PARTNER_KEY", "").strip()),
+            "auth_mode": "manual",
             "auth_fields": ["api_key", "company_id"],
         },
     ]

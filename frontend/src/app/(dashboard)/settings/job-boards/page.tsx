@@ -1,13 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, Suspense } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import {
   GlobeAltIcon,
   CheckCircleIcon,
   ExclamationTriangleIcon,
   TrashIcon,
   PlusIcon,
+  ArrowRightOnRectangleIcon,
 } from "@heroicons/react/24/outline";
 import { apiGet, apiPost, apiDelete } from "@/lib/api";
 
@@ -16,7 +18,9 @@ interface Provider {
   name: string;
   description: string;
   enabled: boolean;
+  auth_mode: "oauth" | "manual" | "feed";
   auth_fields: string[];
+  disabled_reason?: string | null;
 }
 
 interface Connection {
@@ -30,10 +34,24 @@ interface Connection {
 }
 
 export default function JobBoardsPage() {
+  return (
+    <Suspense fallback={<p className="text-sm text-slate-500">Loading…</p>}>
+      <JobBoardsInner />
+    </Suspense>
+  );
+}
+
+function JobBoardsInner() {
+  const searchParams = useSearchParams();
+  const oauthProvider = searchParams.get("oauth");
+  const oauthOk = searchParams.get("ok") === "1";
+  const oauthError = searchParams.get("error");
+
   const [providers, setProviders] = useState<Provider[]>([]);
   const [connections, setConnections] = useState<Connection[]>([]);
   const [loading, setLoading] = useState(true);
   const [connectingProvider, setConnectingProvider] = useState<string | null>(null);
+  const [oauthStarting, setOauthStarting] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -58,6 +76,19 @@ export default function JobBoardsPage() {
 
   const connByProvider = new Map(connections.map((c) => [c.provider, c]));
 
+  const startOauth = async (providerId: string) => {
+    setOauthStarting(providerId);
+    try {
+      const res = await apiGet<{ authorize_url: string }>(
+        `/job-boards/${providerId}/oauth/start`,
+      );
+      window.location.href = res.authorize_url;
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Failed to start OAuth");
+      setOauthStarting(null);
+    }
+  };
+
   return (
     <div className="space-y-5">
       <div>
@@ -69,11 +100,28 @@ export default function JobBoardsPage() {
         </Link>
         <h1 className="text-2xl font-bold text-slate-900 mt-2">Job boards</h1>
         <p className="text-sm text-slate-500 mt-1">
-          One-click publish each open role to LinkedIn, Indeed, Facebook,
-          MyFutureJobs (Malaysia), and more. Connect a provider once and it
-          appears on every job&apos;s &quot;Publish&quot; panel.
+          One-click publish each open role to LinkedIn, Facebook, Indeed,
+          MyFutureJobs (Malaysia), and more. Sign in once with the account
+          that admins the page and we&apos;ll handle the posting.
         </p>
       </div>
+
+      {oauthProvider && oauthOk && (
+        <div className="rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-2 text-sm text-emerald-800 flex items-center gap-2">
+          <CheckCircleIcon className="w-5 h-5" />
+          <span>
+            Connected to <span className="font-semibold capitalize">{oauthProvider}</span>. You can pick a Page below if you admin more than one.
+          </span>
+        </div>
+      )}
+      {oauthProvider && oauthError && (
+        <div className="rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-sm text-rose-800 flex items-center gap-2">
+          <ExclamationTriangleIcon className="w-5 h-5" />
+          <span>
+            Couldn&apos;t connect to <span className="font-semibold capitalize">{oauthProvider}</span> — {oauthError.replace(/_/g, " ")}.
+          </span>
+        </div>
+      )}
 
       {loading ? (
         <p className="text-sm text-slate-500">Loading providers…</p>
@@ -87,7 +135,14 @@ export default function JobBoardsPage() {
                 provider={p}
                 connection={conn}
                 connecting={connectingProvider === p.id}
-                onConnectClick={() => setConnectingProvider(p.id)}
+                oauthStarting={oauthStarting === p.id}
+                onConnectClick={() => {
+                  if (p.auth_mode === "oauth") {
+                    startOauth(p.id);
+                  } else {
+                    setConnectingProvider(p.id);
+                  }
+                }}
                 onConnectCancel={() => setConnectingProvider(null)}
                 onConnected={() => {
                   setConnectingProvider(null);
@@ -112,6 +167,7 @@ function ProviderCard({
   provider,
   connection,
   connecting,
+  oauthStarting,
   onConnectClick,
   onConnectCancel,
   onConnected,
@@ -120,6 +176,7 @@ function ProviderCard({
   provider: Provider;
   connection?: Connection;
   connecting: boolean;
+  oauthStarting: boolean;
   onConnectClick: () => void;
   onConnectCancel: () => void;
   onConnected: () => void;
@@ -181,15 +238,23 @@ function ProviderCard({
       </div>
 
       {!connecting && (
-        <div className="mt-3 flex gap-2 justify-end">
+        <div className="mt-3 flex gap-2 justify-end items-center">
+          {provider.disabled_reason && !isConnected && (
+            <p className="text-[11px] text-slate-500 italic mr-auto">
+              {provider.disabled_reason}
+            </p>
+          )}
           {isConnected ? (
             <>
               <button
                 type="button"
                 onClick={onConnectClick}
-                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-md"
+                disabled={oauthStarting}
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 rounded-md"
               >
-                Re-enter credentials
+                {provider.auth_mode === "oauth"
+                  ? "Reconnect"
+                  : "Re-enter credentials"}
               </button>
               <button
                 type="button"
@@ -203,16 +268,25 @@ function ProviderCard({
             <button
               type="button"
               onClick={onConnectClick}
-              disabled={!provider.enabled}
-              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-md"
+              disabled={!provider.enabled || oauthStarting}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-md"
             >
-              <PlusIcon className="w-3.5 h-3.5" /> Connect
+              {provider.auth_mode === "oauth" ? (
+                <>
+                  <ArrowRightOnRectangleIcon className="w-3.5 h-3.5" />
+                  {oauthStarting ? "Redirecting…" : `Sign in with ${provider.name}`}
+                </>
+              ) : (
+                <>
+                  <PlusIcon className="w-3.5 h-3.5" /> Connect
+                </>
+              )}
             </button>
           )}
         </div>
       )}
 
-      {connecting && (
+      {connecting && provider.auth_mode !== "oauth" && (
         <ConnectForm
           provider={provider}
           onCancel={onConnectCancel}

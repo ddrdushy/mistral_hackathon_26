@@ -2,7 +2,8 @@
 
 Two URL spaces:
 
-  /api/v1/job-boards/...        per-tenant connection management
+  /api/v1/job-boards/...        per-tenant connection management +
+                                OAuth flow for providers that support it
   /api/v1/jobs/{job_id}/boards/... per-job publishing / status
 
 The router only handles persistence + audit. The actual provider work
@@ -15,7 +16,9 @@ import logging
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+import httpx
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -30,6 +33,7 @@ from services.job_boards import (
     get_adapter_for_provider,
 )
 from services.job_boards.base import JobPostDraft
+from services.job_boards import oauth as oauth_helper
 from services.secrets_crypto import encrypt
 
 logger = logging.getLogger("hireops.job_boards")
@@ -229,6 +233,307 @@ def disconnect(
         severity="warning", request=request,
     )
     return {"deleted": True}
+
+
+# ─── Tenant OAuth flow (LinkedIn, Facebook) ─────────────────────────────────
+#
+# The tenant clicks "Connect with X" in the UI. We sign a state JWT and
+# redirect them to the provider. The provider redirects back to /callback
+# with ?code + ?state, we exchange the code, and persist the access_token
+# (+ chosen Page / Organization id) into JobBoardConnection.
+
+
+@router.get("/{provider}/oauth/start")
+def oauth_start(
+    provider: str,
+    session: CurrentSession = Depends(require_owner),
+):
+    """Returns the provider's authorize URL. Frontend redirects the
+    browser there. Tenant OAuth is owner-only — wiring up paid
+    distribution is a billing-relevant action.
+    """
+    state = oauth_helper.issue_state(
+        tenant_id=session.tenant.id,
+        user_id=session.user.id,
+        provider=provider,
+    )
+    try:
+        if provider == "linkedin":
+            url = oauth_helper.linkedin_authorize_url(state)
+        elif provider == "facebook":
+            url = oauth_helper.facebook_authorize_url(state)
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Provider '{provider}' doesn't support OAuth — use POST "
+                    f"/api/v1/job-boards/connect/{provider} with manual credentials."
+                ),
+            )
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    return {"authorize_url": url}
+
+
+def _redirect_to_settings(qs: str = "") -> RedirectResponse:
+    base = oauth_helper.frontend_url()
+    return RedirectResponse(url=f"{base}/settings/job-boards{qs}", status_code=303)
+
+
+@router.get("/linkedin/oauth/callback")
+async def linkedin_oauth_callback(
+    request: Request,
+    code: Optional[str] = Query(default=None),
+    state: Optional[str] = Query(default=None),
+    error: Optional[str] = Query(default=None),
+    error_description: Optional[str] = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    if error:
+        logger.warning("linkedin oauth user-cancel: %s — %s", error, error_description)
+        return _redirect_to_settings(f"?oauth=linkedin&error={error}")
+    if not code or not state:
+        return _redirect_to_settings("?oauth=linkedin&error=missing_params")
+
+    payload = oauth_helper.verify_state(state, "linkedin")
+    if not payload:
+        return _redirect_to_settings("?oauth=linkedin&error=invalid_state")
+    tenant_id = int(payload["tid"])
+    user_id = int(payload["sub"])
+
+    client_id, client_secret = oauth_helper.linkedin_app()
+    if not client_id or not client_secret:
+        return _redirect_to_settings("?oauth=linkedin&error=app_not_configured")
+
+    # Exchange code → access_token
+    async with httpx.AsyncClient(timeout=20) as client:
+        resp = await client.post(
+            "https://www.linkedin.com/oauth/v2/accessToken",
+            data={
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": oauth_helper.redirect_uri("linkedin"),
+                "client_id": client_id,
+                "client_secret": client_secret,
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        if resp.status_code != 200:
+            logger.warning("linkedin token exchange %s: %s", resp.status_code, resp.text[:300])
+            return _redirect_to_settings(f"?oauth=linkedin&error=token_exchange_{resp.status_code}")
+        tok = resp.json()
+
+        access_token = tok.get("access_token", "")
+        expires_in = int(tok.get("expires_in", 0) or 0)
+
+        # Best-effort fetch of the Pages this user admins, so the
+        # tenant can pick one later via the UI. If this 403s
+        # (`r_organization_admin` not approved yet) we still save the
+        # token and let the publish flow ask for an organization_id.
+        pages: list[dict] = []
+        try:
+            org_resp = await client.get(
+                "https://api.linkedin.com/v2/organizationAcls",
+                params={"q": "roleAssignee", "role": "ADMINISTRATOR", "state": "APPROVED"},
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "X-Restli-Protocol-Version": "2.0.0",
+                },
+            )
+            if org_resp.status_code == 200:
+                for el in (org_resp.json() or {}).get("elements", []):
+                    org_urn = el.get("organization")
+                    if org_urn:
+                        pages.append({"urn": org_urn})
+        except Exception as e:
+            logger.warning("linkedin org list fetch failed: %s", e)
+
+    credentials = {
+        "access_token": access_token,
+        "expires_in": expires_in,
+        "obtained_at": datetime.utcnow().isoformat(),
+        "pages": pages,
+    }
+    settings_payload = {
+        # Tenant picks which Page/Org to publish under via a follow-up
+        # PATCH to /api/v1/job-boards/{id}; until then we'll prompt them
+        # on first publish.
+        "organization_urn": pages[0]["urn"] if pages else "",
+    }
+
+    row = db.query(JobBoardConnection).filter(
+        JobBoardConnection.tenant_id == tenant_id,
+        JobBoardConnection.provider == "linkedin",
+    ).first()
+    if row:
+        row.encrypted_credentials = encrypt(json.dumps(credentials))
+        row.settings_json = json.dumps(settings_payload)
+        row.enabled = True
+        row.last_error = ""
+    else:
+        row = JobBoardConnection(
+            tenant_id=tenant_id,
+            provider="linkedin",
+            encrypted_credentials=encrypt(json.dumps(credentials)),
+            settings_json=json.dumps(settings_payload),
+            enabled=True,
+        )
+        db.add(row)
+    db.commit()
+    db.refresh(row)
+
+    write_audit(
+        db, action="job_board.oauth_connect", actor=None,
+        tenant_id=tenant_id, resource_type="job_board_connection",
+        resource_id=row.id,
+        payload={"provider": "linkedin", "pages_count": len(pages), "user_id": user_id},
+        severity="warning", request=request,
+    )
+    return _redirect_to_settings("?oauth=linkedin&ok=1")
+
+
+@router.get("/facebook/oauth/callback")
+async def facebook_oauth_callback(
+    request: Request,
+    code: Optional[str] = Query(default=None),
+    state: Optional[str] = Query(default=None),
+    error: Optional[str] = Query(default=None),
+    error_reason: Optional[str] = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    if error:
+        logger.warning("facebook oauth user-cancel: %s — %s", error, error_reason)
+        return _redirect_to_settings(f"?oauth=facebook&error={error}")
+    if not code or not state:
+        return _redirect_to_settings("?oauth=facebook&error=missing_params")
+
+    payload = oauth_helper.verify_state(state, "facebook")
+    if not payload:
+        return _redirect_to_settings("?oauth=facebook&error=invalid_state")
+    tenant_id = int(payload["tid"])
+    user_id = int(payload["sub"])
+
+    client_id, client_secret = oauth_helper.facebook_app()
+    if not client_id or not client_secret:
+        return _redirect_to_settings("?oauth=facebook&error=app_not_configured")
+
+    async with httpx.AsyncClient(timeout=20) as client:
+        # 1. Exchange short-lived code for short-lived user access token.
+        resp = await client.get(
+            "https://graph.facebook.com/v18.0/oauth/access_token",
+            params={
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "redirect_uri": oauth_helper.redirect_uri("facebook"),
+                "code": code,
+            },
+        )
+        if resp.status_code != 200:
+            logger.warning("facebook token exchange %s: %s", resp.status_code, resp.text[:300])
+            return _redirect_to_settings(f"?oauth=facebook&error=token_exchange_{resp.status_code}")
+        short_lived = resp.json().get("access_token", "")
+
+        # 2. Upgrade to a long-lived user token (~60 days).
+        ll = await client.get(
+            "https://graph.facebook.com/v18.0/oauth/access_token",
+            params={
+                "grant_type": "fb_exchange_token",
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "fb_exchange_token": short_lived,
+            },
+        )
+        user_token = (ll.json() or {}).get("access_token", short_lived) if ll.status_code == 200 else short_lived
+
+        # 3. List the Pages this user manages so the tenant can pick
+        # which Page to post to. Each Page comes with its OWN
+        # access_token (never-expiring as long as the user-token is
+        # alive) — that's what we actually use for posting.
+        pages: list[dict] = []
+        try:
+            page_resp = await client.get(
+                "https://graph.facebook.com/v18.0/me/accounts",
+                params={"access_token": user_token, "fields": "id,name,access_token"},
+            )
+            if page_resp.status_code == 200:
+                for p in (page_resp.json() or {}).get("data", []):
+                    pages.append({
+                        "id": p.get("id", ""),
+                        "name": p.get("name", ""),
+                        "access_token": p.get("access_token", ""),
+                    })
+        except Exception as e:
+            logger.warning("facebook /me/accounts failed: %s", e)
+
+    if not pages:
+        return _redirect_to_settings("?oauth=facebook&error=no_pages")
+
+    # Default to the first Page; tenant can change via UI later.
+    default_page = pages[0]
+    credentials = {
+        "user_access_token": user_token,
+        "pages": pages,
+        "obtained_at": datetime.utcnow().isoformat(),
+    }
+    settings_payload = {
+        "page_id": default_page["id"],
+        "page_name": default_page["name"],
+    }
+
+    row = db.query(JobBoardConnection).filter(
+        JobBoardConnection.tenant_id == tenant_id,
+        JobBoardConnection.provider == "facebook",
+    ).first()
+    if row:
+        row.encrypted_credentials = encrypt(json.dumps(credentials))
+        row.settings_json = json.dumps(settings_payload)
+        row.enabled = True
+        row.last_error = ""
+    else:
+        row = JobBoardConnection(
+            tenant_id=tenant_id,
+            provider="facebook",
+            encrypted_credentials=encrypt(json.dumps(credentials)),
+            settings_json=json.dumps(settings_payload),
+            enabled=True,
+        )
+        db.add(row)
+    db.commit()
+    db.refresh(row)
+
+    write_audit(
+        db, action="job_board.oauth_connect", actor=None,
+        tenant_id=tenant_id, resource_type="job_board_connection",
+        resource_id=row.id,
+        payload={"provider": "facebook", "pages_count": len(pages), "user_id": user_id},
+        severity="warning", request=request,
+    )
+    return _redirect_to_settings("?oauth=facebook&ok=1")
+
+
+class UpdateSettingsRequest(BaseModel):
+    settings: dict
+
+
+@router.patch("/{connection_id}/settings")
+def update_settings(
+    connection_id: int,
+    req: UpdateSettingsRequest,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(require_owner),
+):
+    """Lets the tenant pick which Page / Organization to publish under
+    after OAuth granted access to several. Settings JSON is plaintext
+    metadata — never put credentials in it."""
+    row = db.query(JobBoardConnection).filter(
+        JobBoardConnection.id == connection_id,
+        JobBoardConnection.tenant_id == session.tenant.id,
+    ).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Connection not found")
+    row.settings_json = json.dumps(req.settings or {})
+    db.commit()
+    return _connection_to_response(row)
 
 
 # ─── Per-job publishing ─────────────────────────────────────────────────────
