@@ -80,7 +80,13 @@ class CheckoutResponse(BaseModel):
 @router.get("/plans", response_model=list[PlanResponse])
 def list_plans(_: CurrentSession = Depends(current_session)):
     out = []
-    for p in PLANS.values():
+    # Iterate the static catalogue to preserve plan order, but resolve
+    # each plan via get_plan() so DB-stored overrides (price, features,
+    # stripe_price_id, allowed_agents) are applied. Without this the
+    # `available` flag stays False for any tenant whose super-admin
+    # configured the price in admin/plans rather than env vars.
+    for static in PLANS.values():
+        p = get_plan(static.name)
         out.append(PlanResponse(
             name=p.name,
             display_name=p.display_name,
