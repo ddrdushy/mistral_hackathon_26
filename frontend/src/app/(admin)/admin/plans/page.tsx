@@ -368,6 +368,16 @@ function PlanEditorCard({
               ))}
             </div>
           )}
+          {/* Precedence note — the audit flagged that the resolution
+              order wasn't visible anywhere in the UI, leading to confusion
+              when a tenant override differed from the plan setting. */}
+          <div className="mt-2 rounded-md bg-slate-50 border border-slate-200 px-2 py-1.5 text-[11px] text-slate-600 leading-snug">
+            <span className="font-semibold text-slate-700">Resolution order:</span>{" "}
+            per-tenant override (Admin → Tenant → Agent overrides) wins over
+            this plan-level allow list, which wins over the static defaults
+            in <code className="font-mono">billing/plans.py</code>. The
+            tenant&apos;s effective allow list is the union of all three.
+          </div>
         </div>
 
         {feedback && (

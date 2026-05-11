@@ -11,7 +11,9 @@ import {
   ArrowTopRightOnSquareIcon,
   ShieldCheckIcon,
   StarIcon,
+  PlayCircleIcon,
 } from "@heroicons/react/24/outline";
+import { startTour } from "@/components/tour/tourEvents";
 import type { HelpEntry, HelpStep, HelpLink } from "@/lib/help/types";
 
 interface HelpDrawerProps {
@@ -156,7 +158,20 @@ export default function HelpDrawer({ open, onClose, entry }: HelpDrawerProps) {
             </Section>
           )}
 
-          <div className="border-t border-slate-100 pt-4">
+          <div className="border-t border-slate-100 pt-4 space-y-2">
+            <button
+              type="button"
+              onClick={() => {
+                onClose();
+                // Slight delay so the drawer animation doesn't fight the
+                // tour overlay opening on top of it.
+                setTimeout(() => startTour(), 50);
+              }}
+              className="w-full inline-flex items-center justify-center gap-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 transition-colors px-3 py-2 text-sm text-slate-700"
+            >
+              <PlayCircleIcon className="w-4 h-4" />
+              Replay the welcome tour
+            </button>
             <Link
               href="/support"
               onClick={onClose}
