@@ -129,6 +129,34 @@ function PlanEditorCard({
   const [feedback, setFeedback] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Re-sync local edit state when the parent re-fetches the plan after a
+  // save / reset. Without this, useState's initial values stick forever
+  // and the input keeps showing pre-save text even though DB has new data.
+  useEffect(() => {
+    setEdit({
+      display_name: plan.display_name,
+      price_monthly_usd: plan.price_monthly_usd,
+      stripe_price_id: plan.stripe_price_id || "",
+      max_jobs: plan.max_jobs,
+      max_candidates: plan.max_candidates,
+      max_interviews_per_month: plan.max_interviews_per_month,
+      daily_llm_budget_usd: plan.daily_llm_budget_usd,
+      features: plan.features.join("\n"),
+      allowed_all: plan.allowed_agents.includes("*"),
+      allowed_set: new Set(plan.allowed_agents.filter((a) => a !== "*")),
+    });
+  }, [
+    plan.display_name,
+    plan.price_monthly_usd,
+    plan.stripe_price_id,
+    plan.max_jobs,
+    plan.max_candidates,
+    plan.max_interviews_per_month,
+    plan.daily_llm_budget_usd,
+    plan.features,
+    plan.allowed_agents,
+  ]);
+
   const save = async () => {
     try {
       setBusy(true);
