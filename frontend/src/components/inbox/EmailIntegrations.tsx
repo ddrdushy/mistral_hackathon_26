@@ -197,6 +197,33 @@ const PROVIDER_BY_ID: Record<ProviderId, ProviderPreset> = Object.fromEntries(
   [],
 ) as Record<ProviderId, ProviderPreset>;
 
+/**
+ * Append authuser=<email> for Google URLs so clicking "Open settings"
+ * lands on the typed mailbox, not whatever account is currently active
+ * in the browser. Google's account switcher honours this query param on
+ * myaccount.google.com / accounts.google.com / mail.google.com.
+ *
+ * For Microsoft / Yahoo / generic IMAP we just return the URL as-is
+ * (their account-switcher is path-based, not query-param-based).
+ */
+function buildProviderHelpUrl(baseUrl: string, email: string): string {
+  const trimmed = (email || "").trim();
+  if (!trimmed.includes("@")) return baseUrl;
+
+  let host: string;
+  try {
+    host = new URL(baseUrl).hostname.toLowerCase();
+  } catch {
+    return baseUrl;
+  }
+  const isGoogle =
+    host.endsWith("google.com") || host === "myaccount.google.com";
+  if (!isGoogle) return baseUrl;
+
+  const sep = baseUrl.includes("?") ? "&" : "?";
+  return `${baseUrl}${sep}authuser=${encodeURIComponent(trimmed)}`;
+}
+
 function timeAgoShort(iso: string | null): string {
   if (!iso) return "never";
   const ts = new Date(iso).getTime();
@@ -576,7 +603,12 @@ export default function EmailIntegrations({
                     {activeProvider.helpUrl && (
                       <>
                         {" "}
-                        <a href={activeProvider.helpUrl} target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:underline">
+                        <a
+                          href={buildProviderHelpUrl(activeProvider.helpUrl, user)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-indigo-600 hover:underline"
+                        >
                           Open settings ↗
                         </a>
                       </>
