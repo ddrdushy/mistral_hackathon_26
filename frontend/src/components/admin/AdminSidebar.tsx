@@ -13,6 +13,7 @@ import {
   ChatBubbleLeftRightIcon,
   Cog6ToothIcon,
   CurrencyDollarIcon,
+  LifebuoyIcon,
 } from "@heroicons/react/24/outline";
 
 const navItems = [
@@ -20,6 +21,7 @@ const navItems = [
   { label: "Users", href: "/admin/users", icon: UsersIcon, match: /^\/admin\/users/ },
   { label: "Plans", href: "/admin/plans", icon: CurrencyDollarIcon, match: /^\/admin\/plans/ },
   { label: "Stripe", href: "/admin/stripe", icon: CurrencyDollarIcon, match: /^\/admin\/stripe/ },
+  { label: "Support", href: "/admin/support", icon: LifebuoyIcon, match: /^\/admin\/support/ },
   { label: "Analytics", href: "/admin/analytics", icon: ChartBarIcon, match: /^\/admin\/analytics/ },
   { label: "Testimonials", href: "/admin/testimonials", icon: ChatBubbleLeftRightIcon, match: /^\/admin\/testimonials/ },
   { label: "Audit log", href: "/admin/audit-log", icon: DocumentTextIcon, match: /^\/admin\/audit-log/ },

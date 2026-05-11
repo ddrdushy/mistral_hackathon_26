@@ -104,10 +104,27 @@ export default function TenantDetailPage({
   };
 
   const handleImpersonate = async () => {
-    if (!confirm(`Login as ${t.name}? Your superadmin session will be replaced.`)) return;
+    // Privacy-hardening: every impersonation must carry a written reason
+    // that gets persisted to the audit log. Short prompt is acceptable
+    // for now — a richer modal can land later.
+    const reason = prompt(
+      `Enter a reason for impersonating ${t.name} (e.g. support ticket #1234, payment dispute). Stored in the audit log. Min 10 chars.`,
+      "",
+    );
+    if (!reason || reason.trim().length < 10) {
+      alert("A reason of at least 10 characters is required.");
+      return;
+    }
+    if (
+      !confirm(
+        `You're about to sign in as ${t.name}'s owner for the next 60 minutes. Your superadmin session will be replaced and a critical audit row is written. Continue?`,
+      )
+    ) {
+      return;
+    }
     setPending("impersonate");
     try {
-      await apiPost(`/admin/tenants/${t.id}/impersonate`);
+      await apiPost(`/admin/tenants/${t.id}/impersonate`, { reason: reason.trim() });
       window.location.href = "/dashboard";
     } catch (e) {
       alert(e instanceof Error ? e.message : "Failed");
@@ -284,10 +301,10 @@ export default function TenantDetailPage({
                   type="button"
                   onClick={handleExport}
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200"
-                  title="Download every row tagged with this tenant_id as JSON"
+                  title="Download tenant metadata (plan, billing, member list, row counts). Candidate / CV / email content is NOT included — the tenant must export their own data."
                 >
                   <ArrowDownTrayIcon className="w-3.5 h-3.5" />
-                  Export data
+                  Export metadata
                 </button>
                 <button
                   type="button"

@@ -419,16 +419,31 @@ def restore_tenant(
 # ── Impersonate (with audit) ──────────────────────────────────────────────
 
 
+class ImpersonateRequest(BaseModel):
+    # Required free-text justification, stored in the audit log so every
+    # impersonation is attributable to a specific support / compliance task.
+    reason: str = Field(min_length=10, max_length=500)
+
+
 @router.post("/tenants/{tenant_id}/impersonate")
 def impersonate_tenant(
+    req: ImpersonateRequest,
     request: Request,
     tenant_id: int,
     response: Response,
     db: Session = Depends(get_db),
     session: CurrentSession = Depends(require_superadmin),
 ):
-    """Issue a session cookie for the tenant's owner. The superadmin's own
-    session is overwritten — they'll need to re-login as themselves afterwards.
+    """Issue a 1-hour session cookie for the tenant's owner.
+
+    The superadmin's own session is overwritten — they'll need to re-login
+    as themselves afterwards. Privacy hardening:
+      - Caller must supply a reason ≥ 10 chars; stored in the audit log.
+      - TTL is 1 hour (was 1 day) so a forgotten impersonation can't sit
+        live for a working day.
+      - Audit row severity is `critical` and the reason is part of the
+        payload so it's surfaced to the audit-log UI even after the
+        masking pass we apply for non-super-admin actions.
     """
     t = db.query(Tenant).filter(Tenant.id == tenant_id).first()
     if not t:
@@ -445,11 +460,13 @@ def impersonate_tenant(
         raise HTTPException(status_code=400, detail="Tenant has no owner user")
 
     secure = os.getenv("COOKIE_SECURE", "false").lower() == "true"
-    token = issue_jwt(owner.id, t.id, ttl_days=1)
+    # 1-hour TTL is plenty for a support session and limits blast radius
+    # if the admin walks away from their desk.
+    token = issue_jwt(owner.id, t.id, ttl_days=1 / 24)
     response.set_cookie(
         key=COOKIE_NAME,
         value=token,
-        max_age=24 * 60 * 60,
+        max_age=60 * 60,
         httponly=True,
         samesite="lax",
         secure=secure,
@@ -459,7 +476,12 @@ def impersonate_tenant(
     record_audit(
         db, actor=session.user, action="tenant.impersonate",
         target_tenant_id=t.id, target_user_id=owner.id, request=request,
-        payload={"impersonated_email": owner.email},
+        payload={
+            "impersonated_email": owner.email,
+            "reason": req.reason.strip(),
+            "ttl_minutes": 60,
+        },
+        severity="critical",
     )
     return {
         "ok": True,
@@ -467,6 +489,7 @@ def impersonate_tenant(
             "tenant_id": t.id,
             "tenant_name": t.name,
             "user_email": owner.email,
+            "expires_in_minutes": 60,
         },
     }
 
@@ -917,56 +940,77 @@ def export_tenant_data(
     db: Session = Depends(get_db),
     session: CurrentSession = Depends(require_superadmin),
 ):
-    """Single-JSON export of every row tied to this tenant.
+    """Tenant METADATA export — counts + plan + billing state only.
 
-    Returned as a streaming response with Content-Disposition so the browser
-    saves it to disk. Safe to run on a deleted tenant — useful for fulfilling
-    GDPR data-portability requests.
+    Previously this dumped every candidate / email / CV / transcript /
+    application row. That violates the principle that a platform
+    super-admin shouldn't be able to read tenant-private recruiting data
+    out-of-band. Tenants who need a full data-portability dump (GDPR
+    article 20) should call `/billing/my-data-export` while logged in
+    as the tenant owner — that path is gated by `require_owner`.
+
+    What this endpoint returns now:
+      - tenant slug / name / plan / billing dates
+      - member list (id, email, role, last login) — already visible via
+        /admin/tenants/{id}
+      - per-table row counts so support can answer "how much data does
+        this tenant have" without seeing the rows themselves
     """
     t = db.query(Tenant).filter(Tenant.id == tenant_id).first()
     if not t:
         raise HTTPException(status_code=404, detail="Tenant not found")
 
-    def _rows(model, **filters) -> list[dict]:
-        q = db.query(model).filter(model.tenant_id == t.id)
-        for k, v in filters.items():
-            q = q.filter(getattr(model, k) == v)
-        return [
-            {c.name: (_serialize_dt(getattr(r, c.name)) if hasattr(getattr(r, c.name), "isoformat") else getattr(r, c.name))
-             for c in model.__table__.columns}
-            for r in q.all()
-        ]
+    def _count(model) -> int:
+        return db.query(model).filter(model.tenant_id == t.id).count()
 
     bundle = {
         "exported_at": datetime.utcnow().isoformat(),
         "exported_by": session.user.email,
+        "scope": "metadata_only",
         "tenant": {
             "id": t.id, "slug": t.slug, "name": t.name, "plan": t.plan,
+            "subscription_status": t.subscription_status,
+            "current_period_end": _serialize_dt(t.current_period_end),
+            "stripe_customer_id": t.stripe_customer_id,
+            "stripe_subscription_id": t.stripe_subscription_id,
             "created_at": _serialize_dt(t.created_at),
             "deleted_at": _serialize_dt(t.deleted_at),
+            "suspended_at": _serialize_dt(t.suspended_at),
         },
-        "users": _rows(User),
-        "jobs": _rows(Job),
-        "emails": _rows(Email),
-        "candidates": _rows(Candidate),
-        "applications": _rows(Application),
-        "interview_links": _rows(InterviewLink),
-        "qa_sessions": _rows(QaSession),
-        "events": _rows(Event),
-        "llm_usage": _rows(LlmUsage),
-        "tenant_invites": _rows(TenantInvite),
+        "members": [
+            {
+                "id": u.id,
+                "email": u.email,
+                "name": u.name,
+                "role": u.role,
+                "email_verified": u.email_verified_at is not None,
+                "last_login_at": _serialize_dt(u.last_login_at),
+                "created_at": _serialize_dt(u.created_at),
+            }
+            for u in db.query(User).filter(User.tenant_id == t.id).all()
+        ],
+        "row_counts": {
+            "users": _count(User),
+            "jobs": _count(Job),
+            "emails": _count(Email),
+            "candidates": _count(Candidate),
+            "applications": _count(Application),
+            "interview_links": _count(InterviewLink),
+            "qa_sessions": _count(QaSession),
+            "events": _count(Event),
+            "llm_usage": _count(LlmUsage),
+        },
     }
 
     record_audit(
-        db, actor=session.user, action="tenant.export",
+        db, actor=session.user, action="tenant.metadata_export",
         target_tenant_id=t.id, request=request,
-        payload={
-            "row_counts": {k: len(v) for k, v in bundle.items() if isinstance(v, list)},
-        },
+        payload={"row_counts": bundle["row_counts"]},
+        severity="warning",
     )
 
     payload = json.dumps(bundle, indent=2, default=str)
-    filename = f"hireops-tenant-{t.slug}-{datetime.utcnow().strftime('%Y%m%d')}.json"
+    filename = f"hireops-tenant-{t.slug}-metadata-{datetime.utcnow().strftime('%Y%m%d')}.json"
     return StreamingResponse(
         iter([payload]),
         media_type="application/json",
@@ -1097,6 +1141,36 @@ def list_audit_log(
         for t in db.query(Tenant).filter(Tenant.id.in_(target_tenant_ids)).all()
     } if target_tenant_ids else {}
 
+    # Privacy hardening: tenant-originated audit rows (e.g. fraud.detected,
+    # offer.send, integration.connect) may have payloads that mention
+    # candidate names, fraud evidence, or other tenant-private content.
+    # Super-admins should see WHAT happened and WHEN — not the full
+    # tenant-private payload. We strip values to just the key list for any
+    # row whose actor isn't a super-admin; super-admin-originated actions
+    # (tenant.suspend, plan changes, etc) keep their full payload because
+    # those are platform-level audit events.
+    super_admin_actor_ids = {
+        r[0]
+        for r in db.query(User.id).filter(User.id.in_(actor_ids), User.is_superadmin.is_(True)).all()
+    } if actor_ids else set()
+
+    def _safe_payload(row: AuditLog) -> dict:
+        try:
+            data = json.loads(row.payload) if row.payload else {}
+        except Exception:
+            return {}
+        if row.super_admin_user_id in super_admin_actor_ids:
+            return data  # platform action; show full payload
+        if not isinstance(data, dict):
+            return {"_redacted": True}
+        # Tenant-originated row: surface only the top-level field names so
+        # admins can still tell "the offer.send included a candidate_name"
+        # without reading the actual value.
+        return {
+            "_redacted": True,
+            "_keys": sorted(data.keys()),
+        }
+
     entries = [
         AuditLogItem(
             id=r.id,
@@ -1106,7 +1180,7 @@ def list_audit_log(
             target_tenant_name=target_tenant_map.get(r.target_tenant_id) if r.target_tenant_id else None,
             target_user_id=r.target_user_id,
             target_user_email=target_user_map.get(r.target_user_id) if r.target_user_id else None,
-            payload=json.loads(r.payload) if r.payload else {},
+            payload=_safe_payload(r),
             ip_address=r.ip_address,
             created_at=r.created_at,
         )

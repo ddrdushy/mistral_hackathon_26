@@ -42,6 +42,7 @@ def init_db():
         PipelineTemplate, PipelineStage, ApplicationStageTransition,
         PipelineForecast,
         ExternalIntegration, ExternalIdMapping, IntegrationSyncLog,
+        SupportTicket, TenantFeedback,
     )
     Base.metadata.create_all(bind=engine)
     _run_migrations()

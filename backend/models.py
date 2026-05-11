@@ -198,6 +198,57 @@ class TenantInvite(Base):
     )
 
 
+class SupportTicket(Base):
+    """Tenant-raised support / bug request.
+
+    Tenant owners + members can create tickets. Super-admins read them
+    to triage, but the tenant-private body stays in this table — no
+    candidate / CV / transcript bleeds in unless the tenant types it
+    themselves into the description.
+    """
+    __tablename__ = "support_tickets"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
+    created_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    # bug | feature_request | billing | other
+    category = Column(String, default="other", nullable=False)
+    # low | normal | high | urgent
+    priority = Column(String, default="normal", nullable=False)
+    subject = Column(String, nullable=False)
+    description = Column(Text, nullable=False)
+    # open | in_progress | waiting_tenant | resolved | closed
+    status = Column(String, default="open", nullable=False, index=True)
+    admin_reply = Column(Text, default="")
+    admin_replied_at = Column(DateTime, nullable=True)
+    admin_replied_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    resolved_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class TenantFeedback(Base):
+    """Lightweight 'how are we doing' feedback. Optional rating + free
+    text. Distinct from support tickets — no reply loop, no state
+    machine, just a stream platform owners read for product signal.
+    """
+    __tablename__ = "tenant_feedback"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
+    created_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    # nps (0–10) or csat (1–5) — caller picks; null if user only left text.
+    rating = Column(Integer, nullable=True)
+    rating_scale = Column(String, default="csat")  # csat | nps
+    # praise | suggestion | bug | other
+    category = Column(String, default="suggestion")
+    message = Column(Text, nullable=False)
+    # platform-side flag — has the team triaged this yet
+    reviewed_at = Column(DateTime, nullable=True)
+    reviewed_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # TENANT-SCOPED RECRUITING DATA
 # ═══════════════════════════════════════════════════════════════════════════
