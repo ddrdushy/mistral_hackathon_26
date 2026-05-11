@@ -43,6 +43,7 @@ def init_db():
         PipelineForecast,
         ExternalIntegration, ExternalIdMapping, IntegrationSyncLog,
         SupportTicket, TenantFeedback,
+        JobBoardConnection, JobBoardPosting,
     )
     Base.metadata.create_all(bind=engine)
     _run_migrations()

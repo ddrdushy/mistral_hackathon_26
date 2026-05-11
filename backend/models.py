@@ -198,6 +198,58 @@ class TenantInvite(Base):
     )
 
 
+class JobBoardConnection(Base):
+    """Per-tenant credentials for a job-board provider (LinkedIn, Indeed,
+    Facebook Jobs, MyFutureJobs, etc).
+
+    Same encryption-at-rest pattern as ExternalIntegration: Fernet-
+    encrypted blob in `encrypted_credentials`. settings_json carries
+    board-specific config (default location, company id, etc).
+    """
+    __tablename__ = "job_board_connections"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
+    provider = Column(String, nullable=False)
+    # linkedin | indeed | facebook | myfuturejobs | mock
+    encrypted_credentials = Column(Text, default="")
+    settings_json = Column(Text, default="{}")
+    enabled = Column(Boolean, default=True)
+    last_error = Column(Text, default="")
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "provider", name="uq_jbc_tenant_provider"),
+    )
+
+
+class JobBoardPosting(Base):
+    """One row per (job, board) pair. Tracks where a job is published,
+    the external id assigned by the board, the live URL, and the most
+    recent sync status.
+    """
+    __tablename__ = "job_board_postings"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
+    job_id = Column(Integer, ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False, index=True)
+    provider = Column(String, nullable=False)
+    external_id = Column(String, default="")
+    external_url = Column(String, default="")
+    # pending | published | failed | unpublished | expired
+    status = Column(String, default="pending", index=True)
+    last_error = Column(Text, default="")
+    posted_at = Column(DateTime, nullable=True)
+    unposted_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("job_id", "provider", name="uq_jbp_job_provider"),
+    )
+
+
 class SupportTicket(Base):
     """Tenant-raised support / bug request.
 

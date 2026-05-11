@@ -8,6 +8,7 @@ import type { Job, Application, ApplicationListResponse } from "@/types/index";
 import TalentSearchPanel from "@/components/talent/TalentSearchPanel";
 import InterviewQuestionsEditor from "@/components/jobs/InterviewQuestionsEditor";
 import PipelineForecastCard from "@/components/forecasts/PipelineForecastCard";
+import JobBoardPublishCard from "@/components/jobs/JobBoardPublishCard";
 
 const STATUS_BADGE: Record<string, string> = {
   open: "bg-green-100 text-green-800",
@@ -496,6 +497,13 @@ export default function JobDetailPage() {
           </div>
         </div>
       )}
+
+      {/* Multi-poster — push this job to LinkedIn / Indeed / FB /
+          MyFutureJobs / etc. in one click. Connections are configured
+          tenant-wide at /settings/job-boards. */}
+      <div className="mb-6">
+        <JobBoardPublishCard jobId={Number(jobId)} />
+      </div>
 
       {/* Pipeline forecast (Feature 8) */}
       <div className="mb-6">
