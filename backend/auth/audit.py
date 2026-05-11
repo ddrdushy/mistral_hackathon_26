@@ -25,18 +25,28 @@ def record_audit(
     target_user_id: Optional[int] = None,
     payload: Optional[dict[str, Any]] = None,
     request: Optional[Request] = None,
+    severity: str = "info",
+    resource_type: Optional[str] = None,
+    resource_id: Optional[Any] = None,
+    tenant_id: Optional[int] = None,
 ) -> AuditLog:
     """Append an audit log row (super-admin variant).
 
     Backwards-compatible wrapper around services.audit.write_audit. Sets
     super_admin_user_id automatically when the actor has is_superadmin=True.
+    Accepts the same kwargs as write_audit so super-admin call sites can
+    set severity / resource_type / resource_id without switching helper.
     """
     return write_audit(
         db,
         action=action,
         actor=actor,
+        tenant_id=tenant_id,
+        resource_type=resource_type,
+        resource_id=resource_id,
         target_tenant_id=target_tenant_id,
         target_user_id=target_user_id,
         payload=payload,
+        severity=severity,
         request=request,
     )
