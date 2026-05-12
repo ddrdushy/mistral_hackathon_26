@@ -8,6 +8,7 @@ import httpx
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from database import get_db
 from models import Application, Candidate, Job, Event, InterviewLink, QaSession, Tenant
