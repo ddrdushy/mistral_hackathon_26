@@ -191,6 +191,30 @@ class AuditLog(Base):
     )
 
 
+class UserCalendarConnection(Base):
+    """Per-user OAuth tokens for the recruiter's external calendar
+    (currently Google Calendar). The freebusy reader uses these to
+    filter out interview slots that would clash with the recruiter's
+    existing meetings.
+
+    Stored per user (not per tenant) because two recruiters on the
+    same tenant will each have their own Google account.
+    """
+    __tablename__ = "user_calendar_connections"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
+    provider = Column(String, nullable=False, default="google")
+    email_address = Column(String, nullable=False)
+    refresh_token_encrypted = Column(Text, nullable=False)
+    access_token_encrypted = Column(Text, default="")
+    access_token_expires_at = Column(DateTime, nullable=True)
+    scopes = Column(Text, default="")  # space-separated
+    connected_at = Column(DateTime, default=datetime.utcnow)
+    last_refreshed_at = Column(DateTime, nullable=True)
+
+
 class TenantInvite(Base):
     """Tenant owner invites a teammate by email. Single-use token, expires in 7 days."""
     __tablename__ = "tenant_invites"

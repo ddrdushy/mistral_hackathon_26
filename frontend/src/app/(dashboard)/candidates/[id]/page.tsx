@@ -6,6 +6,7 @@ import { apiGet, apiPost, apiPatch, apiDelete } from "@/lib/api";
 import FraudSignalsCard from "@/components/candidates/FraudSignalsCard";
 import FraudHighlights from "@/components/candidates/FraudHighlights";
 import HrVideoPanel from "@/components/candidates/HrVideoPanel";
+import SlotPicker from "@/components/scheduling/SlotPicker";
 import OfferCard from "@/components/offers/OfferCard";
 import { useAuth } from "@/components/auth/AuthGate";
 import TagChip, { TagSummary } from "@/components/tags/TagChip";
@@ -1566,6 +1567,19 @@ export default function CandidateDetailPage({
                     Regenerate Link
                   </Button>
                 )}
+              </div>
+            )}
+
+            {/* Slot suggester — surface clash-free interview times pulled
+                from the recruiter's Google Calendar when scheduling is
+                still pending. Hidden once the interview is already
+                completed/scheduled so it doesn't clutter that view. */}
+            {app.stage !== "screened" &&
+              app.stage !== "shortlisted" &&
+              app.stage !== "rejected" &&
+              !app.scheduled_interview_at && (
+              <div className="mb-4">
+                <SlotPicker durationMinutes={30} daysAhead={5} />
               </div>
             )}
 

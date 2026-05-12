@@ -44,7 +44,9 @@ def init_db():
         ExternalIntegration, ExternalIdMapping, IntegrationSyncLog,
         SupportTicket, TenantFeedback,
         JobBoardConnection, JobBoardPosting,
+        UserCalendarConnection,
     )
+
     Base.metadata.create_all(bind=engine)
     _run_migrations()
     _apply_superadmin_emails()

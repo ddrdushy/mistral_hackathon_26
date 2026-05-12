@@ -22,6 +22,7 @@ _secret_sources = apply_db_secrets_to_env()
 
 from app_limiter import limiter
 from routers import inbox, jobs, candidates, applications, screening, reports, settings, auth, admin, team, billing, testimonials, metrics, talent, integrations, communications, calls, audit, tags, interview_questions, offer_templates, offers, metrics_recruiters, outreach, pipelines, forecasts, integrations_hris, support, job_boards, whatsapp_webhook
+from routers import calendar as calendar_router
 
 logger = logging.getLogger("hireops")
 logger.info("Global secrets sources: %s", _secret_sources)
@@ -145,6 +146,7 @@ app.include_router(support.admin_router)
 app.include_router(job_boards.router)
 app.include_router(job_boards.jobs_router)
 app.include_router(whatsapp_webhook.router)
+app.include_router(calendar_router.router)
 
 
 @app.on_event("startup")
