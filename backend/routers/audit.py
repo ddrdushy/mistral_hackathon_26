@@ -1,9 +1,8 @@
 """Tenant-owner facing audit log.
 
-Tenant owners can see every privileged action taken against their own
-tenant (super-admin actions targeting them, integration changes, plan
-changes, GDPR exports, etc.). Non-owner tenant members can't see this —
-audit trails routinely contain admin emails and IPs.
+Tenant owners see actions performed by their own team only. Super-admin
+actions targeting this tenant are deliberately excluded — they're
+internal platform operations and tenants found them noisy/confusing.
 
 The cross-tenant super-admin endpoint lives in routers/admin.py.
 """
@@ -11,7 +10,6 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
-from sqlalchemy import or_
 
 from auth.dependencies import current_session, CurrentSession, require_owner
 from database import get_db
@@ -31,15 +29,13 @@ def list_my_audit_log(
     db: Session = Depends(get_db),
     session: CurrentSession = Depends(require_owner),
 ):
-    """Audit entries that touch the current tenant — actions performed by
-    tenant users, plus super-admin actions targeting this tenant."""
+    """Audit entries written by this tenant's own team. Platform-admin
+    operations are filtered out."""
     tid = session.tenant.id
 
     query = db.query(AuditLog).filter(
-        or_(
-            AuditLog.tenant_id == tid,
-            AuditLog.target_tenant_id == tid,
-        )
+        AuditLog.tenant_id == tid,
+        AuditLog.super_admin_user_id.is_(None),
     )
     if action:
         query = query.filter(AuditLog.action_type.ilike(f"{action}%"))

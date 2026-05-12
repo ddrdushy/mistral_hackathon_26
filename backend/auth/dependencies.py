@@ -48,14 +48,16 @@ def _resolve_session(token: str | None, db: Session) -> CurrentSession | None:
     return CurrentSession(user=user, tenant=tenant)
 
 
-def current_session(
+async def current_session(
     hireops_session: str | None = Cookie(default=None, alias=COOKIE_NAME),
     db: Session = Depends(get_db),
 ) -> CurrentSession:
     """Required: caller must be logged in. Raises 401 otherwise.
 
-    Also publishes the tenant id to a contextvar so downstream LLM calls
-    can enforce per-tenant cost caps without threading it through.
+    Async on purpose: a sync dependency runs in FastAPI's threadpool, which
+    means contextvars set inside it don't propagate to the async endpoint
+    body. That broke per-tenant LLM usage tracking — `record_llm_usage()`
+    saw an empty `_active_tenant` and wrote rows with tenant_id=NULL.
     """
     s = _resolve_session(hireops_session, db)
     if not s:
