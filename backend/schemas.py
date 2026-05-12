@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Optional, List, Literal
+from typing import Optional, List, Literal, Dict
 from datetime import datetime
 
 # ═══════════════════════════════════════
@@ -35,6 +35,12 @@ class JobCreate(BaseModel):
     resume_threshold_min: Optional[float] = Field(default=None, ge=0, le=100)
     interview_threshold_min: Optional[float] = Field(default=None, ge=0, le=100)
     final_threshold_reject: Optional[float] = Field(default=None, ge=0, le=100)
+
+    # Optional auto-generation of per-job interview questions at create time.
+    # Keys: behavioural | technical | situational | culture_fit.
+    # Values: how many questions to generate for that type (0 to skip).
+    # None = skip auto-generation entirely. Total cap of 20 enforced server-side.
+    interview_question_counts: Optional[Dict[str, int]] = None
 
 
 class JobUpdate(BaseModel):

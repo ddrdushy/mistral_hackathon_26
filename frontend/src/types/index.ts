@@ -265,6 +265,10 @@ export interface JobCreate {
   resume_threshold_min?: number;
   interview_threshold_min?: number;
   final_threshold_reject?: number;
+  // Optional per-job interview question auto-gen. Keys: behavioural |
+  // technical | situational | culture_fit. Each value = count for that
+  // type (0 to skip). Omitting the field skips auto-gen.
+  interview_question_counts?: Record<string, number>;
 }
 
 // ═══════════════════════════════════════

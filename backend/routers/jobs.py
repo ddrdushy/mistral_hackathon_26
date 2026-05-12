@@ -106,8 +106,9 @@ async def create_job(
     # millisecond we'd hit the unique constraint and crash. Retry with a
     # fresh max-scan on IntegrityError.
     from sqlalchemy.exc import IntegrityError
+    job: Optional[Job] = None
     for attempt in range(5):
-        job = Job(
+        candidate = Job(
             tenant_id=session.tenant.id,
             job_id=_generate_job_id(db, session.tenant.id),
             title=req.title,
@@ -120,11 +121,12 @@ async def create_job(
             description=req.description,
             interview_mode=req.interview_mode,
         )
-        db.add(job)
+        db.add(candidate)
         try:
             db.commit()
-            db.refresh(job)
-            return _job_to_response(job, db)
+            db.refresh(candidate)
+            job = candidate
+            break
         except IntegrityError:
             db.rollback()
             if attempt == 4:
@@ -133,6 +135,94 @@ async def create_job(
                     detail="Could not allocate a job id — try again",
                 )
             continue
+
+    if job is None:
+        raise HTTPException(status_code=500, detail="Job creation failed")
+
+    # Auto-generate per-job interview questions, if requested. This runs
+    # AFTER the job row is committed so a failed Mistral call (LLM down,
+    # budget exceeded, JSON parse error) never blocks the job create —
+    # the user gets the empty job and can click "Suggest with AI" later.
+    if req.interview_question_counts:
+        await _auto_seed_interview_questions(db, session.tenant, job, req.interview_question_counts)
+
+    return _job_to_response(job, db)
+
+
+async def _auto_seed_interview_questions(
+    db: Session, tenant, job: Job, counts: dict[str, int]
+) -> None:
+    """Generate + insert interview questions per type. Best-effort: any
+    failure (LLM down, JSON parse, etc.) is swallowed so job creation
+    isn't blocked. HR can always click Suggest later."""
+    from agents.interview_question_generator import suggest_questions, ALLOWED_TYPES
+    from models import JobInterviewQuestion
+
+    # Sanitize & cap the per-type counts.
+    cleaned: dict[str, int] = {}
+    for t, n in counts.items():
+        if t not in ALLOWED_TYPES:
+            continue
+        try:
+            n_i = max(0, min(int(n), 8))
+        except Exception:
+            continue
+        if n_i > 0:
+            cleaned[t] = n_i
+
+    total = sum(cleaned.values())
+    if total == 0:
+        return
+    if total > 20:
+        # Scale down proportionally so we stay under the per-job cap.
+        scale = 20 / total
+        cleaned = {t: max(1, int(n * scale)) for t, n in cleaned.items()}
+
+    try:
+        gate_agent(tenant, "interview_question_generator")
+        check_llm_budget()
+    except Exception:
+        # If the tenant's plan doesn't include this agent, or they're over
+        # budget, silently skip auto-seeding.
+        return
+
+    order = 0
+    skills = []
+    try:
+        skills = json.loads(job.skills) if isinstance(job.skills, str) else (job.skills or [])
+    except Exception:
+        skills = []
+
+    for qtype, count in cleaned.items():
+        try:
+            generated = await suggest_questions(
+                job_title=job.title,
+                job_description=job.description or "",
+                required_skills=skills,
+                seniority=job.seniority or "",
+                count=count,
+                types=[qtype],
+            )
+        except Exception:
+            continue
+
+        for g in generated:
+            db.add(JobInterviewQuestion(
+                tenant_id=tenant.id,
+                job_id=job.id,
+                question_text=g.question_text,
+                question_type=g.question_type or qtype,
+                order_index=order,
+                is_required=False,
+                weight=g.weight or 3,
+                expected_keywords=json.dumps(g.expected_keywords or []),
+                expected_answer_summary=g.expected_answer_summary or "",
+            ))
+            order += 1
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
 
 
 @router.get("")

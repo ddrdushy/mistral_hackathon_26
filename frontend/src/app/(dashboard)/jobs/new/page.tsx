@@ -21,6 +21,26 @@ export default function CreateJobPage() {
     interview_mode: "voice",
   });
 
+  // Per-job interview question auto-generation. Defaults to a reasonable
+  // mix; HR can dial each type up/down or zero it out. Sent to the
+  // backend on submit; the suggest_questions agent fires post-create and
+  // any failure is non-blocking.
+  const [autoGenerateQuestions, setAutoGenerateQuestions] = useState(true);
+  const [questionCounts, setQuestionCounts] = useState<Record<string, number>>({
+    behavioural: 3,
+    technical: 3,
+    situational: 2,
+    culture_fit: 0,
+  });
+
+  const adjustCount = (type: string, delta: number) => {
+    setQuestionCounts((prev) => ({
+      ...prev,
+      [type]: Math.max(0, Math.min(8, (prev[type] ?? 0) + delta)),
+    }));
+  };
+  const totalQuestions = Object.values(questionCounts).reduce((a, b) => a + b, 0);
+
   const [skillInput, setSkillInput] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [generating, setGenerating] = useState(false);
@@ -115,7 +135,14 @@ export default function CreateJobPage() {
 
     setSubmitting(true);
     try {
-      await apiPost<Job>("/jobs", form);
+      const payload: JobCreate = { ...form };
+      if (autoGenerateQuestions && totalQuestions > 0) {
+        // Strip zero-count types so the backend doesn't fire empty prompts.
+        payload.interview_question_counts = Object.fromEntries(
+          Object.entries(questionCounts).filter(([, n]) => n > 0),
+        );
+      }
+      await apiPost<Job>("/jobs", payload);
       router.push("/jobs");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to create job";
@@ -298,6 +325,79 @@ export default function CreateJobPage() {
                 );
               })}
             </div>
+          </div>
+
+          {/* Auto-generate interview questions */}
+          <div className="rounded-lg border border-slate-200 bg-slate-50/60 p-4">
+            <label className="flex items-start gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={autoGenerateQuestions}
+                onChange={(e) => setAutoGenerateQuestions(e.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+              />
+              <span>
+                <span className="block text-sm font-semibold text-slate-900">
+                  Auto-generate interview questions
+                </span>
+                <span className="block text-xs text-slate-500 mt-0.5">
+                  AI drafts a starter question bank right after the job is
+                  created. You can edit, reorder, or delete any of them from
+                  the job&apos;s detail page.
+                </span>
+              </span>
+            </label>
+
+            {autoGenerateQuestions && (
+              <div className="mt-4 space-y-2">
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1">
+                  How many of each type?
+                </div>
+                {(
+                  [
+                    { key: "behavioural", label: "Behavioural", hint: "Past experience, teamwork, conflict." },
+                    { key: "technical",   label: "Technical",   hint: "Tools, languages, problem-solving." },
+                    { key: "situational", label: "Situational", hint: "How would you handle…" },
+                    { key: "culture_fit", label: "Culture fit", hint: "Values, work style, motivation." },
+                  ] as const
+                ).map(({ key, label, hint }) => (
+                  <div key={key} className="flex items-center justify-between gap-3 py-1">
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium text-slate-800">{label}</div>
+                      <div className="text-xs text-slate-500">{hint}</div>
+                    </div>
+                    <div className="flex items-center gap-1.5 flex-shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => adjustCount(key, -1)}
+                        className="w-7 h-7 rounded-md border border-slate-300 text-slate-600 hover:bg-slate-100"
+                        aria-label={`Decrease ${label}`}
+                      >
+                        –
+                      </button>
+                      <span className="w-7 text-center text-sm font-semibold tabular-nums">
+                        {questionCounts[key] ?? 0}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => adjustCount(key, +1)}
+                        className="w-7 h-7 rounded-md border border-slate-300 text-slate-600 hover:bg-slate-100"
+                        aria-label={`Increase ${label}`}
+                      >
+                        +
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                <div className="pt-2 border-t border-slate-200 flex items-center justify-between text-xs text-slate-500">
+                  <span>Total</span>
+                  <span className="font-semibold text-slate-700">
+                    {totalQuestions} question{totalQuestions === 1 ? "" : "s"}
+                    {totalQuestions > 20 ? " — will be capped at 20" : ""}
+                  </span>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Skills */}
