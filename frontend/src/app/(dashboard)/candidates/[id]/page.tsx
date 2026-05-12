@@ -1568,9 +1568,49 @@ export default function CandidateDetailPage({
               </div>
             )}
 
-            {/* Interview Recording — voice interviews only (Q&A has no audio) */}
-            {app.interview_link_status === "interview_completed" &&
-              interview?.mode !== "qa" && (
+            {/* Reschedule requested — candidate asked to do this later.
+                Show a clear callout + one-click "Generate new link" action
+                instead of the misleading interview-score panel. */}
+            {(app.interview_link_status === "reschedule_requested" ||
+              app.screening_status === "reschedule_requested") && (
+              <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4">
+                <div className="flex items-start gap-3">
+                  <ClockIcon className="w-5 h-5 text-amber-700 mt-0.5 flex-shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-semibold text-amber-900">
+                      Candidate requested to reschedule
+                    </div>
+                    <div className="text-xs text-amber-800 mt-0.5">
+                      The interview didn&apos;t complete because the candidate
+                      asked to do it later. No interview score was generated.
+                      Generate a fresh link so they can try again.
+                    </div>
+                    <div className="mt-3">
+                      <Button
+                        size="sm"
+                        onClick={handleGenerateLink}
+                        loading={linkLoading}
+                      >
+                        <ArrowPathIcon className="h-4 w-4" />
+                        Generate new interview link
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Interview Recording — show whenever we have audio, regardless
+                of whether the candidate's link-status column was updated
+                (an earlier bug left interview_link_status stuck on
+                "interview_started" even after ElevenLabs delivered the
+                transcript via webhook). We show audio if the interview link
+                row itself is completed OR if a transcript exists. */}
+            {(app.interview_link_status === "interview_completed" ||
+              interviewLink?.status === "interview_completed" ||
+              !!app.screening_transcript) &&
+              interview?.mode !== "qa" &&
+              app.interview_link_status !== "reschedule_requested" && (
                 <div className="mb-4">
                   <p className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-2">Interview Recording</p>
                   <audio

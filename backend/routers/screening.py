@@ -389,6 +389,83 @@ async def send_interview_link(body: dict, db: Session = Depends(get_db), session
     }
 
 
+_RESCHEDULE_PATTERNS = (
+    "reschedul",            # reschedule, rescheduling, rescheduled
+    "another time",
+    "different time",
+    "later time",
+    "later this week",
+    "later today",
+    "tomorrow if",
+    "can we move",
+    "could we move",
+    "can we do this later",
+    "do this later",
+    "not a good time",
+    "bad time right now",
+    "in a meeting",
+    "call you back",
+    "call back later",
+    "need to step away",
+    "need to step out",
+    "have to go",
+    "have to leave",
+    "can we postpone",
+    "postpone",
+)
+
+
+def _detect_reschedule_request(
+    turns: list[dict],
+    transcript_text: str,
+    duration_secs: float,
+) -> dict:
+    """Best-effort check for an explicit candidate-initiated reschedule.
+
+    Triggers when ANY user-side turn contains one of the reschedule
+    phrases AND the call ended early-ish (< 8 min) — long calls that
+    happen to mention 'tomorrow' aren't reschedule cases. The duration
+    guard keeps false positives from a finished interview where the
+    candidate said 'thanks, talk to you tomorrow' at the end.
+
+    Returns:
+      { is_reschedule: bool, evidence: { phrase, turn_text, time_secs } | None }
+    """
+    if duration_secs and duration_secs > 8 * 60:
+        return {"is_reschedule": False, "evidence": None}
+
+    for turn in turns or []:
+        role = (turn.get("role") or "").lower()
+        # ElevenLabs uses 'user' for the candidate, 'agent' for the AI.
+        if role not in ("user", "candidate", "human"):
+            continue
+        msg = (turn.get("message") or "").lower()
+        if not msg:
+            continue
+        for phrase in _RESCHEDULE_PATTERNS:
+            if phrase in msg:
+                return {
+                    "is_reschedule": True,
+                    "evidence": {
+                        "phrase": phrase,
+                        "turn_text": turn.get("message", "")[:240],
+                        "time_in_call_secs": turn.get("time_in_call_secs"),
+                    },
+                }
+
+    # Fall back to a transcript-wide scan if the role tag was missing.
+    # Lower-cased substring match is fine; the duration guard is the
+    # main safety net.
+    low = (transcript_text or "").lower()
+    for phrase in _RESCHEDULE_PATTERNS:
+        if phrase in low:
+            return {
+                "is_reschedule": True,
+                "evidence": {"phrase": phrase, "matched_in": "full_transcript"},
+            }
+    return {"is_reschedule": False, "evidence": None}
+
+
 def _interview_link_body(name: str, job_title: str, company: str, url: str) -> tuple[str, str]:
     """Render the same interview-invite HTML + text we already had in
     smtp_service, so the tenant_outbound path produces visually identical
@@ -1550,15 +1627,53 @@ async def elevenlabs_webhook(request: Request, db: Session = Depends(get_db)):
         if link:
             app = db.query(Application).filter(Application.id == link.app_id).first()
             if app and not app.screening_transcript:
-                # Only store if not already stored by client-side submission
+                duration_secs = float(metadata.get("call_duration_secs", 0) or 0)
                 app.screening_transcript = transcript_text
+                app.updated_at = datetime.utcnow()
+
+                # Detect reschedule intent BEFORE scoring. If the candidate
+                # just asked to do this later, evaluating a 60-second
+                # transcript as a real interview produces a hot mess
+                # (poor communication / weak technical / reject) that
+                # punishes a candidate who was being polite. Pause the
+                # pipeline instead and prompt HR to send a new link.
+                reschedule = _detect_reschedule_request(
+                    transcript_turns, transcript_text, duration_secs
+                )
+
+                if reschedule["is_reschedule"]:
+                    # Hold the candidate in the same stage but flag the link
+                    # as needing a new send.
+                    app.screening_status = "reschedule_requested"
+                    app.interview_link_status = "reschedule_requested"
+                    app.ai_next_action = (
+                        "Candidate asked to reschedule — generate and send a new interview link."
+                    )
+                    link.status = "reschedule_requested"
+                    _log_event(db, app.id, "interview_reschedule_requested", {
+                        "conversation_id": conversation_id,
+                        "duration_secs": duration_secs,
+                        "evidence": reschedule["evidence"],
+                    })
+                    db.commit()
+                    return {
+                        "status": "received",
+                        "conversation_id": conversation_id,
+                        "outcome": "reschedule_requested",
+                    }
+
+                # Otherwise: real completed interview. Mark BOTH status
+                # columns (Application.interview_link_status was missed
+                # before — that's why the audio player wasn't appearing
+                # on the candidate detail page even after the link
+                # actually completed).
                 app.stage = "screened"
                 app.screening_status = "completed"
-                app.updated_at = datetime.utcnow()
+                app.interview_link_status = "interview_completed"
 
                 _log_event(db, app.id, "webhook_transcript_received", {
                     "conversation_id": conversation_id,
-                    "duration_secs": metadata.get("call_duration_secs", 0),
+                    "duration_secs": duration_secs,
                 })
 
                 # Auto-trigger evaluation if not already done
