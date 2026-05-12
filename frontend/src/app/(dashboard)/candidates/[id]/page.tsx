@@ -1714,6 +1714,13 @@ export default function CandidateDetailPage({
                 candidateName={app.candidate_name}
                 jobTitle={app.job_title}
                 candidateEmail={app.candidate_email}
+                gateReason={
+                  app.stage === "shortlisted"
+                    ? null
+                    : app.stage === "rejected"
+                      ? "This candidate was rejected — offers are disabled. Move them back into the pipeline first."
+                      : "Offers unlock once the candidate has finished their interview and been moved to Shortlisted."
+                }
               />
             </div>
           )}

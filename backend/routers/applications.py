@@ -577,30 +577,48 @@ async def fraud_override(
         request=request,
     )
     db.refresh(app)
-    return _app_to_response(app, db)
+
+    # Auto-run the scorer. The UI promises "The LLM scorer will run on
+    # this resume" when HR clicks Override — failing to actually do that
+    # leaves the application stuck on a stale 0/100 score with no
+    # feedback. Run inline and surface any scoring error in the
+    # response so the user knows what happened.
+    scoring_error: Optional[str] = None
+    try:
+        await _score_application_inplace(
+            db, app, tenant=session.tenant, actor_user_id=session.user.id
+        )
+        db.refresh(app)
+    except HTTPException as e:
+        scoring_error = e.detail if isinstance(e.detail, str) else "Scoring failed"
+    except Exception as e:
+        scoring_error = f"Scoring failed: {e}"
+
+    out = _app_to_response(app, db)
+    if scoring_error:
+        # Pydantic-style dict means we have to coerce — but _app_to_response
+        # returns the Application schema object; convert and attach.
+        try:
+            out_dict = out.model_dump() if hasattr(out, "model_dump") else dict(out)
+        except Exception:
+            out_dict = {"id": app.id}
+        out_dict["scoring_error"] = scoring_error
+        return out_dict
+    return out
 
 
-@router.post("/{app_id}/rescore")
-async def rescore_application(
-    app_id: int,
-    db: Session = Depends(get_db),
-    session: CurrentSession = Depends(current_session),
-):
-    """Re-extract resume text from the source email and re-run the scorer.
-
-    Use this on applications that scored 0/100 because the email arrived
-    before the IMAP fetcher persisted attachment bytes. Pulls fresh resume
-    text out of the (now refreshed) email attachments and writes a new
-    resume_score / recommendation.
+async def _score_application_inplace(
+    db: Session,
+    app: Application,
+    tenant,
+    actor_user_id: Optional[int],
+) -> Application:
+    """Re-extract resume text from the source email and re-run the
+    resume scorer. Shared by /rescore and /fraud-override (after the
+    fraud block is lifted). Raises HTTPException on prerequisites
+    missing; callers can catch to surface a user-friendly message.
     """
     check_llm_budget()
-    app = db.query(Application).filter(
-        Application.id == app_id,
-        Application.tenant_id == session.tenant.id,
-    ).first()
-    if not app:
-        raise HTTPException(status_code=404, detail="Application not found")
-
     candidate = db.query(Candidate).filter(Candidate.id == app.candidate_id).first()
     job = db.query(Job).filter(Job.id == app.job_id).first()
     if not candidate or not job:
@@ -647,7 +665,7 @@ async def rescore_application(
             detail="No resume text available — wait for the next mailbox sync to refresh attachments, then try again",
         )
 
-    gate_agent(session.tenant, "resume_scorer")
+    gate_agent(tenant, "resume_scorer")
     skills = json.loads(job.skills) if job.skills else []
     responsibilities = json.loads(job.responsibilities) if job.responsibilities else []
     scorer_input = ResumeScorerInput(
@@ -683,11 +701,34 @@ async def rescore_application(
     _log_event(
         db, app.id, "rescored",
         {"resume_score": score_result.score, "recommendation": score_result.recommendation},
-        tenant_id=session.tenant.id,
-        actor_user_id=session.user.id,
+        tenant_id=tenant.id,
+        actor_user_id=actor_user_id,
     )
     db.commit()
     db.refresh(app)
+    return app
+
+
+@router.post("/{app_id}/rescore")
+async def rescore_application(
+    app_id: int,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(current_session),
+):
+    """Re-extract resume text from the source email and re-run the scorer.
+
+    Use this on applications that scored 0/100 because the email arrived
+    before the IMAP fetcher persisted attachment bytes.
+    """
+    app = db.query(Application).filter(
+        Application.id == app_id,
+        Application.tenant_id == session.tenant.id,
+    ).first()
+    if not app:
+        raise HTTPException(status_code=404, detail="Application not found")
+    await _score_application_inplace(
+        db, app, tenant=session.tenant, actor_user_id=session.user.id
+    )
     return _app_to_response(app, db)
 
 

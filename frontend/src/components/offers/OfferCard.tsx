@@ -55,11 +55,15 @@ export default function OfferCard({
   candidateName,
   jobTitle,
   candidateEmail,
+  gateReason,
 }: {
   applicationId: number;
   candidateName: string;
   jobTitle: string;
   candidateEmail: string;
+  /** When set, the Generate-offer button is disabled and this string is
+   *  rendered as the empty-state copy + tooltip. Null = allow generation. */
+  gateReason?: string | null;
 }) {
   const [offers, setOffers] = useState<OfferRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -127,6 +131,8 @@ export default function OfferCard({
     }
   };
 
+  const gated = Boolean(gateReason);
+
   return (
     <Card
       title="Offer"
@@ -134,7 +140,13 @@ export default function OfferCard({
         <button
           type="button"
           onClick={() => setGenerateOpen(true)}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-emerald-600 hover:bg-emerald-700 rounded-md"
+          disabled={gated}
+          title={gateReason ?? undefined}
+          className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md ${
+            gated
+              ? "text-slate-400 bg-slate-100 cursor-not-allowed"
+              : "text-white bg-emerald-600 hover:bg-emerald-700"
+          }`}
         >
           <DocumentTextIcon className="h-4 w-4" />
           Generate offer
@@ -148,9 +160,13 @@ export default function OfferCard({
           ))}
         </div>
       ) : offers.length === 0 ? (
-        <p className="text-sm text-slate-500">
-          No offer yet. Click <strong>Generate offer</strong> to draft one.
-        </p>
+        gated ? (
+          <p className="text-sm text-slate-500">{gateReason}</p>
+        ) : (
+          <p className="text-sm text-slate-500">
+            No offer yet. Click <strong>Generate offer</strong> to draft one.
+          </p>
+        )
       ) : (
         <ul className="space-y-3">
           {offers.map((o) => (

@@ -54,6 +54,7 @@ export default function FraudSignalsCard({
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [scoringNote, setScoringNote] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -82,9 +83,22 @@ export default function FraudSignalsCard({
     try {
       setBusy(true);
       setError(null);
-      await apiPost(`/applications/${appId}/fraud-override`, { reason: reason.trim() });
+      setScoringNote(null);
+      const res = await apiPost<{ scoring_error?: string; resume_score?: number }>(
+        `/applications/${appId}/fraud-override`,
+        { reason: reason.trim() },
+      );
       setOverrideOpen(false);
       setReason("");
+      if (res?.scoring_error) {
+        setScoringNote(
+          `Override applied, but scoring failed: ${res.scoring_error}. Try Rescore once attachments refresh.`,
+        );
+      } else if (typeof res?.resume_score === "number") {
+        setScoringNote(`Override applied. Resume re-scored: ${res.resume_score}/100.`);
+      } else {
+        setScoringNote("Override applied. Resume re-scored.");
+      }
       await load();
       onChanged?.();
     } catch (err) {
@@ -144,6 +158,11 @@ export default function FraudSignalsCard({
             </button>
           )}
         </div>
+        {scoringNote && (
+          <div className="mt-2 text-xs px-3 py-2 rounded-md bg-emerald-50 border border-emerald-200 text-emerald-800">
+            {scoringNote}
+          </div>
+        )}
       </div>
 
       <ul className="divide-y divide-slate-100 text-sm">
