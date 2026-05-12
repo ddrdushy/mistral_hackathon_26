@@ -32,7 +32,7 @@ async def generate_job(
     check_llm_budget()
     if not req.title.strip():
         raise HTTPException(status_code=400, detail="Title is required")
-    result = await generate_job_details(req.title.strip())
+    result = await generate_job_details(req.title.strip(), tenant=session.tenant)
     result["title"] = req.title.strip()
     return result
 

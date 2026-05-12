@@ -5,13 +5,48 @@ Generates: department, location, seniority, must_have_skills, nice_to_have_skill
 """
 import os
 import json
+from typing import Optional
 
 
 USE_MOCK = False  # Use real Mistral API by default
 
 
-async def generate_job_details(title: str) -> dict:
-    """Generate job posting details from a title using Mistral AI."""
+def _build_company_context(tenant) -> str:
+    """Render org-profile fields the JD generator should ground on. Returns
+    empty string for new tenants who haven't completed onboarding — the
+    generator falls back to inventing plausible values in that case."""
+    if not tenant:
+        return ""
+    lines = []
+    name = getattr(tenant, "name", None)
+    if name:
+        lines.append(f"- Company name: {name}")
+    for label, attr in (
+        ("Industry", "industry"),
+        ("Headquarters / primary location", "headquarters"),
+        ("Company size", "company_size"),
+        ("Website", "website"),
+        ("Default work mode", "default_work_mode"),
+        ("Default salary currency", "default_currency"),
+        ("About the company", "about"),
+    ):
+        val = getattr(tenant, attr, None)
+        if val:
+            lines.append(f"- {label}: {val}")
+    if not lines:
+        return ""
+    return (
+        "Company context — use these REAL values; do not invent alternatives "
+        "for fields that are provided here:\n" + "\n".join(lines) + "\n\n"
+    )
+
+
+async def generate_job_details(title: str, tenant=None) -> dict:
+    """Generate job posting details from a title using Mistral AI.
+
+    `tenant` is optional — when provided, the prompt is grounded with the
+    org profile (industry, HQ, size, etc.) so the AI doesn't invent
+    "San Francisco, CA" for a company headquartered in Kuala Lumpur."""
 
     if USE_MOCK:
         return _mock_generate(title)
@@ -22,15 +57,17 @@ async def generate_job_details(title: str) -> dict:
 
         client = Mistral(api_key=os.environ.get("MISTRAL_API_KEY"))
 
+        company_block = _build_company_context(tenant)
+
         prompt = f"""You are an expert technical recruiter creating a comprehensive LinkedIn-quality job posting.
 
-Job Title: {title}
+{company_block}Job Title: {title}
 
 Return a JSON object with ALL of these fields:
 
 {{
   "department": "Engineering" | "IT" | "Data & Analytics" | "Product" | "Design" | "Marketing" | "Sales" | "Operations",
-  "location": "Remote" | "San Francisco, CA" | "New York, NY" | etc.,
+  "location": "City, Country" | "Remote" | "Hybrid — City, Country",
   "seniority": "junior" | "mid" | "senior" | "lead",
   "must_have_skills": ["skill1", "skill2", ...],
   "nice_to_have_skills": ["skill1", "skill2", ...],
@@ -40,6 +77,8 @@ Return a JSON object with ALL of these fields:
 }}
 
 REQUIREMENTS:
+0. "location": If company context provides a "Headquarters / primary location" and a "Default work mode", combine them — e.g. mode "remote" → "Remote", mode "hybrid" → "Hybrid — {{hq}}", mode "onsite" → "{{hq}}". If only HQ is given, use it as-is. If neither is given, default to "Remote". NEVER invent a city like "San Francisco, CA" when the company is somewhere else.
+
 1. "must_have_skills": 6-8 SPECIFIC technical tools/technologies/platforms/languages/frameworks REQUIRED for this role. NEVER generic soft skills. Examples: "UiPath", "Python", "React", "AWS", "Kubernetes", "SAP S/4HANA".
 
 2. "nice_to_have_skills": 4-6 additional technical tools, certifications, or specialized domain knowledge. Examples: "Blue Prism", "PMP Certification", "GraphQL", "Terraform", "TOGAF".

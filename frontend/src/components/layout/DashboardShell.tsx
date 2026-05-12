@@ -5,6 +5,7 @@ import Sidebar from "./Sidebar";
 import Topbar from "./Topbar";
 import OnboardingTour from "@/components/tour/OnboardingTour";
 import VerificationBanner from "@/components/auth/VerificationBanner";
+import OrganizationProfileBanner from "@/components/auth/OrganizationProfileBanner";
 import { HelpProvider } from "@/components/help/HelpContext";
 import FloatingHelpButton from "@/components/help/FloatingHelpButton";
 
@@ -57,6 +58,7 @@ export default function DashboardShell({ children }: DashboardShellProps) {
           {/* Main content */}
           <main className="flex-1 overflow-auto p-6">
             <VerificationBanner />
+            <OrganizationProfileBanner />
             {children}
           </main>
         </div>

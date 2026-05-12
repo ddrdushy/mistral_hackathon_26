@@ -16,6 +16,29 @@ export interface AuthTenant {
   slug: string;
   name: string;
   plan: "free" | "starter" | "pro";
+  industry?: string | null;
+  headquarters?: string | null;
+  company_size?: string | null;
+  website?: string | null;
+  about?: string | null;
+  default_work_mode?: string | null;
+  default_currency?: string | null;
+  profile_completed?: boolean;
+}
+
+export interface OrganizationProfile {
+  id: number;
+  name: string;
+  slug: string;
+  industry: string | null;
+  headquarters: string | null;
+  company_size: string | null;
+  website: string | null;
+  about: string | null;
+  default_work_mode: string | null;
+  default_currency: string | null;
+  profile_completed: boolean;
+  profile_completed_at: string | null;
 }
 
 export interface MeResponse {

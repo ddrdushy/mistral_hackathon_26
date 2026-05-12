@@ -42,6 +42,19 @@ class Tenant(Base):
     # is reserved for a periodic job (TODO) that runs ~30 days later. Until then
     # the tenant can be restored.
     deleted_at = Column(DateTime, nullable=True, index=True)
+
+    # Organization profile — collected at onboarding so AI features (JD
+    # generator, outreach, etc.) ground prompts in real company data
+    # instead of inventing "San Francisco, CA" / "TechCorp" placeholders.
+    industry = Column(String, nullable=True)
+    headquarters = Column(String, nullable=True)
+    company_size = Column(String, nullable=True)
+    website = Column(String, nullable=True)
+    about = Column(Text, nullable=True)
+    default_work_mode = Column(String, nullable=True)
+    default_currency = Column(String, nullable=True)
+    profile_completed_at = Column(DateTime, nullable=True)
+
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

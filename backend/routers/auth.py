@@ -6,6 +6,7 @@ from __future__ import annotations
 import os
 import re
 from datetime import datetime, timedelta
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Response, Request, status
 from pydantic import BaseModel, EmailStr, Field
@@ -78,6 +79,34 @@ class TenantResponse(BaseModel):
     slug: str
     name: str
     plan: str
+    industry: Optional[str] = None
+    headquarters: Optional[str] = None
+    company_size: Optional[str] = None
+    website: Optional[str] = None
+    about: Optional[str] = None
+    default_work_mode: Optional[str] = None
+    default_currency: Optional[str] = None
+    profile_completed: bool = False
+
+    @classmethod
+    def model_validate(cls, obj, **kwargs):  # type: ignore[override]
+        # Derive profile_completed from the datetime column.
+        if hasattr(obj, "profile_completed_at"):
+            return super().model_validate({
+                "id": obj.id,
+                "slug": obj.slug,
+                "name": obj.name,
+                "plan": obj.plan,
+                "industry": obj.industry,
+                "headquarters": obj.headquarters,
+                "company_size": obj.company_size,
+                "website": obj.website,
+                "about": obj.about,
+                "default_work_mode": obj.default_work_mode,
+                "default_currency": obj.default_currency,
+                "profile_completed": obj.profile_completed_at is not None,
+            }, **kwargs)
+        return super().model_validate(obj, **kwargs)
 
     class Config:
         from_attributes = True

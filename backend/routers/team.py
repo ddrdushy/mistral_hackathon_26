@@ -109,6 +109,110 @@ def _send_invite_email(invite: TenantInvite, tenant: Tenant, inviter: User):
 # ── Endpoints ─────────────────────────────────────────────────────────────
 
 
+class OrganizationProfile(BaseModel):
+    """Organization fields editable by the tenant owner. All optional —
+    onboarding is encouraged but not blocking."""
+    name: str | None = None
+    industry: str | None = None
+    headquarters: str | None = None
+    company_size: str | None = None
+    website: str | None = None
+    about: str | None = None
+    default_work_mode: str | None = None
+    default_currency: str | None = None
+
+
+@router.get("/organization")
+def get_organization(
+    session: CurrentSession = Depends(current_session),
+):
+    """Read the current tenant's organization profile."""
+    t = session.tenant
+    return {
+        "id": t.id,
+        "name": t.name,
+        "slug": t.slug,
+        "industry": t.industry,
+        "headquarters": t.headquarters,
+        "company_size": t.company_size,
+        "website": t.website,
+        "about": t.about,
+        "default_work_mode": t.default_work_mode,
+        "default_currency": t.default_currency,
+        "profile_completed": t.profile_completed_at is not None,
+        "profile_completed_at": (
+            t.profile_completed_at.isoformat() if t.profile_completed_at else None
+        ),
+    }
+
+
+@router.put("/organization")
+def update_organization(
+    body: OrganizationProfile,
+    request: Request,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(require_owner),
+):
+    """Update the tenant's org profile. Owner-only. Stamps profile_completed_at
+    the first time required fields are populated, so the onboarding banner
+    can dismiss itself."""
+    from services.audit import write_audit
+
+    tenant = db.query(Tenant).filter(Tenant.id == session.tenant.id).first()
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    changes: dict[str, dict] = {}
+    for field in (
+        "name", "industry", "headquarters", "company_size",
+        "website", "about", "default_work_mode", "default_currency",
+    ):
+        new = getattr(body, field)
+        if new is None:
+            continue
+        new = new.strip() if isinstance(new, str) else new
+        old = getattr(tenant, field)
+        if old != new:
+            changes[field] = {"before": old, "after": new}
+            setattr(tenant, field, new or None)
+
+    # Profile is "complete" once industry + headquarters are set — those
+    # are the two fields the JD generator can't fake convincingly.
+    if tenant.profile_completed_at is None and tenant.industry and tenant.headquarters:
+        tenant.profile_completed_at = datetime.utcnow()
+        changes["profile_completed_at"] = {"before": None, "after": tenant.profile_completed_at.isoformat()}
+
+    if changes:
+        db.commit()
+        db.refresh(tenant)
+        write_audit(
+            db,
+            action="tenant.organization.update",
+            actor=session.user,
+            tenant_id=tenant.id,
+            payload={"changes": changes},
+            severity="info",
+            request=request,
+        )
+
+    return {
+        "id": tenant.id,
+        "name": tenant.name,
+        "slug": tenant.slug,
+        "industry": tenant.industry,
+        "headquarters": tenant.headquarters,
+        "company_size": tenant.company_size,
+        "website": tenant.website,
+        "about": tenant.about,
+        "default_work_mode": tenant.default_work_mode,
+        "default_currency": tenant.default_currency,
+        "profile_completed": tenant.profile_completed_at is not None,
+        "profile_completed_at": (
+            tenant.profile_completed_at.isoformat() if tenant.profile_completed_at else None
+        ),
+    }
+
+
 @router.post("/clear-demo")
 def clear_demo_data(
     request: Request,

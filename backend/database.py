@@ -179,6 +179,25 @@ def _run_migrations():
                 except Exception:
                     pass
 
+        # Organization profile columns
+        org_cols = {
+            "industry": "VARCHAR",
+            "headquarters": "VARCHAR",
+            "company_size": "VARCHAR",
+            "website": "VARCHAR",
+            "about": "TEXT",
+            "default_work_mode": "VARCHAR",
+            "default_currency": "VARCHAR",
+            "profile_completed_at": "TIMESTAMP",
+        }
+        for col, ddl in org_cols.items():
+            if col not in existing:
+                with engine.begin() as conn:
+                    try:
+                        conn.execute(text(f"ALTER TABLE tenants ADD COLUMN {col} {ddl}"))
+                    except Exception:
+                        pass
+
     # Milestone 3: per-user disable
     if "users" in insp.get_table_names():
         existing = {c["name"] for c in insp.get_columns("users")}

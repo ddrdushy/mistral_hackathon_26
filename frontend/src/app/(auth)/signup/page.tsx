@@ -37,7 +37,7 @@ export default function SignupPage() {
       }
       // Already-verified accounts (e.g. SSO in the future) skip the check-email step.
       if (result.user.email_verified) {
-        router.push("/dashboard?welcome=1");
+        router.push("/onboarding");
         return;
       }
       // Show the "check your email" confirmation step. The user is logged in
@@ -101,7 +101,7 @@ export default function SignupPage() {
             {resending ? "Re-sending..." : "Resend verification email"}
           </button>
           <Link
-            href="/dashboard?welcome=1"
+            href="/onboarding"
             className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 transition-colors"
           >
             Continue to dashboard
