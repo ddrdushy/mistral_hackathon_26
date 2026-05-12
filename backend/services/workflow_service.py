@@ -476,27 +476,66 @@ def _check_resume_fraud(em: Email):
     return [], 0, False
 
 
+def _pick_candidate_email(
+    *,
+    cv_contact: dict,
+    body_contact: dict,
+    sender_email: str,
+    recipient_email: str,
+    email_id: int,
+) -> str:
+    """Choose the candidate's email address from CV + body, never the
+    recruiter's own.
+
+    When a recruiter forwards a CV, both `sender_email` and
+    `recipient_email` end up being their own mailbox (or a colleague's).
+    Picking either would alias every forwarded CV onto the same
+    candidate row via the unique (tenant_id, email) index, which is
+    exactly the "3 CVs collapsed into 1 with cv_version=3" bug HR hit.
+
+    Rules:
+      1. CV-extracted email wins if it's not the sender/recipient.
+      2. Otherwise body-extracted email if it's not the sender/recipient.
+      3. Otherwise a placeholder unique per email_id so each forwarded
+         CV becomes its own candidate. The placeholder uses
+         `forwarded+{email_id}@uploaded.local`, matching the bulk-upload
+         pattern downstream consumers already handle.
+    """
+    blocked = {
+        (sender_email or "").strip().lower(),
+        (recipient_email or "").strip().lower(),
+        "",  # excludes None / empty matches
+    }
+
+    def _ok(addr: str) -> bool:
+        a = (addr or "").strip().lower()
+        return a not in blocked
+
+    cv_email = (cv_contact.get("email") or "").strip()
+    if _ok(cv_email):
+        return cv_email
+
+    body_email = (body_contact.get("email") or "").strip()
+    if _ok(body_email):
+        return body_email
+
+    return f"forwarded+{email_id}@uploaded.local"
+
+
 def _create_candidate_from_email(em: Email, db: Session) -> Candidate:
     """Create a candidate record from a classified email."""
     classification = json.loads(em.classification) if em.classification else {}
     detected_name = classification.get("detected_name", "")
 
     body_text = em.body_full or em.body_snippet
-    contact = parse_contact_info(body_text)
 
-    name = (
-        detected_name
-        or contact.get("name", "")
-        or em.from_name
-        or em.from_address.split("@")[0].replace(".", " ").title()
-    )
-    candidate_email = contact.get("email", "") or em.from_address
-    phone = contact.get("phone", "")
-
-    # Build the scorer input from BOTH the email body (cover-letter-ish:
-    # motivation, role highlights) and the CV attachment (structured
-    # experience). Either alone misses real signal — the email is often where
-    # candidates explain why they're a fit, the CV is where they prove it.
+    # Extract the CV attachment BEFORE picking a candidate email so we can
+    # parse the resume's contact section first. Email forwarding stuffs
+    # the inbox owner's address into the visible body (the "To:"
+    # forwarded-header line), which means parsing only the body picks up
+    # the recruiter's email instead of the candidate's — every forwarded
+    # CV then collapses onto the same candidate row via the unique
+    # (tenant, email) index. Parsing the CV text avoids that.
     cv_text = ""
     resume_filename = ""
     attachments = json.loads(em.attachments) if em.attachments else []
@@ -514,6 +553,28 @@ def _create_candidate_from_email(em: Email, db: Session) -> Candidate:
                 except Exception as e:
                     logger.warning(f"Failed to extract text from {filename}: {e}")
             break
+
+    # Try CV first, fall back to email body. _pick_candidate_email filters
+    # out the sender's / recipient's own address so a forwarded CV doesn't
+    # alias onto the recruiter.
+    cv_contact = parse_contact_info(cv_text) if cv_text else {}
+    body_contact = parse_contact_info(body_text) if body_text else {}
+    candidate_email = _pick_candidate_email(
+        cv_contact=cv_contact,
+        body_contact=body_contact,
+        sender_email=em.from_address,
+        recipient_email=getattr(em, "to_address", "") or "",
+        email_id=em.id,
+    )
+
+    name = (
+        detected_name
+        or cv_contact.get("name", "")
+        or body_contact.get("name", "")
+        or em.from_name
+        or em.from_address.split("@")[0].replace(".", " ").title()
+    )
+    phone = cv_contact.get("phone", "") or body_contact.get("phone", "")
 
     parts = []
     body_clean = (body_text or "").strip()
