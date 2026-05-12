@@ -79,20 +79,32 @@ class CheckoutResponse(BaseModel):
 
 @router.get("/plans", response_model=list[PlanResponse])
 def list_plans(_: CurrentSession = Depends(current_session)):
+    from billing.stripe_service import _price_id_for_plan, configured as stripe_configured
+
     out = []
+    stripe_ok = stripe_configured()
     # Iterate the static catalogue to preserve plan order, but resolve
     # each plan via get_plan() so DB-stored overrides (price, features,
-    # stripe_price_id, allowed_agents) are applied. Without this the
-    # `available` flag stays False for any tenant whose super-admin
-    # configured the price in admin/plans rather than env vars.
+    # stripe_price_id, allowed_agents) are applied.
     for static in PLANS.values():
         p = get_plan(static.name)
+        # `available` must reflect what the upgrade button will actually
+        # do. Checkout uses _price_id_for_plan() which consults the
+        # Stripe-mode-aware config (settings.stripe.<mode>.<plan>_price_id)
+        # before falling back to plan overrides — so the UI gate has to
+        # do the same, otherwise an admin who configures Stripe via the
+        # admin UI gets a paid checkout that works but a billing page
+        # that shows everything as unavailable.
+        if p.name == "free":
+            available = True
+        else:
+            available = stripe_ok and bool(_price_id_for_plan(p.name))
         out.append(PlanResponse(
             name=p.name,
             display_name=p.display_name,
             price_monthly_usd=p.price_monthly_usd,
             features=p.features,
-            available=(p.name == "free") or bool(p.stripe_price_id),
+            available=available,
             allowed_agents=sorted(p.allowed_agents),
         ))
     return out
