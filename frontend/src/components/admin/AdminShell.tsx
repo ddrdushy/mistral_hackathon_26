@@ -10,6 +10,8 @@ import {
 import Link from "next/link";
 import AdminSidebar from "./AdminSidebar";
 import { useAdmin } from "./AdminGate";
+import { HelpProvider } from "@/components/help/HelpContext";
+import FloatingHelpButton from "@/components/help/FloatingHelpButton";
 
 /**
  * Visual shell for the platform-admin surface. Distinct from the tenant
@@ -56,6 +58,7 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
   }, []);
 
   return (
+    <HelpProvider>
     <div className="min-h-screen bg-slate-50">
       <AdminSidebar
         isOpen={sidebarOpen}
@@ -136,6 +139,8 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
 
         <main className="flex-1 overflow-auto p-6">{children}</main>
       </div>
+      <FloatingHelpButton />
     </div>
+    </HelpProvider>
   );
 }

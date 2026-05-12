@@ -15,8 +15,7 @@ import {
 } from "@heroicons/react/24/outline";
 import Link from "next/link";
 import { useAuth } from "@/components/auth/AuthGate";
-import HelpDrawer from "@/components/help/HelpDrawer";
-import { resolveHelp } from "@/lib/help/registry";
+import { useHelp } from "@/components/help/HelpContext";
 
 interface TopbarProps {
   onMenuToggle: () => void;
@@ -78,8 +77,7 @@ export default function Topbar({ onMenuToggle }: TopbarProps) {
     );
   }, [pathname, urlParams]);
 
-  const [helpOpen, setHelpOpen] = useState(false);
-  const helpEntry = resolveHelp(pathname || "");
+  const help = useHelp();
 
   const submitSearch = () => {
     const q = search.trim();
@@ -149,13 +147,15 @@ export default function Topbar({ onMenuToggle }: TopbarProps) {
           />
         </form>
 
-        {/* Help — opens the contextual drawer for the current page */}
+        {/* Help — opens the contextual drawer for the current page.
+            The state lives in HelpContext so the floating bottom-right
+            button shares the exact same drawer instance. */}
         <button
           type="button"
-          onClick={() => setHelpOpen(true)}
+          onClick={() => help.open()}
           className="p-2 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
           aria-label="Help for this page"
-          title={`Help: ${helpEntry.title}`}
+          title={`Help: ${help.entry.title}`}
         >
           <QuestionMarkCircleIcon className="w-5 h-5" />
         </button>
@@ -246,12 +246,6 @@ export default function Topbar({ onMenuToggle }: TopbarProps) {
           )}
         </div>
       </div>
-
-      <HelpDrawer
-        open={helpOpen}
-        onClose={() => setHelpOpen(false)}
-        entry={helpEntry}
-      />
     </header>
   );
 }

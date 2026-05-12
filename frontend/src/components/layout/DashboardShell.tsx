@@ -5,6 +5,8 @@ import Sidebar from "./Sidebar";
 import Topbar from "./Topbar";
 import OnboardingTour from "@/components/tour/OnboardingTour";
 import VerificationBanner from "@/components/auth/VerificationBanner";
+import { HelpProvider } from "@/components/help/HelpContext";
+import FloatingHelpButton from "@/components/help/FloatingHelpButton";
 
 interface DashboardShellProps {
   children: React.ReactNode;
@@ -37,29 +39,37 @@ export default function DashboardShell({ children }: DashboardShellProps) {
   }, []);
 
   return (
-    <div className="min-h-screen bg-slate-50">
-      {/* Sidebar */}
-      <Sidebar
-        isOpen={sidebarOpen}
-        collapsed={collapsed}
-        onClose={handleSidebarClose}
-        onToggleCollapse={handleToggleCollapse}
-      />
+    <HelpProvider>
+      <div className="min-h-screen bg-slate-50">
+        {/* Sidebar */}
+        <Sidebar
+          isOpen={sidebarOpen}
+          collapsed={collapsed}
+          onClose={handleSidebarClose}
+          onToggleCollapse={handleToggleCollapse}
+        />
 
-      {/* Main area offset by sidebar width on desktop */}
-      <div className={`${collapsed ? "lg:pl-16" : "lg:pl-64"} flex flex-col min-h-screen transition-all duration-300`}>
-        {/* Topbar */}
-        <Topbar onMenuToggle={handleMenuToggle} />
+        {/* Main area offset by sidebar width on desktop */}
+        <div className={`${collapsed ? "lg:pl-16" : "lg:pl-64"} flex flex-col min-h-screen transition-all duration-300`}>
+          {/* Topbar */}
+          <Topbar onMenuToggle={handleMenuToggle} />
 
-        {/* Main content */}
-        <main className="flex-1 overflow-auto p-6">
-          <VerificationBanner />
-          {children}
-        </main>
+          {/* Main content */}
+          <main className="flex-1 overflow-auto p-6">
+            <VerificationBanner />
+            {children}
+          </main>
+        </div>
+
+        {/* Guided tour for first-time users */}
+        <OnboardingTour />
+
+        {/* Always-visible help launcher (bottom-right). Triggers the
+            same drawer as the Topbar ? icon via HelpContext, but is
+            far more discoverable for new users who don't scan the
+            top-right corner. */}
+        <FloatingHelpButton />
       </div>
-
-      {/* Guided tour for first-time users */}
-      <OnboardingTour />
-    </div>
+    </HelpProvider>
   );
 }
