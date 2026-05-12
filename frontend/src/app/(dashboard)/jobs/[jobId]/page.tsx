@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useRouter, useParams } from "next/navigation";
-import { apiGet, apiPut, apiDelete } from "@/lib/api";
+import { apiGet, apiPut, apiPost, apiDelete } from "@/lib/api";
 import { timeAgo, STAGE_COLORS, STAGE_LABELS } from "@/lib/constants";
 import type { Job, Application, ApplicationListResponse } from "@/types/index";
 import TalentSearchPanel from "@/components/talent/TalentSearchPanel";
@@ -52,9 +52,21 @@ interface TalentBankResponse {
   total_candidates: number;
 }
 
+interface ReachOutResultRow {
+  candidate_id: number;
+  name: string;
+  email: string;
+  phone: string;
+  channels: Record<string, { success: boolean; message?: string }>;
+}
+
 function TalentBankSuggestions({ jobId }: { jobId: string }) {
   const [data, setData] = useState<TalentBankResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [reachingOut, setReachingOut] = useState(false);
+  const [reachOutSummary, setReachOutSummary] =
+    useState<{ total: number; emailOk: number; whatsOk: number; failures: string[] } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -75,6 +87,66 @@ function TalentBankSuggestions({ jobId }: { jobId: string }) {
     };
   }, [jobId]);
 
+  const toggle = (id: number) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleAll = () => {
+    if (!data) return;
+    if (selected.size === data.suggestions.length) {
+      setSelected(new Set());
+    } else {
+      setSelected(new Set(data.suggestions.map((s) => s.candidate_id)));
+    }
+  };
+
+  const reachOut = async () => {
+    if (selected.size === 0) return;
+    setReachingOut(true);
+    setReachOutSummary(null);
+    try {
+      const res = await apiPost<{ results: ReachOutResultRow[]; total_attempted: number }>(
+        `/jobs/${jobId}/reach-out`,
+        {
+          candidate_ids: Array.from(selected),
+          channels: ["email", "whatsapp"],
+        },
+      );
+      let emailOk = 0;
+      let whatsOk = 0;
+      const failures: string[] = [];
+      for (const r of res.results) {
+        if (r.channels.email?.success) emailOk += 1;
+        else if (r.channels.email)
+          failures.push(`${r.name} (email): ${r.channels.email.message || "failed"}`);
+        if (r.channels.whatsapp?.success) whatsOk += 1;
+        else if (r.channels.whatsapp && r.phone)
+          failures.push(`${r.name} (WhatsApp): ${r.channels.whatsapp.message || "failed"}`);
+      }
+      setReachOutSummary({
+        total: res.total_attempted,
+        emailOk,
+        whatsOk,
+        failures: failures.slice(0, 5),
+      });
+      setSelected(new Set());
+    } catch (err) {
+      setReachOutSummary({
+        total: 0,
+        emailOk: 0,
+        whatsOk: 0,
+        failures: [err instanceof Error ? err.message : "Reach-out failed"],
+      });
+    } finally {
+      setReachingOut(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 mb-6">
@@ -94,7 +166,7 @@ function TalentBankSuggestions({ jobId }: { jobId: string }) {
 
   return (
     <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 mb-6">
-      <div className="flex items-baseline justify-between mb-4">
+      <div className="flex items-baseline justify-between mb-4 gap-3 flex-wrap">
         <div>
           <h2 className="text-base font-semibold text-slate-900">
             From your talent bank
@@ -104,7 +176,54 @@ function TalentBankSuggestions({ jobId }: { jobId: string }) {
             {data.total_profiled} of {data.total_candidates} profiled
           </p>
         </div>
+        {!empty && (
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={toggleAll}
+              className="text-xs font-medium text-slate-600 hover:text-slate-900"
+            >
+              {selected.size === data.suggestions.length ? "Clear" : "Select all"}
+            </button>
+            <button
+              type="button"
+              onClick={reachOut}
+              disabled={selected.size === 0 || reachingOut}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {reachingOut
+                ? "Sending…"
+                : `Reach out (${selected.size})`}
+            </button>
+          </div>
+        )}
       </div>
+
+      {reachOutSummary && (
+        <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3">
+          <div className="text-sm font-semibold text-emerald-900">
+            Outreach sent to {reachOutSummary.total} candidate
+            {reachOutSummary.total === 1 ? "" : "s"}
+          </div>
+          <div className="text-xs text-emerald-800 mt-0.5">
+            {reachOutSummary.emailOk} email{reachOutSummary.emailOk === 1 ? "" : "s"} delivered,
+            {" "}{reachOutSummary.whatsOk} WhatsApp{reachOutSummary.whatsOk === 1 ? "" : "s"} delivered.
+          </div>
+          {reachOutSummary.failures.length > 0 && (
+            <details className="mt-2 text-xs text-emerald-900">
+              <summary className="cursor-pointer font-medium">
+                {reachOutSummary.failures.length} channel
+                {reachOutSummary.failures.length === 1 ? "" : "s"} failed
+              </summary>
+              <ul className="mt-1 ml-4 list-disc space-y-0.5">
+                {reachOutSummary.failures.map((f, i) => (
+                  <li key={i}>{f}</li>
+                ))}
+              </ul>
+            </details>
+          )}
+        </div>
+      )}
 
       {empty ? (
         <p className="text-sm text-slate-500">
@@ -114,7 +233,14 @@ function TalentBankSuggestions({ jobId }: { jobId: string }) {
       ) : (
         <ul className="divide-y divide-slate-100">
           {data.suggestions.map((s) => (
-            <li key={s.candidate_id} className="py-3 flex items-start gap-4">
+            <li key={s.candidate_id} className="py-3 flex items-start gap-3">
+              <input
+                type="checkbox"
+                checked={selected.has(s.candidate_id)}
+                onChange={() => toggle(s.candidate_id)}
+                className="mt-1 h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                aria-label={`Select ${s.name}`}
+              />
               <div className="flex-shrink-0 w-12 text-center">
                 <div className="text-base font-bold text-indigo-600 tabular-nums">
                   {s.match_score}

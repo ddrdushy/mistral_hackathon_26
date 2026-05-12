@@ -3,7 +3,7 @@ from typing import Optional
 import json
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from database import get_db
@@ -378,6 +378,177 @@ async def suggested_candidates(
         "suggestions": suggestions[:limit],
         "total_profiled": sum(1 for c in candidates if c.profile_extracted_at),
         "total_candidates": len(candidates),
+    }
+
+
+class ReachOutRequest(BaseModel):
+    candidate_ids: list[int] = Field(..., min_length=1, max_length=50)
+    channels: list[str] = Field(default_factory=lambda: ["email", "whatsapp"])
+    custom_message: Optional[str] = Field(default=None, max_length=1200)
+
+
+@router.post("/{job_id}/reach-out")
+async def reach_out_to_candidates(
+    job_id: int,
+    req: ReachOutRequest,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(current_session),
+):
+    """Bulk availability ping: for each selected candidate from the
+    Talent Bank, send an "are you available for this role?" message
+    over WhatsApp + email. Channels are best-effort — if Twilio isn't
+    set up for the tenant, WhatsApp is skipped silently while email
+    still goes out.
+
+    No interview link is generated here. That's the next step once the
+    candidate confirms availability. Replies land in the tenant's
+    existing inbox (email) or the Twilio inbound webhook (WhatsApp).
+    """
+    from models import Candidate, Communication
+    from services.tenant_outbound import send_via_tenant_mailbox
+
+    job = db.query(Job).filter(
+        Job.id == job_id,
+        Job.tenant_id == session.tenant.id,
+    ).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    candidates = (
+        db.query(Candidate)
+        .filter(
+            Candidate.tenant_id == session.tenant.id,
+            Candidate.id.in_(req.candidate_ids),
+        )
+        .all()
+    )
+    if not candidates:
+        raise HTTPException(status_code=404, detail="No matching candidates")
+
+    channels_wanted = {c.lower().strip() for c in req.channels}
+    company = session.tenant.name or "the recruitment team"
+
+    # Twilio config is optional — load it once; if it's missing, WhatsApp
+    # is skipped per candidate without taking the whole batch down.
+    twilio_cfg = None
+    twilio_err: Optional[str] = None
+    if "whatsapp" in channels_wanted:
+        try:
+            from services.twilio_service import load_config as load_twilio
+            twilio_cfg = load_twilio(db, session.tenant.id)
+        except Exception as e:
+            twilio_err = str(e)
+            twilio_cfg = None
+
+    results: list[dict] = []
+    for cand in candidates:
+        first_name = (cand.name or "there").split()[0] if cand.name else "there"
+        default_msg = (
+            f"Hi {first_name}, this is {company}. We have an opening for "
+            f"{job.title} that looks like a strong match for your background. "
+            f"Are you available for a short screening interview this week? "
+            f"Reply with the days that work for you and we'll set it up."
+        )
+        body = (req.custom_message or default_msg).replace("{name}", first_name)
+
+        per_result: dict = {
+            "candidate_id": cand.id,
+            "name": cand.name,
+            "email": cand.email,
+            "phone": cand.phone,
+            "channels": {},
+        }
+
+        # ── Email ────────────────────────────────────────────────────────
+        if "email" in channels_wanted and cand.email:
+            subject = f"Re: {job.title} at {company}"
+            body_html = (
+                f"<div style='font-family:Arial,sans-serif;max-width:560px;"
+                f"line-height:1.6;color:#334155;'>"
+                f"<p>{body.replace(chr(10), '<br>')}</p>"
+                f"<p style='margin-top:24px;color:#94a3b8;font-size:12px;'>"
+                f"Sent from {company} via HireOps AI.</p>"
+                f"</div>"
+            )
+            email_outcome = send_via_tenant_mailbox(
+                tenant_id=session.tenant.id,
+                to_email=cand.email,
+                subject=subject,
+                body_html=body_html,
+                body_text=body,
+                db=db,
+            )
+            per_result["channels"]["email"] = email_outcome
+
+            # Log to communications regardless of outcome so the trail
+            # shows what we attempted.
+            try:
+                db.add(Communication(
+                    tenant_id=session.tenant.id,
+                    candidate_id=cand.id,
+                    app_id=None,
+                    channel="email",
+                    direction="outbound",
+                    status="sent" if email_outcome.get("success") else "failed",
+                    to_address=cand.email,
+                    from_address=email_outcome.get("from") or "",
+                    subject=subject,
+                    body=body,
+                    error=None if email_outcome.get("success") else email_outcome.get("message"),
+                    sent_by_user_id=session.user.id,
+                    sent_at=datetime.utcnow(),
+                ))
+                db.commit()
+            except Exception:
+                db.rollback()
+
+        # ── WhatsApp ─────────────────────────────────────────────────────
+        if "whatsapp" in channels_wanted and cand.phone:
+            if not twilio_cfg:
+                per_result["channels"]["whatsapp"] = {
+                    "success": False,
+                    "message": twilio_err or "Twilio not configured",
+                }
+            else:
+                try:
+                    from services.twilio_service import send_whatsapp
+                    send_whatsapp(twilio_cfg, cand.phone, body)
+                    per_result["channels"]["whatsapp"] = {"success": True}
+                    wa_status = "sent"
+                    wa_err = None
+                except Exception as e:
+                    per_result["channels"]["whatsapp"] = {
+                        "success": False,
+                        "message": str(e),
+                    }
+                    wa_status = "failed"
+                    wa_err = str(e)
+                try:
+                    db.add(Communication(
+                        tenant_id=session.tenant.id,
+                        candidate_id=cand.id,
+                        app_id=None,
+                        channel="whatsapp",
+                        direction="outbound",
+                        status=wa_status,
+                        to_address=cand.phone,
+                        from_address=getattr(twilio_cfg, "whatsapp_from", "") or "",
+                        subject="Availability check",
+                        body=body,
+                        error=wa_err,
+                        sent_by_user_id=session.user.id,
+                        sent_at=datetime.utcnow(),
+                    ))
+                    db.commit()
+                except Exception:
+                    db.rollback()
+
+        results.append(per_result)
+
+    return {
+        "job_id": job_id,
+        "total_attempted": len(results),
+        "results": results,
     }
 
 
