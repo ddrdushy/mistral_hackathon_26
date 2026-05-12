@@ -1,11 +1,9 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { usePathname } from "next/navigation";
 import {
   Bars3Icon,
-  MagnifyingGlassIcon,
-  BellIcon,
   QuestionMarkCircleIcon,
   ArrowRightOnRectangleIcon,
   UsersIcon,
@@ -16,6 +14,8 @@ import {
 import Link from "next/link";
 import { useAuth } from "@/components/auth/AuthGate";
 import { useHelp } from "@/components/help/HelpContext";
+import TopbarSearch from "./TopbarSearch";
+import NotificationBell from "./NotificationBell";
 
 interface TopbarProps {
   onMenuToggle: () => void;
@@ -59,34 +59,11 @@ function initials(name: string, email: string): string {
 
 export default function Topbar({ onMenuToggle }: TopbarProps) {
   const pathname = usePathname();
-  const router = useRouter();
-  const urlParams = useSearchParams();
   const pageTitle = getPageTitle(pathname);
   const { me, logout } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
-
-  // Pre-fill from URL when the user is already on /candidates with a
-  // search active — so refocusing the top bar shows their current term.
-  const [search, setSearch] = useState(
-    pathname === "/candidates" ? urlParams.get("search") || "" : "",
-  );
-  useEffect(() => {
-    setSearch(
-      pathname === "/candidates" ? urlParams.get("search") || "" : "",
-    );
-  }, [pathname, urlParams]);
-
   const help = useHelp();
-
-  const submitSearch = () => {
-    const q = search.trim();
-    if (!q) {
-      router.push("/candidates");
-      return;
-    }
-    router.push(`/candidates?search=${encodeURIComponent(q)}`);
-  };
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -122,34 +99,10 @@ export default function Topbar({ onMenuToggle }: TopbarProps) {
 
       {/* Right section */}
       <div className="ml-auto flex items-center gap-3">
-        {/* Search input — submits to /candidates?search=... on Enter */}
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            submitSearch();
-          }}
-          className="hidden md:flex items-center gap-2 bg-slate-100 rounded-lg px-3 py-2 focus-within:bg-white focus-within:ring-2 focus-within:ring-indigo-300 transition-colors"
-        >
-          <button
-            type="submit"
-            aria-label="Search candidates"
-            className="text-slate-400 hover:text-slate-600"
-          >
-            <MagnifyingGlassIcon className="w-4 h-4" />
-          </button>
-          <input
-            type="search"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search candidates..."
-            aria-label="Search candidates"
-            className="bg-transparent text-sm text-slate-700 placeholder-slate-400 outline-none w-48"
-          />
-        </form>
+        {/* Live candidate search with dropdown of top matches. */}
+        <TopbarSearch />
 
-        {/* Help — opens the contextual drawer for the current page.
-            The state lives in HelpContext so the floating bottom-right
-            button shares the exact same drawer instance. */}
+        {/* Help — opens the contextual drawer for the current page. */}
         <button
           type="button"
           onClick={() => help.open()}
@@ -160,15 +113,8 @@ export default function Topbar({ onMenuToggle }: TopbarProps) {
           <QuestionMarkCircleIcon className="w-5 h-5" />
         </button>
 
-        {/* Notification bell */}
-        <button
-          type="button"
-          className="relative p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors"
-          aria-label="Notifications"
-        >
-          <BellIcon className="w-5 h-5" />
-          <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-blue-600 rounded-full" />
-        </button>
+        {/* Notification bell — dropdown lives in the component. */}
+        <NotificationBell />
 
         {/* User menu */}
         <div className="relative" ref={menuRef}>

@@ -643,10 +643,24 @@ async def list_candidates(
     from models import Application
     query = db.query(Candidate).filter(Candidate.tenant_id == session.tenant.id)
     if search:
-        query = query.filter(
-            (Candidate.name.ilike(f"%{search}%")) |
-            (Candidate.email.ilike(f"%{search}%"))
-        )
+        # Match across all the fields HR actually thinks of when searching.
+        # Phone is digits-only normalised so "+60 176 490 285" also finds
+        # rows stored as "0176490285". profile_skills is JSON-stringified
+        # so a substring match works without parsing.
+        import re
+        s = f"%{search}%"
+        digits = re.sub(r"\D", "", search)
+        clauses = [
+            Candidate.name.ilike(s),
+            Candidate.email.ilike(s),
+            Candidate.profile_role.ilike(s),
+            Candidate.profile_summary.ilike(s),
+            Candidate.profile_skills.ilike(s),
+        ]
+        if digits and len(digits) >= 4:
+            clauses.append(Candidate.phone.ilike(f"%{digits}%"))
+        from sqlalchemy import or_
+        query = query.filter(or_(*clauses))
     if talent_bank_only:
         applied_ids = db.query(Application.candidate_id).filter(
             Application.tenant_id == session.tenant.id

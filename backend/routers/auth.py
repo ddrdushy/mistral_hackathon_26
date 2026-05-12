@@ -74,6 +74,15 @@ class VerifyEmailRequest(BaseModel):
     token: str
 
 
+class ProfileUpdateRequest(BaseModel):
+    name: Optional[str] = Field(default=None, max_length=200)
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str = Field(..., min_length=1, max_length=200)
+    new_password: str = Field(..., min_length=8, max_length=200)
+
+
 class TenantResponse(BaseModel):
     id: int
     slug: str
@@ -298,6 +307,53 @@ def me(session: CurrentSession = Depends(current_session)):
         user=_user_to_response(session.user),
         tenant=TenantResponse.model_validate(session.tenant),
     )
+
+
+@router.patch("/me")
+def update_my_profile(
+    req: ProfileUpdateRequest,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(current_session),
+):
+    """Per-user profile edit. Email is intentionally NOT editable here —
+    changing email requires a re-verify flow we haven't built yet."""
+    user = db.query(User).filter(User.id == session.user.id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if req.name is not None:
+        user.name = req.name.strip()[:200]
+    user.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(user)
+    return MeResponse(
+        user=_user_to_response(user),
+        tenant=TenantResponse.model_validate(session.tenant),
+    )
+
+
+@router.post("/me/change-password")
+def change_password(
+    req: ChangePasswordRequest,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(current_session),
+):
+    """Authenticated password change. Verifies the current password
+    before saving the new hash to prevent session-hijack escalation."""
+    from auth.security import hash_password, verify_password
+    user = db.query(User).filter(User.id == session.user.id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if not verify_password(req.current_password, user.password_hash):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+    if req.current_password == req.new_password:
+        raise HTTPException(
+            status_code=400,
+            detail="New password must differ from the current one",
+        )
+    user.password_hash = hash_password(req.new_password)
+    user.updated_at = datetime.utcnow()
+    db.commit()
+    return {"ok": True}
 
 
 @router.post("/verify-email")

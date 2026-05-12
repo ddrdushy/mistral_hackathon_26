@@ -299,19 +299,22 @@ export default function TenantSettingsPage() {
           </div>
         </Link>
 
-        <div className="bg-slate-50 rounded-xl border border-dashed border-slate-300 p-5">
+        <Link
+          href="/settings/profile"
+          className="block bg-white rounded-xl shadow-sm border border-slate-200 p-5 hover:border-indigo-300 hover:shadow-md transition-all"
+        >
           <div className="flex items-start gap-3">
-            <div className="w-10 h-10 rounded-lg bg-slate-200 text-slate-500 flex items-center justify-center flex-shrink-0">
+            <div className="w-10 h-10 rounded-lg bg-slate-100 text-slate-600 flex items-center justify-center flex-shrink-0">
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
               </svg>
             </div>
             <div className="min-w-0">
-              <div className="text-sm font-semibold text-slate-700">Profile & Notifications</div>
-              <div className="text-xs text-slate-500 mt-0.5">Coming soon — email preferences and signature.</div>
+              <div className="text-sm font-semibold text-slate-900">Profile &amp; Notifications</div>
+              <div className="text-xs text-slate-500 mt-0.5">Display name, password, and what notifications you see in the bell.</div>
             </div>
           </div>
-        </div>
+        </Link>
       </div>
 
       {/* ── Plan & AI agents ─────────────────────────────────────────── */}
