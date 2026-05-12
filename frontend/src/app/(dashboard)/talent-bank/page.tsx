@@ -10,6 +10,7 @@ import { timeAgo } from "@/lib/constants";
 import TagChip from "@/components/tags/TagChip";
 import TagPicker from "@/components/tags/TagPicker";
 import { swatchClass } from "@/components/tags/colors";
+import CandidateDetailDrawer from "@/components/talent/CandidateDetailDrawer";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "/api/v1";
 
@@ -83,6 +84,11 @@ export default function TalentBankPage() {
   const [showOnlyUnassigned, setShowOnlyUnassigned] = useState(false);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
+
+  // Click-to-open detail drawer. We open it for ANY candidate row, not
+  // just talent-bank-only ones, so HR can edit/delete without
+  // round-tripping through the application page.
+  const [drawerCand, setDrawerCand] = useState<TalentBankCandidate | null>(null);
 
   // Tag filter state
   const [tags, setTags] = useState<TenantTag[]>([]);
@@ -419,16 +425,13 @@ export default function TalentBankPage() {
                         <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0">
                             <div className="text-sm font-semibold text-slate-900 truncate">
-                              {c.first_application_id ? (
-                                <a
-                                  href={`/candidates/${c.first_application_id}`}
-                                  className="hover:text-indigo-700 hover:underline"
-                                >
-                                  {c.name}
-                                </a>
-                              ) : (
-                                <span>{c.name}</span>
-                              )}
+                              <button
+                                type="button"
+                                onClick={() => setDrawerCand(c)}
+                                className="text-left hover:text-indigo-700 hover:underline"
+                              >
+                                {c.name}
+                              </button>
                             </div>
                             <div className="text-xs text-slate-500 truncate">
                               {c.email}
@@ -581,6 +584,17 @@ export default function TalentBankPage() {
           setRefreshKey((n) => n + 1);
         }}
       />
+
+      {drawerCand && (
+        <CandidateDetailDrawer
+          candidateId={drawerCand.id}
+          applicationId={drawerCand.first_application_id ?? null}
+          onClose={() => setDrawerCand(null)}
+          onChanged={() => {
+            setRefreshKey((n) => n + 1);
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -198,14 +198,109 @@ async def parse_resume(
 
 
 def _find_existing_candidate(db: Session, tenant_id: int, email: str) -> Optional[Candidate]:
-    """Match by email (case-insensitive). None if no match or email empty."""
+    """LEGACY email-only lookup. Used by /candidates/upload (the
+    single-upload preview path) and a few admin endpoints. New code
+    uses `_find_same_person` which requires name + email/phone match."""
     e = (email or "").strip().lower()
-    if not e or e.startswith("unknown+"):
+    if not e or e.startswith("unknown+") or e.startswith("forwarded+"):
         return None
     return db.query(Candidate).filter(
         Candidate.tenant_id == tenant_id,
         Candidate.email.ilike(e),
     ).first()
+
+
+_PLACEHOLDER_EMAIL_DOMAIN = "@uploaded.local"
+
+
+def _norm_name(s: Optional[str]) -> str:
+    """Lowercase + strip whitespace + chop trailing credential suffixes
+    (PMP®, PhD, MBA, etc.) so 'John Smith' matches 'John Smith PMP®'."""
+    import re
+    if not s:
+        return ""
+    out = s.strip().lower()
+    out = re.sub(
+        r"[,\s]+(pmp|phd|ph\.d|mba|mba\.|cisa|cissp|cpa|cfa|csm)\b.*$",
+        "",
+        out,
+        flags=re.IGNORECASE,
+    )
+    # Strip stray trademark symbols + extra whitespace.
+    out = out.replace("®", "").replace("™", "")
+    return re.sub(r"\s+", " ", out).strip()
+
+
+def _norm_phone(s: Optional[str]) -> str:
+    """Digits only — '0176490285' / '+60 176 490 285' / '(017) 649-0285' all collapse."""
+    import re
+    return re.sub(r"\D", "", s or "")
+
+
+def _is_placeholder_email(s: str) -> bool:
+    return (s or "").lower().endswith(_PLACEHOLDER_EMAIL_DOMAIN)
+
+
+def _is_same_person(
+    existing: Candidate,
+    *,
+    name: str,
+    email: str,
+    phone: str,
+) -> bool:
+    """Treat `existing` as the same person if all three hold:
+      1. names match after normalisation,
+      2. at least one of email / phone also matches,
+      3. no field present on both sides contradicts.
+
+    Placeholder emails (@uploaded.local) are never a real identity
+    signal — a candidate with a placeholder email can only be deduped
+    via name + phone match.
+    """
+    en = _norm_name(existing.name)
+    nn = _norm_name(name)
+    if not en or not nn or en != nn:
+        return False
+
+    ee = (existing.email or "").strip().lower()
+    ne = (email or "").strip().lower()
+    ep = _norm_phone(existing.phone)
+    np = _norm_phone(phone)
+
+    real_existing_email = bool(ee) and not _is_placeholder_email(ee)
+    real_new_email = bool(ne) and not _is_placeholder_email(ne)
+    if real_existing_email and real_new_email and ee != ne:
+        return False  # different real emails = different person
+    if ep and np and ep != np:
+        return False  # different phones = different person
+
+    email_match = real_existing_email and real_new_email and ee == ne
+    phone_match = bool(ep) and bool(np) and ep == np
+    return email_match or phone_match
+
+
+def _find_same_person(
+    db: Session,
+    tenant_id: int,
+    *,
+    name: str,
+    email: str,
+    phone: str,
+) -> Optional[Candidate]:
+    """Linear scan over the tenant's candidates looking for a name +
+    (email or phone) match. Sub-second on talent banks under ~10k —
+    add a (tenant_id, lower(name)) index when we have to scale past that."""
+    if not _norm_name(name):
+        return None
+    rows = (
+        db.query(Candidate)
+        .filter(Candidate.tenant_id == tenant_id)
+        .all()
+    )
+    for c in rows:
+        if _is_same_person(c, name=name, email=email, phone=phone):
+            return c
+    return None
 
 
 def _archive_current_cv(
@@ -287,10 +382,17 @@ async def upload_candidate(
         # fill it in.
         final_email = f"unknown+{int(datetime.utcnow().timestamp())}@uploaded.local"
 
-    # Dedup by email — same candidate re-uploading bumps cv_version instead
-    # of creating a duplicate row. Profile is re-extracted from the new
-    # resume so tags reflect the latest CV.
-    existing = _find_existing_candidate(db, session.tenant.id, final_email)
+    # Strict same-person dedup: name + (email or phone) must match
+    # with no contradictions. Email alone isn't enough — multiple
+    # forwarded CVs can share a placeholder email, and family members
+    # can share a real one.
+    existing = _find_same_person(
+        db,
+        session.tenant.id,
+        name=final_name,
+        email=final_email,
+        phone=final_phone,
+    )
     is_update = existing is not None
     if existing:
         candidate = existing
@@ -419,8 +521,19 @@ async def upload_candidates_bulk(
             contact = parse_contact_info(resume_text)
             placeholder_email = f"unknown+{int(datetime.utcnow().timestamp())}-{successes}@uploaded.local"
             parsed_email = (contact.get("email") or "").strip()
+            parsed_name = (contact.get("name") or fname.rsplit(".", 1)[0])[:80]
+            parsed_phone = (contact.get("phone") or "").strip()
 
-            existing = _find_existing_candidate(db, session.tenant.id, parsed_email)
+            # Strict same-person dedup: name + (email or phone) must
+            # match with no contradictions. Otherwise it's a new row,
+            # even when email happens to be reused.
+            existing = _find_same_person(
+                db,
+                session.tenant.id,
+                name=parsed_name,
+                email=parsed_email,
+                phone=parsed_phone,
+            )
             is_update = existing is not None
             if existing:
                 candidate = existing
@@ -630,6 +743,112 @@ async def get_candidate(
     if not c:
         raise HTTPException(status_code=404, detail="Candidate not found")
     return _candidate_to_response(c, db=db)
+
+
+class CandidateUpdate(BaseModel):
+    name: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    notes: Optional[str] = None
+    talent_bank_status: Optional[str] = None  # available | joined_another | not_available | hired_elsewhere
+    talent_bank_status_reason: Optional[str] = None
+
+
+@router.put("/{candidate_id}")
+async def update_candidate(
+    candidate_id: int,
+    req: CandidateUpdate,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(current_session),
+):
+    """Edit a candidate's contact / notes / availability. Sensible field
+    validation; talent_bank_status_updated_at refreshed whenever status
+    changes so the WhatsApp inbound bot's reason doesn't override HR's
+    manual edit."""
+    c = db.query(Candidate).filter(
+        Candidate.id == candidate_id,
+        Candidate.tenant_id == session.tenant.id,
+    ).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+
+    valid_statuses = {"available", "joined_another", "not_available", "hired_elsewhere"}
+    changed = False
+    if req.name is not None and req.name.strip():
+        c.name = req.name.strip()[:200]
+        changed = True
+    if req.email is not None:
+        e = req.email.strip().lower()
+        if e:
+            # Soft validation — `_norm_email` doesn't care about format, but
+            # reject obvious garbage.
+            if "@" not in e or "." not in e.split("@")[-1]:
+                raise HTTPException(status_code=400, detail="Email looks malformed")
+        c.email = e
+        changed = True
+    if req.phone is not None:
+        c.phone = req.phone.strip()[:60]
+        changed = True
+    if req.notes is not None:
+        c.notes = req.notes.strip()[:4000]
+        changed = True
+    if req.talent_bank_status is not None:
+        if req.talent_bank_status not in valid_statuses:
+            raise HTTPException(
+                status_code=400,
+                detail=f"talent_bank_status must be one of {sorted(valid_statuses)}",
+            )
+        if c.talent_bank_status != req.talent_bank_status:
+            c.talent_bank_status = req.talent_bank_status
+            c.talent_bank_status_updated_at = datetime.utcnow()
+            if req.talent_bank_status_reason is not None:
+                c.talent_bank_status_reason = req.talent_bank_status_reason.strip()[:240]
+            changed = True
+
+    if changed:
+        c.updated_at = datetime.utcnow()
+        db.commit()
+        db.refresh(c)
+    return _candidate_to_response(c, db=db)
+
+
+@router.delete("/{candidate_id}")
+async def delete_candidate(
+    candidate_id: int,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(current_session),
+):
+    """Hard-delete a candidate.
+
+    Refuses to delete candidates that already have applications — those
+    carry interview history HR needs to keep. Use the talent_bank_status
+    flags to "archive" instead, or delete the applications first.
+    """
+    c = db.query(Candidate).filter(
+        Candidate.id == candidate_id,
+        Candidate.tenant_id == session.tenant.id,
+    ).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+
+    from models import Application as _App
+    app_count = db.query(_App).filter(_App.candidate_id == c.id).count()
+    if app_count > 0:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Candidate has {app_count} application(s). Delete those first, "
+                "or mark the candidate as 'hired_elsewhere' / 'not_available' "
+                "to archive without losing pipeline history."
+            ),
+        )
+
+    # CV version snapshots, tags, communications cascade where the FK
+    # is ON DELETE CASCADE; the rest fail-loud here so we know if a
+    # downstream reference is unhandled.
+    db.delete(c)
+    db.commit()
+    return {"ok": True, "deleted_id": candidate_id}
 
 
 @router.get("/{candidate_id}/cv-versions")

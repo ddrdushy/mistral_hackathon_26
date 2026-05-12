@@ -589,19 +589,43 @@ def _create_candidate_from_email(em: Email, db: Session) -> Candidate:
         # scorer at least sees the from-address / subject context.
         resume_text = em.subject or em.from_address or ""
 
-    candidate = Candidate(
-        tenant_id=em.tenant_id,
-        name=name,
-        email=candidate_email,
-        phone=phone,
-        resume_text=resume_text,
-        resume_filename=resume_filename,
-        source_email_id=em.id,
+    # Strict same-person dedup. Re-uploaded CV from the same human
+    # (name + email/phone match) bumps cv_version; otherwise create a
+    # fresh row even when the email happens to be the recruiter's
+    # placeholder forwarded+N@uploaded.local.
+    from routers.candidates import _find_same_person, _archive_current_cv
+
+    existing = _find_same_person(
+        db, em.tenant_id, name=name, email=candidate_email, phone=phone,
     )
-    db.add(candidate)
-    em.processed = 2
-    db.commit()
-    db.refresh(candidate)
+    if existing:
+        _archive_current_cv(db, existing, source="email_forward", user_id=None)
+        existing.resume_text = resume_text
+        existing.resume_filename = resume_filename
+        existing.cv_version = (existing.cv_version or 1) + 1
+        if phone and not existing.phone:
+            existing.phone = phone
+        existing.source_email_id = em.id
+        existing.profile_extracted_at = None  # re-extract tags on new CV
+        existing.updated_at = datetime.utcnow()
+        em.processed = 2
+        db.commit()
+        db.refresh(existing)
+        candidate = existing
+    else:
+        candidate = Candidate(
+            tenant_id=em.tenant_id,
+            name=name,
+            email=candidate_email,
+            phone=phone,
+            resume_text=resume_text,
+            resume_filename=resume_filename,
+            source_email_id=em.id,
+        )
+        db.add(candidate)
+        em.processed = 2
+        db.commit()
+        db.refresh(candidate)
 
     # Talent-bank: extract a structured profile so this candidate is
     # searchable for FUTURE jobs without re-calling the LLM. Fire-and-forget

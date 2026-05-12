@@ -238,17 +238,17 @@ def _run_migrations():
                     except Exception:
                         pass
 
-        # Unique (tenant_id, lower(email)) — defends against the workflow
-        # racing itself when two events match the same email at the same
-        # time. Skips creation if duplicates already exist (cleanup script
-        # has to run first); the next start will pick it up.
+        # Email-only uniqueness turned out to be too strict — multiple
+        # forwarded CVs with placeholder addresses (or family members
+        # sharing an email) collapsed onto one row. Application-level
+        # dedup now requires name + (email or phone) match with no
+        # contradictions, so the unique constraint is removed.
         idx_rows = conn_inspect_indexes(engine, "candidates")
-        if not any(i.endswith("ux_candidates_tenant_email_lower") for i in idx_rows):
+        if any(i.endswith("ux_candidates_tenant_email_lower") for i in idx_rows):
             with engine.begin() as conn:
                 try:
                     conn.execute(text(
-                        "CREATE UNIQUE INDEX ux_candidates_tenant_email_lower "
-                        "ON candidates (tenant_id, lower(email))"
+                        "DROP INDEX IF EXISTS ux_candidates_tenant_email_lower"
                     ))
                 except Exception:
                     pass
