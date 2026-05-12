@@ -65,28 +65,57 @@ class TemplatePreviewRequest(BaseModel):
 # ── Helpers ──────────────────────────────────────────────────────────────
 
 
+_BASE_SAMPLE = {
+    "candidate_name": "Harsha Sundaram",
+    "candidate_first_name": "Harsha",
+    "job_title": "Senior Data Engineer",
+    "recruiter_name": "Dushyanth Ramalingam",
+}
+
+
 _SAMPLE_VARS: dict[str, dict[str, str]] = {
     "interview_invite": {
-        "candidate_name": "Harsha Sundaram",
-        "candidate_first_name": "Harsha",
-        "job_title": "Senior Data Engineer",
+        **_BASE_SAMPLE,
         "interview_url": "https://hireops.symprio.com/interview/sample-token",
     },
     "interview_reschedule": {
-        "candidate_name": "Harsha Sundaram",
-        "candidate_first_name": "Harsha",
-        "job_title": "Senior Data Engineer",
+        **_BASE_SAMPLE,
         "interview_url": "https://hireops.symprio.com/interview/sample-token-v2",
     },
-    "availability_check": {
-        "candidate_name": "Harsha Sundaram",
-        "candidate_first_name": "Harsha",
-        "job_title": "Senior Data Engineer",
+    "interview_confirmation": {
+        **_BASE_SAMPLE,
+        "interview_url": "https://hireops.symprio.com/interview/sample-token",
+        "scheduled_at": "Tuesday, 14 May at 10:00 (UTC)",
     },
-    "rejection": {
-        "candidate_name": "Harsha Sundaram",
-        "candidate_first_name": "Harsha",
-        "job_title": "Senior Data Engineer",
+    "interview_reminder": {
+        **_BASE_SAMPLE,
+        "interview_url": "https://hireops.symprio.com/interview/sample-token",
+        "scheduled_at": "Tuesday, 14 May at 10:00 (UTC)",
+    },
+    "availability_check": {**_BASE_SAMPLE},
+    "shortlist_congrats": {**_BASE_SAMPLE},
+    "offer_letter": {
+        **_BASE_SAMPLE,
+        "salary_amount": "85,000",
+        "salary_currency": "USD",
+        "bonus_amount": "10% target performance bonus",
+        "equity_description": "0.05% over 4 years, 1-year cliff",
+        "employment_type": "Full-time",
+        "location": "Kuala Lumpur, Malaysia",
+        "start_date": "1 June 2026",
+        "signing_url": "https://hireops.symprio.com/offers/sign/sample-token",
+    },
+    "offer_accepted": {
+        **_BASE_SAMPLE,
+        "salary_amount": "85,000",
+        "salary_currency": "USD",
+        "start_date": "1 June 2026",
+    },
+    "rejection": {**_BASE_SAMPLE},
+    "generic_email": {**_BASE_SAMPLE},
+    "in_app_notification": {
+        **_BASE_SAMPLE,
+        "event_summary": "completed their interview with a 78/100 score",
     },
 }
 

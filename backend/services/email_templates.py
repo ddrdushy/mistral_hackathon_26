@@ -63,6 +63,24 @@ CATEGORIES: dict[str, TemplateCategory] = {
             "company_name", "interview_url",
         ],
     ),
+    "interview_confirmation": TemplateCategory(
+        key="interview_confirmation",
+        label="Interview confirmed",
+        description="Sent after a candidate books a slot (with calendar attachment).",
+        variables=[
+            "candidate_first_name", "candidate_name", "job_title",
+            "company_name", "interview_url", "scheduled_at",
+        ],
+    ),
+    "interview_reminder": TemplateCategory(
+        key="interview_reminder",
+        label="Interview reminder",
+        description="24-hour reminder before a scheduled interview.",
+        variables=[
+            "candidate_first_name", "candidate_name", "job_title",
+            "company_name", "interview_url", "scheduled_at",
+        ],
+    ),
     "availability_check": TemplateCategory(
         key="availability_check",
         label="Availability check",
@@ -71,12 +89,58 @@ CATEGORIES: dict[str, TemplateCategory] = {
             "candidate_first_name", "candidate_name", "job_title", "company_name",
         ],
     ),
+    "shortlist_congrats": TemplateCategory(
+        key="shortlist_congrats",
+        label="Shortlist notification",
+        description="Tells the candidate they've been shortlisted and what happens next.",
+        variables=[
+            "candidate_first_name", "candidate_name", "job_title",
+            "company_name", "recruiter_name",
+        ],
+    ),
+    "offer_letter": TemplateCategory(
+        key="offer_letter",
+        label="Offer letter",
+        description="Sent when an offer is generated. Variables include salary, start date, equity.",
+        variables=[
+            "candidate_first_name", "candidate_name", "job_title", "company_name",
+            "salary_amount", "salary_currency", "start_date", "location",
+            "employment_type", "bonus_amount", "equity_description",
+            "recruiter_name", "signing_url",
+        ],
+    ),
+    "offer_accepted": TemplateCategory(
+        key="offer_accepted",
+        label="Offer accepted (internal)",
+        description="Sent to the recruiter when a candidate signs the offer.",
+        variables=[
+            "candidate_first_name", "candidate_name", "job_title", "company_name",
+            "salary_amount", "salary_currency", "start_date",
+        ],
+    ),
     "rejection": TemplateCategory(
         key="rejection",
         label="Rejection",
         description="Sent when a candidate is rejected.",
         variables=[
             "candidate_first_name", "candidate_name", "job_title", "company_name",
+        ],
+    ),
+    "generic_email": TemplateCategory(
+        key="generic_email",
+        label="Generic email (free-form)",
+        description="A blank canvas with branding wrapped around it. Use for ad-hoc sends from the candidate timeline.",
+        variables=[
+            "candidate_first_name", "candidate_name", "job_title", "company_name",
+            "recruiter_name",
+        ],
+    ),
+    "in_app_notification": TemplateCategory(
+        key="in_app_notification",
+        label="In-app notification",
+        description="Wording for system notifications surfaced in the bell. Short, single-paragraph copy.",
+        variables=[
+            "candidate_first_name", "candidate_name", "job_title", "event_summary",
         ],
     ),
 }
@@ -139,6 +203,97 @@ We wish you the very best in your career journey.</p>
 """
 
 
+_DEFAULT_CONFIRMATION_HTML = """
+<p>Hi {candidate_first_name},</p>
+<p>Your interview for <strong>{job_title}</strong> at {company_name} is confirmed
+for <strong>{scheduled_at}</strong>.</p>
+<p>A calendar invite is attached to this email — please accept it so the
+time blocks on your calendar too.</p>
+<p style="text-align:center;margin:30px 0;">
+  <a href="{interview_url}" style="background:{primary_color};color:white;
+     padding:14px 32px;border-radius:8px;text-decoration:none;font-weight:600;
+     display:inline-block;">Join interview room</a>
+</p>
+<p style="color:#64748b;font-size:13px;">
+  The room opens 5 minutes before the scheduled time. Please use a quiet
+  space with a working microphone and camera.
+</p>
+"""
+
+_DEFAULT_REMINDER_HTML = """
+<p>Hi {candidate_first_name},</p>
+<p>Just a quick reminder — your interview for <strong>{job_title}</strong> at
+{company_name} is tomorrow, <strong>{scheduled_at}</strong>.</p>
+<p style="text-align:center;margin:30px 0;">
+  <a href="{interview_url}" style="background:{primary_color};color:white;
+     padding:14px 32px;border-radius:8px;text-decoration:none;font-weight:600;
+     display:inline-block;">Join interview</a>
+</p>
+<p style="color:#64748b;font-size:13px;">
+  Need to reschedule? Reply to this email and we'll set up a new time.
+</p>
+"""
+
+_DEFAULT_SHORTLIST_HTML = """
+<p>Hi {candidate_first_name},</p>
+<p>Great news — you've been shortlisted for the <strong>{job_title}</strong>
+role at {company_name}. Thank you for the interview!</p>
+<p>{recruiter_name} will follow up shortly with the next step. In the
+meantime, let us know if you have any questions about the role, the team,
+or the timeline.</p>
+"""
+
+_DEFAULT_OFFER_HTML = """
+<p>Dear {candidate_first_name},</p>
+<p>We're delighted to extend an offer for the <strong>{job_title}</strong> position
+at {company_name}.</p>
+<table style="width:100%;border-collapse:collapse;margin:20px 0;">
+  <tr><td style="padding:6px 0;color:#64748b;width:40%;">Annual salary</td>
+      <td style="padding:6px 0;font-weight:600;">{salary_currency} {salary_amount}</td></tr>
+  <tr><td style="padding:6px 0;color:#64748b;">Bonus</td>
+      <td style="padding:6px 0;font-weight:600;">{bonus_amount}</td></tr>
+  <tr><td style="padding:6px 0;color:#64748b;">Equity</td>
+      <td style="padding:6px 0;font-weight:600;">{equity_description}</td></tr>
+  <tr><td style="padding:6px 0;color:#64748b;">Employment type</td>
+      <td style="padding:6px 0;font-weight:600;">{employment_type}</td></tr>
+  <tr><td style="padding:6px 0;color:#64748b;">Location</td>
+      <td style="padding:6px 0;font-weight:600;">{location}</td></tr>
+  <tr><td style="padding:6px 0;color:#64748b;">Start date</td>
+      <td style="padding:6px 0;font-weight:600;">{start_date}</td></tr>
+</table>
+<p style="text-align:center;margin:30px 0;">
+  <a href="{signing_url}" style="background:{primary_color};color:white;
+     padding:14px 32px;border-radius:8px;text-decoration:none;font-weight:600;
+     display:inline-block;">Review &amp; sign offer</a>
+</p>
+<p>If anything in the package needs adjusting, reply to this email and
+{recruiter_name} will work through it with you.</p>
+<p>Welcome to the team!</p>
+"""
+
+_DEFAULT_OFFER_ACCEPTED_HTML = """
+<p>Hi team,</p>
+<p><strong>{candidate_first_name}</strong> has accepted the offer for
+<strong>{job_title}</strong>.</p>
+<ul>
+  <li>Salary: {salary_currency} {salary_amount}</li>
+  <li>Start date: <strong>{start_date}</strong></li>
+</ul>
+<p>Time to kick off the onboarding workflow.</p>
+"""
+
+_DEFAULT_GENERIC_HTML = """
+<p>Hi {candidate_first_name},</p>
+<p>[Your message here. Use the variables on the right to pull in candidate
+and job details. The branding wrapper and signature are added automatically.]</p>
+"""
+
+_DEFAULT_NOTIFICATION_HTML = """
+<p><strong>{candidate_first_name}</strong> — {event_summary} on
+<em>{job_title}</em>.</p>
+"""
+
+
 _DEFAULTS: dict[str, dict[str, str]] = {
     "interview_invite": {
         "subject": "Interview Invitation — {job_title} at {company_name}",
@@ -148,13 +303,41 @@ _DEFAULTS: dict[str, dict[str, str]] = {
         "subject": "Your rescheduled interview — {job_title} at {company_name}",
         "body_html": _DEFAULT_RESCHEDULE_HTML,
     },
+    "interview_confirmation": {
+        "subject": "Confirmed: your interview for {job_title} at {company_name}",
+        "body_html": _DEFAULT_CONFIRMATION_HTML,
+    },
+    "interview_reminder": {
+        "subject": "Reminder: your interview tomorrow at {company_name}",
+        "body_html": _DEFAULT_REMINDER_HTML,
+    },
     "availability_check": {
         "subject": "Quick question about {job_title} at {company_name}",
         "body_html": _DEFAULT_AVAILABILITY_HTML,
     },
+    "shortlist_congrats": {
+        "subject": "Congratulations — shortlisted for {job_title} at {company_name}",
+        "body_html": _DEFAULT_SHORTLIST_HTML,
+    },
+    "offer_letter": {
+        "subject": "Your offer from {company_name} — {job_title}",
+        "body_html": _DEFAULT_OFFER_HTML,
+    },
+    "offer_accepted": {
+        "subject": "Offer accepted: {candidate_name} for {job_title}",
+        "body_html": _DEFAULT_OFFER_ACCEPTED_HTML,
+    },
     "rejection": {
         "subject": "Update on your application — {job_title} at {company_name}",
         "body_html": _DEFAULT_REJECTION_HTML,
+    },
+    "generic_email": {
+        "subject": "{job_title} — {company_name}",
+        "body_html": _DEFAULT_GENERIC_HTML,
+    },
+    "in_app_notification": {
+        "subject": "{candidate_first_name}: {event_summary}",
+        "body_html": _DEFAULT_NOTIFICATION_HTML,
     },
 }
 
