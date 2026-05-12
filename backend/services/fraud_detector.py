@@ -108,6 +108,13 @@ def _detect_in_pdf(pdf_bytes: bytes) -> Tuple[List[FraudSignal], str]:
 
             page_w = page.width
             page_h = page.height
+
+            # Collect filled background rectangles so we can tell "white text
+            # on a dark sidebar" (legit — many LinkedIn / Enhancv templates
+            # do this) from "white text on the default white page" (which is
+            # the classic hidden-injection trick).
+            bg_rects = _collect_filled_rects(page)
+
             # pdfplumber gives per-character attributes including non_stroking_color
             # (font colour) and size + bbox. We aggregate consecutive characters
             # with matching style into "runs" so evidence snippets are readable.
@@ -120,19 +127,24 @@ def _detect_in_pdf(pdf_bytes: bytes) -> Tuple[List[FraudSignal], str]:
                 size = run["size"]
                 bbox = run["bbox"]  # x0, y0, x1, y1
 
-                # 1. White-on-white / colour-too-close-to-white text
+                # 1. White-on-white / colour-too-close-to-white text.
+                # Only flag when the actual surrounding background is also
+                # near-white. A white-text run sitting inside a dark filled
+                # rectangle is perfectly visible and legitimate.
                 if color is not None and _color_distance(color, _WHITE) < 0.10:
-                    signals.append(FraudSignal(
-                        signal_type="hidden_text_color",
-                        severity="critical",
-                        evidence={
-                            "text": text[:240],
-                            "font_color": _rgb_to_hex(color),
-                            "bg_color": "#FFFFFF",
-                            "page": page_num,
-                            "bbox": list(bbox),
-                        },
-                    ))
+                    effective_bg = _effective_background_color(bbox, bg_rects)
+                    if _color_distance(color, effective_bg) < 0.15:
+                        signals.append(FraudSignal(
+                            signal_type="hidden_text_color",
+                            severity="critical",
+                            evidence={
+                                "text": text[:240],
+                                "font_color": _rgb_to_hex(color),
+                                "bg_color": _rgb_to_hex(effective_bg),
+                                "page": page_num,
+                                "bbox": list(bbox),
+                            },
+                        ))
 
                 # 2. Microtext (<4pt is invisible at 100% zoom on most monitors)
                 if size is not None and size < 4.0 and len(text) >= 8:
@@ -165,6 +177,73 @@ def _detect_in_pdf(pdf_bytes: bytes) -> Tuple[List[FraudSignal], str]:
                     ))
 
     return signals, "\n".join(text_parts)
+
+
+def _collect_filled_rects(page) -> list[dict]:
+    """Return all filled rectangles on the page with their fill colour.
+
+    pdfplumber exposes both `rects` (vector rectangles) and the broader
+    `figures`/`curves` set. For background detection we want the larger
+    filled boxes (LinkedIn sidebars, header banners, callout cards).
+    Tiny rects (icons, bullets) are filtered out.
+    """
+    out: list[dict] = []
+    candidates = list(getattr(page, "rects", []) or [])
+    # Some PDFs render the sidebar as a wide vector path rather than a
+    # true rect; pdfplumber surfaces those under `curves`. Include any
+    # large filled curve too.
+    candidates.extend(getattr(page, "curves", []) or [])
+
+    for r in candidates:
+        # Skip purely-stroked outlines — those don't paint the area.
+        if not r.get("fill", False) and r.get("non_stroking_color") is None:
+            continue
+        try:
+            x0 = float(r.get("x0", 0))
+            x1 = float(r.get("x1", 0))
+            top = float(r.get("top", 0))
+            bottom = float(r.get("bottom", 0))
+            w = max(0.0, x1 - x0)
+            h = max(0.0, bottom - top)
+        except (TypeError, ValueError):
+            continue
+        # Ignore stamps smaller than ~10x10 pt; those are icons, not bg.
+        if w < 10 or h < 10:
+            continue
+
+        color = _normalise_pdfplumber_color(r.get("non_stroking_color"))
+        if color is None:
+            continue
+        out.append({
+            "bbox": (x0, top, x1, bottom),
+            "area": w * h,
+            "color": color,
+        })
+
+    # Larger rectangles painted first should be "below" later ones in the
+    # z-order. pdfplumber preserves draw order — keep it as-is.
+    return out
+
+
+def _effective_background_color(
+    text_bbox: tuple[float, float, float, float],
+    bg_rects: list[dict],
+) -> Tuple[float, float, float]:
+    """Find the smallest rect that fully contains the text bbox and return
+    its fill colour. Defaults to white (the page canvas) when nothing
+    underlays the text — that's the implicit Acrobat background."""
+    tx0, ty0, tx1, ty1 = text_bbox
+    containing = []
+    for r in bg_rects:
+        rx0, ry0, rx1, ry1 = r["bbox"]
+        if rx0 <= tx0 and ry0 <= ty0 and rx1 >= tx1 and ry1 >= ty1:
+            containing.append(r)
+    if not containing:
+        return _WHITE
+    # Use the smallest containing rect — that's the most-local background
+    # the text sits on top of.
+    smallest = min(containing, key=lambda r: r["area"])
+    return smallest["color"]
 
 
 def _group_chars_into_runs(chars: list[dict]) -> list[dict]:
