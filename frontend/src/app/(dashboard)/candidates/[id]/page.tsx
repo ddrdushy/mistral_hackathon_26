@@ -1622,7 +1622,7 @@ export default function CandidateDetailPage({
             <Card title="AI Insights">
               <div className="space-y-5">
                 {/* Why Shortlisted */}
-                {snippets.why_shortlisted.length > 0 && (
+                {(snippets.why_shortlisted?.length ?? 0) > 0 && (
                   <div>
                     <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
                       Why Shortlisted
@@ -1642,7 +1642,7 @@ export default function CandidateDetailPage({
                 )}
 
                 {/* Key Strengths */}
-                {snippets.key_strengths.length > 0 && (
+                {(snippets.key_strengths?.length ?? 0) > 0 && (
                   <div>
                     <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
                       Key Strengths
@@ -1662,7 +1662,7 @@ export default function CandidateDetailPage({
                 )}
 
                 {/* Main Gaps */}
-                {snippets.main_gaps.length > 0 && (
+                {(snippets.main_gaps?.length ?? 0) > 0 && (
                   <div>
                     <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
                       Main Gaps
@@ -1682,7 +1682,7 @@ export default function CandidateDetailPage({
                 )}
 
                 {/* Interview Focus */}
-                {snippets.interview_focus.length > 0 && (
+                {(snippets.interview_focus?.length ?? 0) > 0 && (
                   <div>
                     <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
                       Interview Focus
