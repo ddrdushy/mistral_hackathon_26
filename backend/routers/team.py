@@ -120,6 +120,12 @@ class OrganizationProfile(BaseModel):
     about: str | None = None
     default_work_mode: str | None = None
     default_currency: str | None = None
+    # Branding — applied to every outbound email (logo / colour /
+    # display name / signature). Optional; defaults kick in when empty.
+    brand_logo_url: str | None = None
+    brand_primary_color: str | None = None
+    brand_from_name: str | None = None
+    brand_signature: str | None = None
 
 
 @router.get("/organization")
@@ -139,6 +145,10 @@ def get_organization(
         "about": t.about,
         "default_work_mode": t.default_work_mode,
         "default_currency": t.default_currency,
+        "brand_logo_url": t.brand_logo_url,
+        "brand_primary_color": t.brand_primary_color,
+        "brand_from_name": t.brand_from_name,
+        "brand_signature": t.brand_signature,
         "profile_completed": t.profile_completed_at is not None,
         "profile_completed_at": (
             t.profile_completed_at.isoformat() if t.profile_completed_at else None
@@ -166,6 +176,8 @@ def update_organization(
     for field in (
         "name", "industry", "headquarters", "company_size",
         "website", "about", "default_work_mode", "default_currency",
+        "brand_logo_url", "brand_primary_color",
+        "brand_from_name", "brand_signature",
     ):
         new = getattr(body, field)
         if new is None:
@@ -206,6 +218,10 @@ def update_organization(
         "about": tenant.about,
         "default_work_mode": tenant.default_work_mode,
         "default_currency": tenant.default_currency,
+        "brand_logo_url": tenant.brand_logo_url,
+        "brand_primary_color": tenant.brand_primary_color,
+        "brand_from_name": tenant.brand_from_name,
+        "brand_signature": tenant.brand_signature,
         "profile_completed": tenant.profile_completed_at is not None,
         "profile_completed_at": (
             tenant.profile_completed_at.isoformat() if tenant.profile_completed_at else None

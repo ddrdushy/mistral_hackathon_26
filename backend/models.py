@@ -55,6 +55,16 @@ class Tenant(Base):
     default_currency = Column(String, nullable=True)
     profile_completed_at = Column(DateTime, nullable=True)
 
+    # Branding — applied to every email the platform sends. Each field
+    # falls back to a sensible default when empty (logo to the HireOps
+    # mark, colour to indigo, from-name to the tenant.name). Logo is
+    # stored as a URL (CDN-hosted or pasted external URL); v2 will add
+    # direct upload.
+    brand_logo_url = Column(String, nullable=True)
+    brand_primary_color = Column(String, nullable=True)   # hex incl. '#'
+    brand_from_name = Column(String, nullable=True)       # display name on outbound emails
+    brand_signature = Column(Text, nullable=True)         # plain or basic HTML
+
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -188,6 +198,33 @@ class AuditLog(Base):
 
     __table_args__ = (
         Index("idx_audit_action_time", "action_type", "created_at"),
+    )
+
+
+class EmailTemplate(Base):
+    """Per-tenant email template overrides. One row per (tenant_id,
+    category). Falls back to the platform default in services/email_templates.py
+    when no row exists for a category.
+
+    Body is plain HTML (we render the email as HTML with a text fallback
+    auto-derived). Variables use {token} syntax — see the renderer for
+    the supported tokens per category.
+    """
+    __tablename__ = "email_templates"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
+    category = Column(String, nullable=False)
+    # interview_invite | interview_reschedule | availability_check | rejection | offer_email
+    subject = Column(String, nullable=False)
+    body_html = Column(Text, nullable=False)
+    body_text = Column(Text, default="")  # optional plain-text variant
+    enabled = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "category", name="uq_email_template_tenant_category"),
     )
 
 

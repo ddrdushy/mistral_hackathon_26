@@ -52,7 +52,12 @@ export default function OrganizationForm({ onSaved, compact = false }: Props) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<number | null>(null);
-  const [form, setForm] = useState<Partial<OrganizationProfile>>({
+  const [form, setForm] = useState<Partial<OrganizationProfile> & {
+    brand_logo_url?: string;
+    brand_primary_color?: string;
+    brand_from_name?: string;
+    brand_signature?: string;
+  }>({
     name: "",
     industry: "",
     headquarters: "",
@@ -61,12 +66,21 @@ export default function OrganizationForm({ onSaved, compact = false }: Props) {
     about: "",
     default_work_mode: "hybrid",
     default_currency: "USD",
+    brand_logo_url: "",
+    brand_primary_color: "",
+    brand_from_name: "",
+    brand_signature: "",
   });
 
   useEffect(() => {
     (async () => {
       try {
-        const org = await apiGet<OrganizationProfile>("/team/organization");
+        const org = await apiGet<OrganizationProfile & {
+          brand_logo_url?: string | null;
+          brand_primary_color?: string | null;
+          brand_from_name?: string | null;
+          brand_signature?: string | null;
+        }>("/team/organization");
         setForm({
           name: org.name || "",
           industry: org.industry || "",
@@ -76,6 +90,10 @@ export default function OrganizationForm({ onSaved, compact = false }: Props) {
           about: org.about || "",
           default_work_mode: org.default_work_mode || "hybrid",
           default_currency: org.default_currency || "USD",
+          brand_logo_url: org.brand_logo_url || "",
+          brand_primary_color: org.brand_primary_color || "",
+          brand_from_name: org.brand_from_name || "",
+          brand_signature: org.brand_signature || "",
         });
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load");
@@ -230,6 +248,89 @@ export default function OrganizationForm({ onSaved, compact = false }: Props) {
           placeholder="Acme builds AI tooling for HR teams in Southeast Asia. We're remote-first, ~40 people."
         />
       </Field>
+
+      <div className="pt-2 border-t border-slate-200">
+        <h3 className="text-sm font-semibold text-slate-900">Email branding</h3>
+        <p className="text-xs text-slate-500 mt-0.5 mb-3">
+          Applied to every outbound email the platform sends — interview
+          invites, reschedules, availability checks, rejections. The body
+          copy is edited separately on the{" "}
+          <a href="/settings/templates" className="text-indigo-700 hover:underline">
+            Email templates
+          </a>{" "}
+          page.
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <Field
+          label="Logo URL"
+          hint="Direct link to a PNG/SVG. Leave empty to render the company name instead."
+        >
+          <input
+            type="url"
+            value={form.brand_logo_url ?? ""}
+            onChange={(e) => setForm((f) => ({ ...f, brand_logo_url: e.target.value }))}
+            className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            placeholder="https://example.com/logo.png"
+          />
+        </Field>
+
+        <Field
+          label="Primary colour"
+          hint="Hex code for buttons + header. Defaults to #6366f1 (indigo)."
+        >
+          <div className="flex items-center gap-2">
+            <input
+              type="color"
+              value={form.brand_primary_color || "#6366f1"}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, brand_primary_color: e.target.value }))
+              }
+              className="h-9 w-12 rounded border border-slate-300"
+            />
+            <input
+              type="text"
+              value={form.brand_primary_color ?? ""}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, brand_primary_color: e.target.value }))
+              }
+              className="flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              placeholder="#6366f1"
+            />
+          </div>
+        </Field>
+
+        <Field
+          label="Email from-name"
+          hint="Display name on outbound emails. Defaults to the company name."
+        >
+          <input
+            type="text"
+            value={form.brand_from_name ?? ""}
+            onChange={(e) =>
+              setForm((f) => ({ ...f, brand_from_name: e.target.value }))
+            }
+            className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            placeholder="Acme Recruitment"
+          />
+        </Field>
+
+        <Field
+          label="Email signature"
+          hint="Plain text or basic HTML. Sits at the bottom of every email."
+        >
+          <textarea
+            value={form.brand_signature ?? ""}
+            onChange={(e) =>
+              setForm((f) => ({ ...f, brand_signature: e.target.value }))
+            }
+            rows={3}
+            className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            placeholder={"Best regards,\nAcme Recruitment Team"}
+          />
+        </Field>
+      </div>
 
       {error && (
         <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">

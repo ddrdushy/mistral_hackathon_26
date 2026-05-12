@@ -384,48 +384,43 @@ async def send_interview_link(body: dict, db: Session = Depends(get_db), session
 
     base_url = os.getenv("FRONTEND_URL", "").rstrip("/")
     interview_url = f"{base_url}/interview/{token}"
-    company = (
-        session.tenant.name
-        or os.getenv("COMPANY_NAME", "HireOps AI")
-    )
 
-    # Build the email body once and try the tenant's own connected
-    # mailbox first; fall back to the legacy gmail_manager only if no
-    # MailAccount exists.
-    from services.smtp_service import send_interview_link_email
+    # Render via the per-tenant template (falls back to the platform
+    # default when the tenant hasn't customised). Branding wrapper picks
+    # up tenant logo / colour / signature automatically.
+    from services.email_templates import render as render_template
     from services.tenant_outbound import send_via_tenant_mailbox
+    from services.smtp_service import send_interview_link_email
 
-    subject = f"Interview Invitation — {job.title if job else 'Open Position'} at {company}"
-    name_for_template = candidate.name.split()[0] if candidate.name else "there"
-
-    # Re-use the legacy template generator for body content, then dispatch
-    # through the tenant-aware SMTP path. The helper returns the same
-    # success/message dict shape, so the rest of the flow doesn't change.
-    body_html, body_text = _interview_link_body(
-        name_for_template,
-        job.title if job else "Open Position",
-        company,
-        interview_url,
+    rendered = render_template(
+        session.tenant,
+        "interview_invite",
+        db=db,
+        candidate_name=candidate.name or "",
+        job_title=(job.title if job else "Open Position"),
+        interview_url=interview_url,
     )
 
     result = send_via_tenant_mailbox(
         tenant_id=session.tenant.id,
         to_email=candidate.email,
-        subject=subject,
-        body_html=body_html,
-        body_text=body_text,
+        subject=rendered["subject"],
+        body_html=rendered["body_html"],
+        body_text=rendered["body_text"],
         db=db,
     )
 
     # Fall back to the legacy gmail_manager path only if the tenant has
     # no MailAccount at all (e.g. brand-new tenant who hasn't connected
-    # Gmail yet). Keeps existing demo deploys working.
+    # Gmail yet). Keeps existing demo deploys working. The legacy path
+    # uses its own hard-coded template — it isn't worth branching the
+    # renderer through it just for the missing-mailbox edge case.
     if not result["success"] and "No connected mailbox" in result.get("message", ""):
         legacy = send_interview_link_email(
             to_email=candidate.email,
-            candidate_name=name_for_template,
+            candidate_name=(candidate.name or "").split()[0] if candidate.name else "there",
             job_title=job.title if job else "Open Position",
-            company_name=company,
+            company_name=session.tenant.name or "the recruitment team",
             interview_url=interview_url,
         )
         if legacy.get("success"):

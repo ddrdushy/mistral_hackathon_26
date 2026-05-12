@@ -44,7 +44,7 @@ def init_db():
         ExternalIntegration, ExternalIdMapping, IntegrationSyncLog,
         SupportTicket, TenantFeedback,
         JobBoardConnection, JobBoardPosting,
-        UserCalendarConnection,
+        UserCalendarConnection, EmailTemplate,
     )
 
     Base.metadata.create_all(bind=engine)
@@ -191,6 +191,11 @@ def _run_migrations():
             "default_work_mode": "VARCHAR",
             "default_currency": "VARCHAR",
             "profile_completed_at": "TIMESTAMP",
+            # Branding (applied to every outbound email)
+            "brand_logo_url": "VARCHAR",
+            "brand_primary_color": "VARCHAR",
+            "brand_from_name": "VARCHAR",
+            "brand_signature": "TEXT",
         }
         for col, ddl in org_cols.items():
             if col not in existing:

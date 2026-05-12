@@ -167,6 +167,25 @@ export default function TenantSettingsPage() {
         </Link>
 
         <Link
+          href="/settings/templates"
+          className="block bg-white rounded-xl shadow-sm border border-slate-200 p-5 hover:border-indigo-300 hover:shadow-md transition-all"
+        >
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 rounded-lg bg-violet-50 text-violet-600 flex items-center justify-center flex-shrink-0">
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+              </svg>
+            </div>
+            <div className="min-w-0">
+              <div className="text-sm font-semibold text-slate-900">Email Templates</div>
+              <div className="text-xs text-slate-500 mt-0.5">
+                Customise the subject and body of interview invites, reschedule, availability check, and rejection emails.
+              </div>
+            </div>
+          </div>
+        </Link>
+
+        <Link
           href="/settings/calendar"
           className="block bg-white rounded-xl shadow-sm border border-slate-200 p-5 hover:border-indigo-300 hover:shadow-md transition-all"
         >
