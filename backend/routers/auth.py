@@ -215,31 +215,8 @@ def signup(req: SignupRequest, request: Request, response: Response, db: Session
     verify_url = f"{_frontend_url()}/verify-email?token={token}"
     send_verification_email(user.email, user.name, verify_url)
 
-    # Seed demo data so the dashboard isn't empty on first login.
-    # Critical: capture the IDs we need BEFORE the seeder runs, since a seeder
-    # failure can leave the session in PendingRollbackError state where reading
-    # `tenant.id` / `user.id` triggers an expired-attribute refresh and crashes.
-    user_id_for_jwt = user.id
-    tenant_id_for_jwt = tenant.id
-
-    try:
-        from services.demo_seed import seed_tenant
-        seed_tenant(db, tenant)
-    except Exception as e:
-        # Never fail signup because of seeding. Roll the session back so any
-        # subsequent ORM access doesn't trip on PendingRollbackError.
-        db.rollback()
-        import logging
-        logging.getLogger("hireops.auth").warning("Demo seeding failed: %s", e)
-
-    # Log in immediately
-    jwt_token = issue_jwt(user_id_for_jwt, tenant_id_for_jwt)
+    jwt_token = issue_jwt(user.id, tenant.id)
     _set_session_cookie(response, jwt_token)
-
-    # Re-fetch in case the session was rolled back (seeding failure). Worst case
-    # we issue the response with rolled-back ORM state — the user can refresh.
-    user = db.query(User).filter(User.id == user_id_for_jwt).first() or user
-    tenant = db.query(Tenant).filter(Tenant.id == tenant_id_for_jwt).first() or tenant
 
     return MeResponse(
         user=_user_to_response(user),

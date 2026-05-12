@@ -47,7 +47,6 @@ def init_db():
     )
     Base.metadata.create_all(bind=engine)
     _run_migrations()
-    _backfill_demo_tenant()
     _apply_superadmin_emails()
     _seed_default_testimonials()
     _seed_default_pipeline_templates()
