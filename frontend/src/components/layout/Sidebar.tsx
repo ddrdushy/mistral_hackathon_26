@@ -15,6 +15,7 @@ import {
   PhoneIcon,
   ChatBubbleLeftRightIcon,
   VideoCameraIcon,
+  BookOpenIcon,
 } from "@heroicons/react/24/outline";
 
 interface NavItem {
@@ -33,6 +34,7 @@ const navItems: NavItem[] = [
   { label: "Interviews", href: "/interviews", icon: VideoCameraIcon },
   { label: "Outreach", href: "/outreach", icon: ChatBubbleLeftRightIcon },
   { label: "Reports", href: "/reports", icon: ChartBarIcon },
+  { label: "Docs", href: "/docs", icon: BookOpenIcon },
   { label: "Settings", href: "/settings", icon: Cog6ToothIcon },
 ];
 
