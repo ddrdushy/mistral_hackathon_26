@@ -261,17 +261,52 @@ async def send_interview_link(body: dict, db: Session = Depends(get_db), session
 
     base_url = os.getenv("FRONTEND_URL", "").rstrip("/")
     interview_url = f"{base_url}/interview/{token}"
-    company = os.getenv("COMPANY_NAME", "HireOps AI")
-
-    # Send the actual email
-    from services.smtp_service import send_interview_link_email
-    result = send_interview_link_email(
-        to_email=candidate.email,
-        candidate_name=candidate.name.split()[0],
-        job_title=job.title if job else "Open Position",
-        company_name=company,
-        interview_url=interview_url,
+    company = (
+        session.tenant.name
+        or os.getenv("COMPANY_NAME", "HireOps AI")
     )
+
+    # Build the email body once and try the tenant's own connected
+    # mailbox first; fall back to the legacy gmail_manager only if no
+    # MailAccount exists.
+    from services.smtp_service import send_interview_link_email
+    from services.tenant_outbound import send_via_tenant_mailbox
+
+    subject = f"Interview Invitation — {job.title if job else 'Open Position'} at {company}"
+    name_for_template = candidate.name.split()[0] if candidate.name else "there"
+
+    # Re-use the legacy template generator for body content, then dispatch
+    # through the tenant-aware SMTP path. The helper returns the same
+    # success/message dict shape, so the rest of the flow doesn't change.
+    body_html, body_text = _interview_link_body(
+        name_for_template,
+        job.title if job else "Open Position",
+        company,
+        interview_url,
+    )
+
+    result = send_via_tenant_mailbox(
+        tenant_id=session.tenant.id,
+        to_email=candidate.email,
+        subject=subject,
+        body_html=body_html,
+        body_text=body_text,
+        db=db,
+    )
+
+    # Fall back to the legacy gmail_manager path only if the tenant has
+    # no MailAccount at all (e.g. brand-new tenant who hasn't connected
+    # Gmail yet). Keeps existing demo deploys working.
+    if not result["success"] and "No connected mailbox" in result.get("message", ""):
+        legacy = send_interview_link_email(
+            to_email=candidate.email,
+            candidate_name=name_for_template,
+            job_title=job.title if job else "Open Position",
+            company_name=company,
+            interview_url=interview_url,
+        )
+        if legacy.get("success"):
+            result = {"success": True, "message": legacy.get("message", "Sent"), "from": None}
 
     if result["success"]:
         link.status = "sent"
@@ -281,16 +316,75 @@ async def send_interview_link(body: dict, db: Session = Depends(get_db), session
         _log_event(db, link.app_id, "interview_link_emailed", {
             "token": token,
             "to_email": candidate.email,
+            "from": result.get("from"),
         })
         db.commit()
-        return {"status": "sent", "token": token, "email_sent": True, "to": candidate.email}
-    else:
-        # Mark as sent (status) even if email fails — recruiter can copy link
-        link.status = "sent"
-        app.interview_link_status = "sent"
-        app.updated_at = datetime.utcnow()
-        db.commit()
-        return {"status": "sent", "token": token, "email_sent": False, "error": result["message"]}
+        return {
+            "status": "sent",
+            "token": token,
+            "email_sent": True,
+            "to": candidate.email,
+            "from": result.get("from"),
+        }
+
+    # Real failure: don't lie to HR. Mark the link send_failed so the
+    # UI can flag it and prompt the user to fix the mailbox / copy the
+    # link manually.
+    link.status = "send_failed"
+    app.interview_link_status = "send_failed"
+    app.ai_next_action = (
+        f"Interview email failed — {result.get('message','SMTP error')}"
+    )
+    app.updated_at = datetime.utcnow()
+    db.commit()
+    return {
+        "status": "send_failed",
+        "token": token,
+        "email_sent": False,
+        "error": result["message"],
+        "interview_url": interview_url,  # let HR copy/send manually
+    }
+
+
+def _interview_link_body(name: str, job_title: str, company: str, url: str) -> tuple[str, str]:
+    """Render the same interview-invite HTML + text we already had in
+    smtp_service, so the tenant_outbound path produces visually identical
+    emails."""
+    body_html = f"""
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+      <div style="background: linear-gradient(135deg,#6366f1,#8b5cf6); padding: 30px; border-radius: 12px 12px 0 0; text-align: center;">
+        <h1 style="color: white; margin: 0; font-size: 24px;">{company}</h1>
+        <p style="color: rgba(255,255,255,0.9); margin: 8px 0 0 0;">Interview Invitation</p>
+      </div>
+      <div style="background:#fff; padding:30px; border:1px solid #e2e8f0; border-top:none;">
+        <p style="color:#334155; font-size:16px; line-height:1.6;">Hi {name},</p>
+        <p style="color:#334155; font-size:16px; line-height:1.6;">
+          Thank you for applying for the <strong>{job_title}</strong> position at {company}.
+          We'd like to invite you to a short AI-powered screening interview.
+        </p>
+        <p style="color:#334155; font-size:16px; line-height:1.6;">
+          The interview takes about <strong>8–10 minutes</strong>. You'll need a
+          working microphone and camera in a quiet environment.
+        </p>
+        <div style="text-align:center; margin:30px 0;">
+          <a href="{url}" style="background:#6366f1; color:white; padding:14px 32px;
+             border-radius:8px; text-decoration:none; font-weight:600;">Start your interview</a>
+        </div>
+        <p style="color:#64748b; font-size:14px; line-height:1.6;">
+          This link is valid for 72 hours. If the button doesn't work, copy this URL into your browser:<br>
+          <span style="font-family:monospace; word-break:break-all;">{url}</span>
+        </p>
+      </div>
+    </div>"""
+    body_text = (
+        f"Hi {name},\n\n"
+        f"Thank you for applying for the {job_title} position at {company}.\n"
+        f"We'd like to invite you to a short AI-powered screening interview (8-10 minutes).\n\n"
+        f"Start your interview here: {url}\n\n"
+        f"This link is valid for 72 hours.\n\n"
+        f"Best regards,\n{company} Recruitment Team"
+    )
+    return body_html, body_text
 
 
 @router.post("/{app_id}/send-rejection")
