@@ -1159,8 +1159,22 @@ export default function CandidateDetailPage({
                   </div>
                 </div>
 
+                {/* Blocked-for-fraud callout — when the scorer refuses to
+                    grade an adversarial resume, the other arrays are absent.
+                    Render the reason instead of crashing on .length below. */}
+                {("blocked_reason" in resume) && (
+                  <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3">
+                    <div className="text-sm font-semibold text-rose-900">
+                      Scoring blocked
+                    </div>
+                    <div className="text-xs text-rose-800 mt-0.5">
+                      {resume.summary || "The resume contained adversarial content. Score was not generated."}
+                    </div>
+                  </div>
+                )}
+
                 {/* Evidence */}
-                {resume.evidence.length > 0 && (
+                {(resume.evidence?.length ?? 0) > 0 && (
                   <div>
                     <h4 className="text-sm font-semibold text-slate-700 mb-2 flex items-center gap-1.5">
                       <CheckCircleSolid className="h-4 w-4 text-green-500" />
@@ -1181,7 +1195,7 @@ export default function CandidateDetailPage({
                 )}
 
                 {/* Gaps */}
-                {resume.gaps.length > 0 && (
+                {(resume.gaps?.length ?? 0) > 0 && (
                   <div>
                     <h4 className="text-sm font-semibold text-slate-700 mb-2 flex items-center gap-1.5">
                       <ExclamationTriangleIcon className="h-4 w-4 text-yellow-500" />
@@ -1202,7 +1216,7 @@ export default function CandidateDetailPage({
                 )}
 
                 {/* Risks */}
-                {resume.risks.length > 0 && (
+                {(resume.risks?.length ?? 0) > 0 && (
                   <div>
                     <h4 className="text-sm font-semibold text-slate-700 mb-2 flex items-center gap-1.5">
                       <XCircleIcon className="h-4 w-4 text-red-500" />
@@ -1223,7 +1237,7 @@ export default function CandidateDetailPage({
                 )}
 
                 {/* Screening Questions */}
-                {resume.screening_questions.length > 0 && (
+                {(resume.screening_questions?.length ?? 0) > 0 && (
                   <div>
                     <h4 className="text-sm font-semibold text-slate-700 mb-2 flex items-center gap-1.5">
                       <ChatBubbleLeftRightIcon className="h-4 w-4 text-indigo-500" />

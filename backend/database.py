@@ -222,6 +222,35 @@ def _run_migrations():
                 except Exception:
                     pass
 
+        # Unique (tenant_id, lower(email)) — defends against the workflow
+        # racing itself when two events match the same email at the same
+        # time. Skips creation if duplicates already exist (cleanup script
+        # has to run first); the next start will pick it up.
+        idx_rows = conn_inspect_indexes(engine, "candidates")
+        if not any(i.endswith("ux_candidates_tenant_email_lower") for i in idx_rows):
+            with engine.begin() as conn:
+                try:
+                    conn.execute(text(
+                        "CREATE UNIQUE INDEX ux_candidates_tenant_email_lower "
+                        "ON candidates (tenant_id, lower(email))"
+                    ))
+                except Exception:
+                    pass
+
+
+def conn_inspect_indexes(engine, table):
+    """Best-effort index name fetch; returns [] on any failure (e.g. on
+    SQLite where the catalog query differs)."""
+    from sqlalchemy import text
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(text(
+                "SELECT indexname FROM pg_indexes WHERE tablename = :t"
+            ), {"t": table}).fetchall()
+            return [r[0] for r in rows]
+    except Exception:
+        return []
+
     # Talent-bank profile fields on candidates — added so HR can suggest
     # past resumes for new jobs without re-running the LLM scorer.
     if "candidates" in insp.get_table_names():
