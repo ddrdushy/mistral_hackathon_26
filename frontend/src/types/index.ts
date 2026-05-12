@@ -305,6 +305,12 @@ export interface EmailListResponse {
 // ═══════════════════════════════════════
 // CANDIDATES
 // ═══════════════════════════════════════
+export type TalentBankStatus =
+  | "available"
+  | "joined_another"
+  | "not_available"
+  | "hired_elsewhere";
+
 export interface Candidate {
   id: number;
   name: string;
@@ -314,6 +320,9 @@ export interface Candidate {
   resume_filename: string;
   source_email_id: number | null;
   notes: string;
+  talent_bank_status?: TalentBankStatus;
+  talent_bank_status_reason?: string;
+  talent_bank_status_updated_at?: string | null;
   created_at: string;
   updated_at: string;
 }

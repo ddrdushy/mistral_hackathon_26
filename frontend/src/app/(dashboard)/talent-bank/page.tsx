@@ -20,6 +20,12 @@ interface TenantTag {
   candidate_count: number;
 }
 
+type TalentBankStatus =
+  | "available"
+  | "joined_another"
+  | "not_available"
+  | "hired_elsewhere";
+
 interface TalentBankCandidate {
   id: number;
   name: string;
@@ -41,8 +47,34 @@ interface TalentBankCandidate {
     key_points?: string[];
     extracted_at?: string | null;
   };
+  talent_bank_status?: TalentBankStatus;
+  talent_bank_status_reason?: string;
+  talent_bank_status_updated_at?: string | null;
   created_at?: string | null;
 }
+
+const TALENT_STATUS_BADGE: Record<TalentBankStatus, { label: string; cls: string; hint: string }> = {
+  available: {
+    label: "Available",
+    cls: "bg-emerald-100 text-emerald-700 border-emerald-200",
+    hint: "In the market — surfaces in match results.",
+  },
+  joined_another: {
+    label: "Joined elsewhere",
+    cls: "bg-slate-200 text-slate-700 border-slate-300",
+    hint: "Candidate replied that they've joined another company. Excluded from future matches.",
+  },
+  not_available: {
+    label: "Not available",
+    cls: "bg-amber-100 text-amber-800 border-amber-200",
+    hint: "Candidate said they're not currently looking. Excluded from future matches.",
+  },
+  hired_elsewhere: {
+    label: "Hired elsewhere",
+    cls: "bg-slate-200 text-slate-700 border-slate-300",
+    hint: "Manually marked as hired by another company.",
+  },
+};
 
 export default function TalentBankPage() {
   const [items, setItems] = useState<TalentBankCandidate[]>([]);
@@ -364,6 +396,9 @@ export default function TalentBankPage() {
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
               {items.map((c) => {
                 const isSelected = selectedIds.has(c.id);
+                const status: TalentBankStatus = c.talent_bank_status || "available";
+                const unavailable = status !== "available";
+                const statusBadge = TALENT_STATUS_BADGE[status];
                 return (
                   <div
                     key={c.id}
@@ -371,7 +406,7 @@ export default function TalentBankPage() {
                       isSelected
                         ? "border-indigo-400 ring-1 ring-indigo-200"
                         : "border-slate-200 hover:border-indigo-300"
-                    }`}
+                    } ${unavailable ? "opacity-70" : ""}`}
                   >
                     <div className="flex items-start gap-3">
                       <input
@@ -437,7 +472,7 @@ export default function TalentBankPage() {
                               )}
                             </div>
                           </div>
-                          <div className="flex-shrink-0">
+                          <div className="flex-shrink-0 flex flex-col items-end gap-1">
                             {c.application_count > 0 ? (
                               <span className="text-[11px] px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
                                 {c.application_count} application
@@ -446,6 +481,14 @@ export default function TalentBankPage() {
                             ) : (
                               <span className="text-[11px] px-2 py-0.5 rounded bg-slate-50 text-slate-600 border border-slate-200">
                                 Talent bank
+                              </span>
+                            )}
+                            {unavailable && (
+                              <span
+                                className={`text-[11px] px-2 py-0.5 rounded border ${statusBadge.cls}`}
+                                title={statusBadge.hint}
+                              >
+                                {statusBadge.label}
                               </span>
                             )}
                           </div>
