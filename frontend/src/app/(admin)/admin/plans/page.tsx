@@ -17,6 +17,7 @@ interface PlanConfig {
   max_candidates: number;
   max_interviews_per_month: number;
   daily_llm_budget_usd: number;
+  llm_markup_multiplier: number;
   features: string[];
   allowed_agents: string[]; // ["*"] or list
   has_override: boolean;
@@ -141,6 +142,7 @@ function PlanEditorCard({
       max_candidates: plan.max_candidates,
       max_interviews_per_month: plan.max_interviews_per_month,
       daily_llm_budget_usd: plan.daily_llm_budget_usd,
+      llm_markup_multiplier: plan.llm_markup_multiplier,
       features: plan.features.join("\n"),
       allowed_all: plan.allowed_agents.includes("*"),
       allowed_set: new Set(plan.allowed_agents.filter((a) => a !== "*")),
@@ -153,6 +155,7 @@ function PlanEditorCard({
     plan.max_candidates,
     plan.max_interviews_per_month,
     plan.daily_llm_budget_usd,
+    plan.llm_markup_multiplier,
     plan.features,
     plan.allowed_agents,
   ]);
@@ -177,6 +180,7 @@ function PlanEditorCard({
         max_candidates: edit.max_candidates,
         max_interviews_per_month: edit.max_interviews_per_month,
         daily_llm_budget_usd: edit.daily_llm_budget_usd,
+        llm_markup_multiplier: edit.llm_markup_multiplier,
         features,
         allowed_agents: allowedAgents,
       });
@@ -270,6 +274,28 @@ function PlanEditorCard({
             />
           </Field>
         </div>
+
+        <Field label="LLM markup multiplier">
+          <input
+            type="number"
+            step="0.1"
+            min="0"
+            value={edit.llm_markup_multiplier}
+            onChange={(e) =>
+              setEdit({
+                ...edit,
+                llm_markup_multiplier: Number(e.target.value) || 0,
+              })
+            }
+            className="w-full px-2 py-1.5 text-sm border border-slate-300 rounded"
+          />
+          <p className="text-[11px] text-slate-500 mt-1">
+            Tenants on this plan see their AI cost multiplied by this number.
+            1.0 = pass-through (no markup). 2.5 = 250% markup. Used by
+            <code className="font-mono mx-1">/settings/llm/usage</code> so
+            recruiters never see raw provider cost.
+          </p>
+        </Field>
 
         <Field label="Stripe price ID">
           <input

@@ -55,6 +55,13 @@ class Plan:
     max_candidates: int
     max_interviews_per_month: int
     daily_llm_budget_usd: float  # hard cap on Mistral spend per UTC day; -1 = unlimited
+    # Multiplier applied to raw Mistral / ElevenLabs cost when billing
+    # tenants. We pay Mistral $1, we charge the tenant $1 * markup. 1.0
+    # = pass-through (no profit), 2.5 = standard 250% markup. Admin can
+    # override per plan via the existing plan_override path so a
+    # specific tier can be promoted or a strategic account can run at
+    # cost.
+    llm_markup_multiplier: float = 1.0
     features: list[str] = field(default_factory=list)
     # Agent-level gating. A set of agent_name strings, or {"*"} for all.
     # Plans started with no gating (Pro behaviour); free trial gating was
@@ -74,6 +81,8 @@ PLANS: dict[PlanName, Plan] = {
         max_candidates=25,
         max_interviews_per_month=10,
         daily_llm_budget_usd=float(os.getenv("FREE_DAILY_LLM_BUDGET", "0.50")),
+        # Free plan budget-capped tightly; no markup since spend is small.
+        llm_markup_multiplier=float(os.getenv("FREE_LLM_MARKUP", "1.0")),
         features=[
             "5 active jobs",
             "25 candidates",
@@ -95,6 +104,7 @@ PLANS: dict[PlanName, Plan] = {
         max_candidates=250,
         max_interviews_per_month=100,
         daily_llm_budget_usd=float(os.getenv("STARTER_DAILY_LLM_BUDGET", "5.00")),
+        llm_markup_multiplier=float(os.getenv("STARTER_LLM_MARKUP", "2.5")),
         features=[
             "25 active jobs",
             "250 candidates",
@@ -126,6 +136,7 @@ PLANS: dict[PlanName, Plan] = {
         max_candidates=-1,
         max_interviews_per_month=-1,
         daily_llm_budget_usd=float(os.getenv("PRO_DAILY_LLM_BUDGET", "50.00")),
+        llm_markup_multiplier=float(os.getenv("PRO_LLM_MARKUP", "2.0")),
         features=[
             "Unlimited jobs",
             "Unlimited candidates",
@@ -158,6 +169,7 @@ def get_plan(name: str) -> Plan:
         max_candidates=int(overrides.get("max_candidates")) if overrides.get("max_candidates") is not None else base.max_candidates,
         max_interviews_per_month=int(overrides.get("max_interviews_per_month")) if overrides.get("max_interviews_per_month") is not None else base.max_interviews_per_month,
         daily_llm_budget_usd=float(overrides.get("daily_llm_budget_usd")) if overrides.get("daily_llm_budget_usd") is not None else base.daily_llm_budget_usd,
+        llm_markup_multiplier=float(overrides.get("llm_markup_multiplier")) if overrides.get("llm_markup_multiplier") is not None else base.llm_markup_multiplier,
         features=overrides.get("features") if overrides.get("features") is not None else base.features,
         allowed_agents=set(overrides.get("allowed_agents")) if overrides.get("allowed_agents") is not None else base.allowed_agents,
     )

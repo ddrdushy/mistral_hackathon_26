@@ -15,6 +15,8 @@ interface TenantUsageReport {
   total_output_tokens: number;
   total_tokens: number;
   total_cost_usd: number;
+  billable_usd?: number;
+  markup_multiplier?: number;
   by_agent: Record<
     string,
     {
@@ -344,7 +346,12 @@ export default function TenantSettingsPage() {
           <div>
             <h2 className="text-lg font-semibold text-slate-900">Your AI Usage</h2>
             <p className="text-sm text-slate-500">
-              Mistral / ElevenLabs spend attributed to this tenant. Updated in real time.
+              Billable AI cost on your current plan. Updated in real time.
+              {usage?.markup_multiplier && usage.markup_multiplier !== 1 && (
+                <span className="ml-1 text-slate-400">
+                  (priced at the {usage.markup_multiplier}× plan rate)
+                </span>
+              )}
             </p>
           </div>
           <div className="flex gap-1">

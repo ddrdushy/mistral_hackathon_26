@@ -1485,6 +1485,7 @@ class PlanConfigResponse(BaseModel):
     max_candidates: int
     max_interviews_per_month: int
     daily_llm_budget_usd: float
+    llm_markup_multiplier: float
     features: list[str]
     allowed_agents: list[str]
     has_override: bool
@@ -1498,6 +1499,7 @@ class PlanConfigUpdate(BaseModel):
     max_candidates: int | None = None
     max_interviews_per_month: int | None = None
     daily_llm_budget_usd: float | None = None
+    llm_markup_multiplier: float | None = None
     features: list[str] | None = None
     allowed_agents: list[str] | None = None  # use ["*"] to mean ALL
 
@@ -1521,6 +1523,7 @@ def list_plan_configs(
             max_candidates=p.max_candidates,
             max_interviews_per_month=p.max_interviews_per_month,
             daily_llm_budget_usd=p.daily_llm_budget_usd,
+            llm_markup_multiplier=p.llm_markup_multiplier,
             features=list(p.features),
             allowed_agents=(
                 ["*"] if ALL_AGENTS in p.allowed_agents else sorted(p.allowed_agents)
@@ -1565,7 +1568,8 @@ def update_plan_config(
     for field_name in [
         "display_name", "price_monthly_usd", "stripe_price_id",
         "max_jobs", "max_candidates", "max_interviews_per_month",
-        "daily_llm_budget_usd", "features", "allowed_agents",
+        "daily_llm_budget_usd", "llm_markup_multiplier",
+        "features", "allowed_agents",
     ]:
         val = getattr(req, field_name)
         if val is not None:

@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from models import LlmUsage
+from billing.plans import get_plan
 from services.llm_tracker import get_usage_report, get_all_logs
 from auth.dependencies import (
     CurrentSession,
@@ -312,6 +313,29 @@ async def llm_usage_report(
     # Reverse so the frontend's `.slice().reverse()` puts newest first.
     recent_calls.reverse()
 
+    # Apply plan-level markup so the tenant sees what they're billed for,
+    # not raw provider cost. include_all=true (super-admin) keeps the raw
+    # numbers so we can see actual margin per tenant in the admin panel.
+    plan = get_plan(session.tenant.plan)
+    markup = max(0.0, float(plan.llm_markup_multiplier or 1.0))
+    if include_all and session.user.is_superadmin:
+        # Admin view shows BOTH: raw cost from the column + the marked-up
+        # billable they'd charge for, so we can monitor margin per agent
+        # without losing the underlying number.
+        billable_total = round(total_cost * markup, 4)
+        margin_usd = round(billable_total - total_cost, 4)
+        for ag in by_agent.values():
+            ag["billable_usd"] = round(ag["cost_usd"] * markup, 4)
+    else:
+        # Tenant view: replace cost_usd with billable so they don't see
+        # our provider price. Keep the field name to avoid a frontend
+        # rename — the value they care about is what they pay.
+        billable_total = round(total_cost * markup, 4)
+        margin_usd = 0.0
+        for ag in by_agent.values():
+            ag["cost_usd"] = round(ag["cost_usd"] * markup, 4)
+        total_cost = billable_total
+
     return {
         "scope": "global" if include_all else "tenant",
         "period_days": days,
@@ -321,6 +345,9 @@ async def llm_usage_report(
         "total_output_tokens": total_out,
         "total_tokens": total_in + total_out,
         "total_cost_usd": round(total_cost, 4),
+        "billable_usd": billable_total,
+        "markup_multiplier": markup,
+        "margin_usd": margin_usd,
         "avg_latency_ms": avg_latency_overall,
         "error_count": total_errors,
         "error_rate": error_rate,
