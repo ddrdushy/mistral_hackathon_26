@@ -194,6 +194,22 @@ export default function HrisIntegrationsPage() {
                   {p.description}
                 </p>
 
+                {/* 'Want this prioritized?' link for disabled providers —
+                    deep-links to /support with the ticket composer pre-filled
+                    so tenants can express interest without losing context. */}
+                {!p.enabled && !integ && (
+                  <Link
+                    href={`/support?compose=1&category=feature_request&priority=normal&subject=${encodeURIComponent(
+                      `Prioritize ${p.name} HRIS integration`,
+                    )}&description=${encodeURIComponent(
+                      `We'd like ${p.name} HRIS sync prioritized. Please let us know the ETA.`,
+                    )}`}
+                    className="inline-flex items-center gap-1 mb-3 text-[11px] font-medium text-indigo-600 hover:text-indigo-800 hover:underline"
+                  >
+                    Want this prioritized? Let us know →
+                  </Link>
+                )}
+
                 {integ ? (
                   <>
                     <div className="flex items-center gap-2 text-xs mb-2">

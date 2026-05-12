@@ -234,6 +234,21 @@ function ProviderCard({
               {connection.last_error}
             </p>
           )}
+          {/* For 'Coming soon' providers, give the tenant a way to
+              express interest. Routes to /support with the new ticket
+              composer pre-filled. */}
+          {!provider.enabled && !isConnected && (
+            <Link
+              href={`/support?compose=1&category=feature_request&priority=normal&subject=${encodeURIComponent(
+                `Prioritize ${provider.name} integration`,
+              )}&description=${encodeURIComponent(
+                `We'd like ${provider.name} publishing prioritized. Please let us know the ETA or if there's anything we can do (provide test credentials, beta-test, etc).`,
+              )}`}
+              className="inline-flex items-center gap-1 mt-2 text-[11px] font-medium text-indigo-600 hover:text-indigo-800 hover:underline"
+            >
+              Want this prioritized? Let us know →
+            </Link>
+          )}
         </div>
       </div>
 

@@ -5,8 +5,10 @@ import logging
 from dotenv import load_dotenv
 load_dotenv()
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, status
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
@@ -44,6 +46,47 @@ app = FastAPI(
 )
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+# ─── Friendlier 422 messages ──────────────────────────────────────────────
+# Pydantic's email_validator returns wordy, jargon-heavy strings like
+# "value is not a valid email address: The part after the @-sign is a
+# special-use or reserved name that cannot be used with email." That
+# leaks straight to end-users via the api.ts handler.
+# This wrapper rewrites the most common offenders before returning 422.
+_EMAIL_VALIDATOR_REWRITES = [
+    ("special-use or reserved name", "Please use a real email domain (e.g. you@company.com)."),
+    ("there must be something before the @-sign", "Email is missing the part before @ (e.g. you@company.com)."),
+    ("the domain name", "Please check the email domain spelling."),
+    ("an email address must have an @-sign", "Email is missing the @ sign."),
+]
+
+
+def _humanize_validation_msg(msg: str) -> str:
+    low = msg.lower()
+    for fragment, replacement in _EMAIL_VALIDATOR_REWRITES:
+        if fragment in low:
+            return replacement
+    # Generic Pydantic prefix is noisy — drop it.
+    return msg.replace("value is not a valid email address: ", "")
+
+
+@app.exception_handler(RequestValidationError)
+async def _humanized_validation_handler(request: Request, exc: RequestValidationError):
+    """Drop-in replacement for FastAPI's default 422 handler. Same shape
+    (`detail: [{type, loc, msg, ...}]`) so existing frontend code
+    (lib/api.ts flatten + per-form error displays) keeps working — we
+    just clean the `msg` field."""
+    errors = []
+    for e in exc.errors():
+        e_copy = dict(e)
+        e_copy["msg"] = _humanize_validation_msg(str(e.get("msg") or ""))
+        errors.append(e_copy)
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={"detail": errors},
+    )
+
 
 # CORS: build the allow-list from env (FRONTEND_URL) plus dev defaults.
 # Cookies require allow_credentials=True, which means we cannot use "*".

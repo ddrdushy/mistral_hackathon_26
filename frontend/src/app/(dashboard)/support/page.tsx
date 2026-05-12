@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   ChatBubbleLeftRightIcon,
   TicketIcon,
@@ -43,7 +44,31 @@ const PRIORITY_TONE: Record<string, string> = {
 };
 
 export default function SupportPage() {
-  const [tab, setTab] = useState<Tab>("tickets");
+  return (
+    <Suspense fallback={<p className="text-sm text-slate-500">Loading…</p>}>
+      <SupportInner />
+    </Suspense>
+  );
+}
+
+function SupportInner() {
+  // Pre-fill from URL params so deep-links from 'Coming soon' provider
+  // cards land directly in the New-ticket composer with helpful context.
+  // Recognized params: ?compose=1 &subject=... &category=... &priority=...
+  //                    &message=... (for feedback tab)
+  const params = useSearchParams();
+  const initialTab: Tab = params.get("tab") === "feedback" ? "feedback" : "tickets";
+  const [tab, setTab] = useState<Tab>(initialTab);
+
+  const prefill = {
+    compose: params.get("compose") === "1",
+    subject: params.get("subject") || "",
+    category: params.get("category") || "",
+    priority: params.get("priority") || "",
+    description: params.get("description") || "",
+    message: params.get("message") || "",
+  };
+
   return (
     <div className="space-y-5">
       <div>
@@ -62,7 +87,11 @@ export default function SupportPage() {
         </TabButton>
       </div>
 
-      {tab === "tickets" ? <TicketsTab /> : <FeedbackTab />}
+      {tab === "tickets" ? (
+        <TicketsTab prefill={prefill} />
+      ) : (
+        <FeedbackTab prefillMessage={prefill.message} />
+      )}
     </div>
   );
 }
@@ -93,10 +122,18 @@ function TabButton({
 
 // ── Tickets tab ──────────────────────────────────────────────────────────────
 
-function TicketsTab() {
+interface TicketPrefill {
+  compose: boolean;
+  subject: string;
+  category: string;
+  priority: string;
+  description: string;
+}
+
+function TicketsTab({ prefill }: { prefill: TicketPrefill }) {
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [loading, setLoading] = useState(true);
-  const [composing, setComposing] = useState(false);
+  const [composing, setComposing] = useState(prefill.compose);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -135,6 +172,7 @@ function TicketsTab() {
 
       {composing && (
         <TicketComposer
+          initial={prefill.compose ? prefill : undefined}
           onCancel={() => setComposing(false)}
           onCreated={() => {
             setComposing(false);
@@ -213,16 +251,28 @@ function TicketCard({ ticket }: { ticket: Ticket }) {
 }
 
 function TicketComposer({
+  initial,
   onCancel,
   onCreated,
 }: {
+  initial?: {
+    subject?: string;
+    description?: string;
+    category?: string;
+    priority?: string;
+  };
   onCancel: () => void;
   onCreated: () => void;
 }) {
-  const [subject, setSubject] = useState("");
-  const [description, setDescription] = useState("");
-  const [category, setCategory] = useState("bug");
-  const [priority, setPriority] = useState("normal");
+  const validCategory = (c?: string) =>
+    c && ["bug", "feature_request", "billing", "other"].includes(c) ? c : "bug";
+  const validPriority = (p?: string) =>
+    p && ["low", "normal", "high", "urgent"].includes(p) ? p : "normal";
+
+  const [subject, setSubject] = useState(initial?.subject || "");
+  const [description, setDescription] = useState(initial?.description || "");
+  const [category, setCategory] = useState(validCategory(initial?.category));
+  const [priority, setPriority] = useState(validPriority(initial?.priority));
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -346,10 +396,10 @@ function TicketComposer({
 
 // ── Feedback tab ─────────────────────────────────────────────────────────────
 
-function FeedbackTab() {
+function FeedbackTab({ prefillMessage = "" }: { prefillMessage?: string }) {
   const [rating, setRating] = useState<number | null>(null);
   const [category, setCategory] = useState("suggestion");
-  const [message, setMessage] = useState("");
+  const [message, setMessage] = useState(prefillMessage);
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState<string | null>(null);
