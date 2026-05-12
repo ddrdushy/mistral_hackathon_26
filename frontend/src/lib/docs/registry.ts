@@ -1,10 +1,7 @@
 /**
- * Docs site registry. Each entry maps a URL slug → human title + group
- * + short blurb. The actual page content lives in
- * `/components/docs/sections/{slug}.tsx` so we can keep MDX-style
- * structure without pulling in an MDX toolchain.
- *
- * Order is significant — it drives sidebar ordering inside each group.
+ * Docs site registry. Slug → human title + group + short blurb.
+ * Section bodies live in /components/docs/sections.tsx.
+ * Order is significant — drives sidebar ordering inside each group.
  */
 
 export interface DocEntry {
@@ -18,72 +15,103 @@ export const DOC_GROUPS = [
   "Getting started",
   "Recruiting",
   "Communication",
+  "Reports & insights",
   "Settings",
+  "Account",
 ] as const;
 
 export const DOCS: DocEntry[] = [
-  // Getting started
+  // ── Getting started ──────────────────────────────────────────────────
   {
     slug: "getting-started",
     title: "Signing up & first steps",
     group: "Getting started",
     blurb:
-      "Create a workspace, complete the onboarding profile, and connect your inbox in under five minutes.",
+      "Create a workspace, verify your email, complete onboarding, connect your inbox.",
   },
   {
     slug: "dashboard",
     title: "Dashboard tour",
     group: "Getting started",
-    blurb: "What every panel on the home screen tells you and what to do next.",
+    blurb: "Every tile on the home screen explained.",
+  },
+  {
+    slug: "search-and-notifications",
+    title: "Top-bar search & bell",
+    group: "Getting started",
+    blurb: "Live candidate search and the notifications feed.",
   },
 
-  // Recruiting
+  // ── Recruiting ────────────────────────────────────────────────────────
   {
     slug: "jobs",
     title: "Creating & managing jobs",
     group: "Recruiting",
     blurb:
-      "Generate a JD with one click, pick interview mode + question mix, manage the job's pipeline.",
+      "AI-generate JDs from a title, pick interview mode + question mix, edit and close jobs.",
   },
   {
     slug: "candidates",
     title: "Candidates pipeline",
     group: "Recruiting",
     blurb:
-      "How a candidate moves from new → screened → shortlisted, plus how to use the detail page actions.",
+      "Every stage from new → screened → shortlisted, plus candidate detail-page actions.",
   },
   {
     slug: "talent-bank",
     title: "Talent Bank",
     group: "Recruiting",
     blurb:
-      "Upload past CVs, surface profiles for new roles, send bulk availability checks.",
+      "Upload past CVs in bulk, profile tagging, the detail drawer, availability flags.",
   },
   {
     slug: "interviews",
     title: "Interviews",
     group: "Recruiting",
     blurb:
-      "Pick AI voice, written Q&A, or HR-led video. Track who's pending and auto-handle reschedule requests.",
+      "AI voice / written Q&A / HR-led video modes, queue tracking, auto-reschedule.",
+  },
+  {
+    slug: "calls",
+    title: "Call Queue",
+    group: "Recruiting",
+    blurb:
+      "Schedule outbound calls via Twilio and track outcomes.",
   },
 
-  // Communication
-  {
-    slug: "outreach",
-    title: "Outreach & WhatsApp",
-    group: "Communication",
-    blurb:
-      "Email + WhatsApp from the candidate timeline, plus inbound replies and auto-link send.",
-  },
+  // ── Communication ────────────────────────────────────────────────────
   {
     slug: "inbox",
     title: "Inbox triage",
     group: "Communication",
     blurb:
-      "How auto-classified emails surface here and what happens when you mark one as a candidate.",
+      "Auto-classified mail surfaces here — re-classify, link to a candidate, ignore.",
+  },
+  {
+    slug: "outreach",
+    title: "Outreach sequences",
+    group: "Communication",
+    blurb:
+      "Multi-touch email + WhatsApp campaigns for talent-bank candidates.",
+  },
+  {
+    slug: "whatsapp",
+    title: "WhatsApp bot",
+    group: "Communication",
+    blurb:
+      "Inbound reply intent classification: confirm → auto-link, decline → talent-bank flag.",
   },
 
-  // Settings
+  // ── Reports ───────────────────────────────────────────────────────────
+  {
+    slug: "reports",
+    title: "Reports & funnel",
+    group: "Reports & insights",
+    blurb:
+      "Funnel, top candidates, stage distribution. Recruiter-level breakdown on a sub-page.",
+  },
+
+  // ── Settings ──────────────────────────────────────────────────────────
   {
     slug: "settings-overview",
     title: "Settings overview",
@@ -95,32 +123,76 @@ export const DOCS: DocEntry[] = [
     title: "Organization & branding",
     group: "Settings",
     blurb:
-      "Company profile fields that ground AI features in your real business, plus email branding.",
+      "Company facts that ground AI features + email branding (logo / colour / signature).",
   },
   {
     slug: "templates",
     title: "Email templates",
     group: "Settings",
     blurb:
-      "Customise interview invite, offer letter, rejection, and seven more templates with live preview.",
+      "Customise the 11 default email templates with variables and live preview.",
+  },
+  {
+    slug: "pipeline-templates",
+    title: "Pipeline templates",
+    group: "Settings",
+    blurb: "Define your own stages between New and Hired / Rejected.",
+  },
+  {
+    slug: "offer-templates",
+    title: "Offer templates",
+    group: "Settings",
+    blurb: "Salary / equity / benefits boilerplate for the offer letter generator.",
   },
   {
     slug: "team",
     title: "Team & roles",
     group: "Settings",
-    blurb: "Invite recruiters, set roles, transfer ownership.",
+    blurb: "Invite recruiters, set owner / member roles.",
   },
   {
     slug: "calendar",
     title: "Calendar integration",
     group: "Settings",
-    blurb: "Connect Google Calendar so interview slots avoid your existing meetings.",
+    blurb: "Google Calendar — interview slot suggestions skip your busy times.",
+  },
+  {
+    slug: "email-integrations",
+    title: "Email integrations",
+    group: "Settings",
+    blurb: "Gmail / Outlook / Yahoo / iCloud with app passwords.",
+  },
+  {
+    slug: "hris-integrations",
+    title: "HRIS / ATS integrations",
+    group: "Settings",
+    blurb: "Sync candidates and hires with Greenhouse, Lever, Workday, etc.",
+  },
+  {
+    slug: "job-boards",
+    title: "Job boards",
+    group: "Settings",
+    blurb: "Publish open roles to LinkedIn, Indeed, Facebook, MyFutureJobs.",
   },
   {
     slug: "billing",
     title: "Billing & plan",
     group: "Settings",
-    blurb: "Upgrade, switch payment method, check AI usage against your plan.",
+    blurb: "Upgrade plan, manage payment, view AI usage against your budget.",
+  },
+
+  // ── Account ───────────────────────────────────────────────────────────
+  {
+    slug: "profile",
+    title: "Your profile",
+    group: "Account",
+    blurb: "Display name, password, notification preferences.",
+  },
+  {
+    slug: "support",
+    title: "Getting help",
+    group: "Account",
+    blurb: "Open a support ticket, contextual help drawer, feedback channel.",
   },
 ];
 
