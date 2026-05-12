@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from database import get_db
-from models import Application, Candidate, Job, Event, InterviewLink, QaSession
+from models import Application, Candidate, Job, Event, InterviewLink, QaSession, Tenant
 from schemas import (
     InterviewLinkGenerateRequest, InterviewLinkResponse,
     InterviewLinkPublicResponse, InterviewStatusUpdateRequest,
@@ -387,6 +387,100 @@ async def send_interview_link(body: dict, db: Session = Depends(get_db), session
         "error": result["message"],
         "interview_url": interview_url,  # let HR copy/send manually
     }
+
+
+AUTO_RESCHEDULE_MAX = 2  # auto-resend up to N new links before escalating to HR
+
+
+def _auto_reschedule_link(db: Session, app: Application, hours: int = 72):
+    """Spin up a fresh InterviewLink for `app` and expire any prior active
+    ones. Used by the webhook's auto-reschedule path so HR doesn't need
+    to click anything.
+
+    Returns: (link_row, interview_url_string).
+    """
+    # Expire any previously-active links for this app — only one should
+    # be addressable at a time.
+    db.query(InterviewLink).filter(
+        InterviewLink.app_id == app.id,
+        InterviewLink.status.in_(["generated", "sent", "opened", "send_failed"]),
+    ).update({"status": "expired"}, synchronize_session="fetch")
+
+    new_token = uuid.uuid4().hex
+    new_link = InterviewLink(
+        tenant_id=app.tenant_id,
+        token=new_token,
+        app_id=app.id,
+        status="generated",
+        expires_at=datetime.utcnow() + timedelta(hours=hours),
+    )
+    db.add(new_link)
+    db.flush()  # populate new_link.id without committing yet
+
+    base_url = os.getenv("FRONTEND_URL", "").rstrip("/")
+    return new_link, f"{base_url}/interview/{new_token}"
+
+
+def _send_reschedule_email(
+    *,
+    tenant,
+    candidate,
+    job,
+    interview_url: str,
+    db: Session,
+) -> dict:
+    """Email the candidate their new interview link. Different subject +
+    intro than the first invite so they immediately recognise this is
+    the reschedule they asked for."""
+    from services.tenant_outbound import send_via_tenant_mailbox
+
+    company = tenant.name if tenant else "the recruitment team"
+    first_name = (candidate.name or "there").split()[0] if candidate else "there"
+    job_title = job.title if job else "Open Position"
+    subject = f"Your rescheduled interview — {job_title} at {company}"
+
+    body_html = f"""
+    <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
+      <div style="background:linear-gradient(135deg,#6366f1,#8b5cf6);padding:30px;border-radius:12px 12px 0 0;text-align:center;">
+        <h1 style="color:white;margin:0;font-size:24px;">{company}</h1>
+        <p style="color:rgba(255,255,255,0.9);margin:8px 0 0 0;">Interview rescheduled</p>
+      </div>
+      <div style="background:#fff;padding:30px;border:1px solid #e2e8f0;border-top:none;">
+        <p style="color:#334155;font-size:16px;line-height:1.6;">Hi {first_name},</p>
+        <p style="color:#334155;font-size:16px;line-height:1.6;">
+          No problem — here is a fresh link for your <strong>{job_title}</strong> screening interview.
+          You can join whenever it suits you in the next 72 hours.
+        </p>
+        <div style="text-align:center;margin:30px 0;">
+          <a href="{interview_url}" style="background:#6366f1;color:white;padding:14px 32px;
+             border-radius:8px;text-decoration:none;font-weight:600;">Start your interview</a>
+        </div>
+        <p style="color:#64748b;font-size:14px;line-height:1.6;">
+          The interview takes 8–10 minutes. You'll need a working microphone and camera
+          in a quiet environment.
+        </p>
+        <p style="color:#94a3b8;font-size:12px;line-height:1.6;">
+          If the button doesn't work, paste this into your browser:<br>
+          <span style="font-family:monospace;word-break:break-all;">{interview_url}</span>
+        </p>
+      </div>
+    </div>"""
+    body_text = (
+        f"Hi {first_name},\n\n"
+        f"No problem — here is a fresh link for your {job_title} screening interview.\n"
+        f"You can join whenever it suits you in the next 72 hours.\n\n"
+        f"Start here: {interview_url}\n\n"
+        f"Best regards,\n{company} Recruitment Team"
+    )
+
+    return send_via_tenant_mailbox(
+        tenant_id=tenant.id if tenant else None,
+        to_email=candidate.email if candidate else "",
+        subject=subject,
+        body_html=body_html,
+        body_text=body_text,
+        db=db,
+    )
 
 
 _RESCHEDULE_PATTERNS = (
@@ -1642,24 +1736,113 @@ async def elevenlabs_webhook(request: Request, db: Session = Depends(get_db)):
                 )
 
                 if reschedule["is_reschedule"]:
-                    # Hold the candidate in the same stage but flag the link
-                    # as needing a new send.
-                    app.screening_status = "reschedule_requested"
-                    app.interview_link_status = "reschedule_requested"
-                    app.ai_next_action = (
-                        "Candidate asked to reschedule — generate and send a new interview link."
+                    # Cap auto-reschedules per application so we don't ping-pong
+                    # forever if the candidate keeps rescheduling. After
+                    # AUTO_RESCHEDULE_MAX failed attempts we leave it for HR.
+                    prior_reschedules = (
+                        db.query(InterviewLink)
+                        .filter(
+                            InterviewLink.app_id == app.id,
+                            InterviewLink.status == "reschedule_requested",
+                        )
+                        .count()
                     )
+
                     link.status = "reschedule_requested"
                     _log_event(db, app.id, "interview_reschedule_requested", {
                         "conversation_id": conversation_id,
                         "duration_secs": duration_secs,
                         "evidence": reschedule["evidence"],
+                        "prior_reschedule_count": prior_reschedules,
+                    })
+
+                    if prior_reschedules + 1 >= AUTO_RESCHEDULE_MAX:
+                        # Hit the cap — stop the loop and surface it to HR.
+                        app.screening_status = "reschedule_capped"
+                        app.interview_link_status = "reschedule_capped"
+                        app.ai_next_action = (
+                            f"Candidate rescheduled {prior_reschedules + 1} times — "
+                            "intervention needed. Reach out personally."
+                        )
+                        db.commit()
+                        return {
+                            "status": "received",
+                            "conversation_id": conversation_id,
+                            "outcome": "reschedule_capped",
+                            "prior_reschedules": prior_reschedules + 1,
+                        }
+
+                    # Auto-reschedule: spin up a fresh link + email the
+                    # candidate ourselves. No HR click required.
+                    try:
+                        new_link, interview_url = _auto_reschedule_link(db, app, hours=72)
+                        candidate = db.query(Candidate).filter(
+                            Candidate.id == app.candidate_id
+                        ).first()
+                        job = db.query(Job).filter(Job.id == app.job_id).first()
+                        tenant = db.query(Tenant).filter(
+                            Tenant.id == app.tenant_id
+                        ).first()
+                        email_outcome = _send_reschedule_email(
+                            tenant=tenant,
+                            candidate=candidate,
+                            job=job,
+                            interview_url=interview_url,
+                            db=db,
+                        )
+                    except Exception as e:
+                        # Auto-reschedule itself failed — fall back to the
+                        # old "wait for HR" path so the user can fix it.
+                        app.screening_status = "reschedule_requested"
+                        app.interview_link_status = "reschedule_requested"
+                        app.ai_next_action = (
+                            f"Candidate asked to reschedule, but auto-reschedule failed ({e}). "
+                            "Generate and send a new interview link manually."
+                        )
+                        _log_event(db, app.id, "auto_reschedule_failed", {"error": str(e)})
+                        db.commit()
+                        return {
+                            "status": "received",
+                            "conversation_id": conversation_id,
+                            "outcome": "reschedule_requested",
+                            "auto_reschedule": False,
+                        }
+
+                    # Update app state based on email-send result.
+                    if email_outcome.get("success"):
+                        new_link.status = "sent"
+                        app.screening_status = "rescheduled_auto_sent"
+                        app.interview_link_status = "sent"
+                        app.stage = "interview_link_sent"
+                        app.ai_next_action = (
+                            f"New interview link auto-sent to candidate "
+                            f"(reschedule #{prior_reschedules + 1})."
+                        )
+                    else:
+                        new_link.status = "send_failed"
+                        app.screening_status = "reschedule_requested"
+                        app.interview_link_status = "send_failed"
+                        app.ai_next_action = (
+                            f"New interview link generated but email send failed: "
+                            f"{email_outcome.get('message', 'SMTP error')}. "
+                            "Copy the link and send manually."
+                        )
+
+                    _log_event(db, app.id, "interview_auto_rescheduled", {
+                        "new_token": new_link.token,
+                        "email_sent": email_outcome.get("success"),
+                        "email_error": email_outcome.get("message")
+                            if not email_outcome.get("success") else None,
+                        "attempt": prior_reschedules + 1,
                     })
                     db.commit()
                     return {
                         "status": "received",
                         "conversation_id": conversation_id,
-                        "outcome": "reschedule_requested",
+                        "outcome": "rescheduled_auto_sent" if email_outcome.get("success")
+                            else "rescheduled_send_failed",
+                        "new_token": new_link.token,
+                        "auto_reschedule": True,
                     }
 
                 # Otherwise: real completed interview. Mark BOTH status

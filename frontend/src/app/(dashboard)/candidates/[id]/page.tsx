@@ -1568,9 +1568,58 @@ export default function CandidateDetailPage({
               </div>
             )}
 
-            {/* Reschedule requested — candidate asked to do this later.
-                Show a clear callout + one-click "Generate new link" action
-                instead of the misleading interview-score panel. */}
+            {/* Reschedule outcomes — three states the auto-reschedule
+                pipeline can land on. We render distinct messaging for each
+                so HR knows exactly whether there's an action to take. */}
+            {app.screening_status === "rescheduled_auto_sent" && (
+              <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 p-4">
+                <div className="flex items-start gap-3">
+                  <ArrowPathIcon className="w-5 h-5 text-emerald-700 mt-0.5 flex-shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-semibold text-emerald-900">
+                      Interview auto-rescheduled
+                    </div>
+                    <div className="text-xs text-emerald-800 mt-0.5">
+                      The candidate asked to do this later, so we generated a
+                      fresh interview link and emailed it to them automatically.
+                      No action needed — we&apos;ll evaluate the next attempt
+                      when they complete it.
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {app.screening_status === "reschedule_capped" && (
+              <div className="mb-4 rounded-lg border border-rose-200 bg-rose-50 p-4">
+                <div className="flex items-start gap-3">
+                  <ClockIcon className="w-5 h-5 text-rose-700 mt-0.5 flex-shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-semibold text-rose-900">
+                      Candidate has rescheduled multiple times
+                    </div>
+                    <div className="text-xs text-rose-800 mt-0.5">
+                      We&apos;ve already auto-sent multiple fresh links and the
+                      candidate keeps asking to reschedule. Worth reaching out
+                      directly before another automatic send.
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <Button
+                        size="sm"
+                        onClick={handleGenerateLink}
+                        loading={linkLoading}
+                      >
+                        <ArrowPathIcon className="h-4 w-4" />
+                        Send another anyway
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Legacy: reschedule_requested without auto-resend (auto-send
+                failed) — keep the manual-action banner so HR can recover. */}
             {(app.interview_link_status === "reschedule_requested" ||
               app.screening_status === "reschedule_requested") && (
               <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4">
@@ -1581,9 +1630,13 @@ export default function CandidateDetailPage({
                       Candidate requested to reschedule
                     </div>
                     <div className="text-xs text-amber-800 mt-0.5">
-                      The interview didn&apos;t complete because the candidate
-                      asked to do it later. No interview score was generated.
-                      Generate a fresh link so they can try again.
+                      We tried to auto-send a fresh link but couldn&apos;t reach
+                      the candidate&apos;s mailbox.{" "}
+                      {app.ai_next_action && (
+                        <span className="block mt-1 font-mono text-[11px] text-amber-700">
+                          {app.ai_next_action}
+                        </span>
+                      )}
                     </div>
                     <div className="mt-3">
                       <Button
