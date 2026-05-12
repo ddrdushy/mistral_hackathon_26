@@ -241,6 +241,85 @@ async def generate_interview_link(
     )
 
 
+class HrInterviewScoreRequest(BaseModel):
+    score: int = Field(..., ge=0, le=100, description="Overall score 0-100")
+    decision: str = Field(..., description="advance | hold | reject")
+    strengths: list[str] = Field(default_factory=list, max_length=10)
+    concerns: list[str] = Field(default_factory=list, max_length=10)
+    notes: str = Field(default="", max_length=4000)
+    communication_rating: str = Field(default="good")  # excellent | good | fair | poor
+    technical_depth: str = Field(default="good")       # strong | good | fair | weak
+    cultural_fit: str = Field(default="good")          # strong | good | fair | weak
+
+
+@router.post("/{app_id}/hr-score")
+async def submit_hr_interview_score(
+    app_id: int,
+    req: HrInterviewScoreRequest,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(current_session),
+):
+    """HR records their verdict for an hr_video interview.
+
+    Bypasses the LLM interview evaluator — the recruiter ran the call
+    themselves and has full context. We persist the same interview_score
+    + interview_score_json shape the LLM path produces so the rest of
+    the UI (gauges, recommendation badge) renders identically.
+    """
+    app = _hr_app(db, app_id, session)
+    job = db.query(Job).filter(Job.id == app.job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.interview_mode != "hr_video":
+        raise HTTPException(
+            status_code=400,
+            detail="HR scoring is only valid for jobs configured as hr_video interviews",
+        )
+
+    decision = req.decision.lower().strip()
+    if decision not in {"advance", "hold", "reject"}:
+        decision = "hold"
+
+    app.interview_score = req.score
+    app.interview_score_json = json.dumps({
+        "score": req.score,
+        "decision": decision,
+        "strengths": [s.strip() for s in req.strengths if s.strip()][:10],
+        "concerns": [c.strip() for c in req.concerns if c.strip()][:10],
+        "communication_rating": req.communication_rating,
+        "technical_depth": req.technical_depth,
+        "cultural_fit": req.cultural_fit,
+        "summary": req.notes.strip(),
+        "email_draft": "",
+        "scheduling_slots": [],
+        "mode": "hr_video",
+        "scored_by_user_id": session.user.id,
+    })
+    app.recommendation = decision
+    app.stage = "screened"
+    app.screening_status = "completed"
+    app.interview_link_status = "interview_completed"
+    app.ai_next_action = (
+        f"HR-led interview scored ({req.score}/100, {decision}) — apply the decision."
+    )
+    app.updated_at = datetime.utcnow()
+
+    _log_event(
+        db, app.id, "hr_interview_scored",
+        {"score": req.score, "decision": decision},
+        tenant_id=session.tenant.id,
+        actor_user_id=session.user.id,
+    )
+    db.commit()
+    db.refresh(app)
+    return {
+        "ok": True,
+        "score": req.score,
+        "decision": decision,
+        "scored_by": session.user.email,
+    }
+
+
 @router.get("/interview-queue")
 async def interview_queue(
     db: Session = Depends(get_db),

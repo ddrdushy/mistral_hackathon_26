@@ -3,6 +3,7 @@
 import { use, useState, useEffect, useRef, useCallback } from "react";
 import { useConversation } from "@elevenlabs/react";
 import QaInterviewRoom from "./QaInterviewRoom";
+import HrVideoRoom from "./HrVideoRoom";
 
 // ═══════════════════════════════════════
 // Types
@@ -16,7 +17,8 @@ type InterviewPhase =
   | "ready"
   | "interviewing"
   | "completed"
-  | "qa";
+  | "qa"
+  | "hr_video";
 
 interface InterviewData {
   token: string;
@@ -32,7 +34,7 @@ interface InterviewData {
   scheduled_at: string | null;
   available_in_minutes: number | null;
   interview_round: number;
-  interview_mode: "voice" | "qa";
+  interview_mode: "voice" | "qa" | "hr_video";
 }
 
 const API_BASE =
@@ -120,6 +122,8 @@ export default function InterviewPage({
           setPhase("waiting");
         } else if (data.interview_mode === "qa") {
           setPhase("qa");
+        } else if (data.interview_mode === "hr_video") {
+          setPhase("hr_video");
         } else {
           setPhase("setup");
         }
@@ -572,6 +576,18 @@ export default function InterviewPage({
 
   if (phase === "qa") {
     return <QaInterviewRoom token={token} />;
+  }
+
+  if (phase === "hr_video" && interviewData) {
+    return (
+      <HrVideoRoom
+        token={token}
+        candidateFirstName={interviewData.candidate_first_name}
+        jobTitle={interviewData.job_title}
+        companyName={interviewData.company_name}
+        onComplete={() => setPhase("completed")}
+      />
+    );
   }
 
   // ── Completed ───────────────────────────────────────────────────────────

@@ -17,7 +17,7 @@ PipelineStage = Literal[
 # JOBS
 # ═══════════════════════════════════════
 
-InterviewMode = Literal["voice", "qa"]
+InterviewMode = Literal["voice", "qa", "hr_video"]
 
 
 class JobCreate(BaseModel):

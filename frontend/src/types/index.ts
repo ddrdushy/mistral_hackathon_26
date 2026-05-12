@@ -217,7 +217,7 @@ export interface UsageSummary {
 // ═══════════════════════════════════════
 // JOBS
 // ═══════════════════════════════════════
-export type InterviewMode = "voice" | "qa";
+export type InterviewMode = "voice" | "qa" | "hr_video";
 
 export interface Job {
   id: number;

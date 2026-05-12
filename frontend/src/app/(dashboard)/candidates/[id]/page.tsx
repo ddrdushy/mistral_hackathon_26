@@ -5,6 +5,7 @@ import Link from "next/link";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/lib/api";
 import FraudSignalsCard from "@/components/candidates/FraudSignalsCard";
 import FraudHighlights from "@/components/candidates/FraudHighlights";
+import HrVideoPanel from "@/components/candidates/HrVideoPanel";
 import OfferCard from "@/components/offers/OfferCard";
 import { useAuth } from "@/components/auth/AuthGate";
 import TagChip, { TagSummary } from "@/components/tags/TagChip";
@@ -1565,6 +1566,20 @@ export default function CandidateDetailPage({
                     Regenerate Link
                   </Button>
                 )}
+              </div>
+            )}
+
+            {/* HR-led video interview — recruiter joins the same room
+                as the candidate (token-derived Jitsi). Only show for jobs
+                explicitly set to hr_video mode. */}
+            {app.interview_mode === "hr_video" && (
+              <div className="mb-4">
+                <HrVideoPanel
+                  applicationId={Number(id)}
+                  interviewToken={interviewLink?.token || null}
+                  hasExistingScore={!!interview}
+                  onScored={fetchApplication}
+                />
               </div>
             )}
 

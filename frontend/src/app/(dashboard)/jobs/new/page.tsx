@@ -282,13 +282,18 @@ export default function CreateJobPage() {
                 [
                   {
                     value: "voice" as const,
-                    title: "Voice Interview",
+                    title: "AI Voice Interview",
                     desc: "Candidate joins a web room for an ElevenLabs AI voice interview with face tracking.",
                   },
                   {
                     value: "qa" as const,
                     title: "Written Q&A",
                     desc: "Candidate answers 3 LLM-generated rounds: aptitude, reasoning, and CV-based technical.",
+                  },
+                  {
+                    value: "hr_video" as const,
+                    title: "HR Video Interview",
+                    desc: "Recruiter and candidate meet in an in-platform video room. HR scores manually after the call.",
                   },
                 ]
               ).map((opt) => {
