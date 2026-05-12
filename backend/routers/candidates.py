@@ -53,6 +53,13 @@ def _candidate_to_response(c: Candidate, db: Optional[Session] = None) -> dict:
             "key_points": key_points,
             "extracted_at": c.profile_extracted_at.isoformat() if c.profile_extracted_at else None,
         },
+        "talent_bank_status": c.talent_bank_status or "available",
+        "talent_bank_status_reason": c.talent_bank_status_reason or "",
+        "talent_bank_status_updated_at": (
+            c.talent_bank_status_updated_at.isoformat()
+            if c.talent_bank_status_updated_at
+            else None
+        ),
         "created_at": c.created_at.isoformat() if c.created_at else None,
         "updated_at": c.updated_at.isoformat() if c.updated_at else None,
     }

@@ -302,7 +302,13 @@ async def suggested_candidates(
 
     candidates = (
         db.query(Candidate)
-        .filter(Candidate.tenant_id == session.tenant.id)
+        .filter(
+            Candidate.tenant_id == session.tenant.id,
+            # Skip people the WhatsApp bot has heard from saying they're
+            # not in the market — keeping them in match results just wastes
+            # outreach budget.
+            Candidate.talent_bank_status == "available",
+        )
         .order_by(Candidate.created_at.desc())
         .limit(500)
         .all()

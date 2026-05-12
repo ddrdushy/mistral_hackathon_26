@@ -222,6 +222,20 @@ def _run_migrations():
                 except Exception:
                     pass
 
+        # Talent-bank availability flag (set by the WhatsApp inbound bot)
+        talent_cols = {
+            "talent_bank_status": "VARCHAR NOT NULL DEFAULT 'available'",
+            "talent_bank_status_reason": "VARCHAR DEFAULT ''",
+            "talent_bank_status_updated_at": "TIMESTAMP",
+        }
+        for col, ddl in talent_cols.items():
+            if col not in existing:
+                with engine.begin() as conn:
+                    try:
+                        conn.execute(text(f"ALTER TABLE candidates ADD COLUMN {col} {ddl}"))
+                    except Exception:
+                        pass
+
         # Unique (tenant_id, lower(email)) — defends against the workflow
         # racing itself when two events match the same email at the same
         # time. Skips creation if duplicates already exist (cleanup script

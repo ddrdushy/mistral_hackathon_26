@@ -399,6 +399,15 @@ class Candidate(Base):
     source_email_id = Column(Integer, ForeignKey("emails.id"), nullable=True)
     notes = Column(Text, default="")
 
+    # Talent-bank availability flag — set by the WhatsApp inbound bot
+    # when a candidate replies that they're not interested / joined
+    # another company. Lets the match engine grey them out instead of
+    # surfacing them again on the next role.
+    # Values: "available" (default), "joined_another", "not_available", "hired_elsewhere"
+    talent_bank_status = Column(String, default="available", nullable=False)
+    talent_bank_status_reason = Column(String, default="")  # snippet from their reply
+    talent_bank_status_updated_at = Column(DateTime, nullable=True)
+
     # Talent-bank profile — extracted once per resume so we can match against
     # future jobs by tag overlap without re-calling the LLM. Nullable while
     # extraction is pending; profile_extracted_at gates the suggested-
