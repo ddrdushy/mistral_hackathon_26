@@ -49,9 +49,9 @@ def test_imap_connection(host: str, port: int, ssl: bool, user: str, password: s
     user-friendly message we can surface in the API response."""
     try:
         if ssl:
-            mail = imaplib.IMAP4_SSL(host, port)
+            mail = imaplib.IMAP4_SSL(host, port, timeout=15)
         else:
-            mail = imaplib.IMAP4(host, port)
+            mail = imaplib.IMAP4(host, port, timeout=15)
     except Exception as e:
         raise ValueError(f"Could not reach {host}:{port} — {e}") from e
 

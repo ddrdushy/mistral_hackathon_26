@@ -79,10 +79,14 @@ async def _poll_loop(account_id: int) -> None:
                 # usage meter would always read $0 for auto-pickup work.
                 set_active_tenant(account.tenant_id)
 
-                # 1) Pull new emails. sync_account already commits and tags tenant_id.
+                # 1) Pull new emails. sync_account is sync (imaplib is blocking),
+                # so we delegate it to a threadpool — otherwise a slow Gmail IMAP
+                # call would freeze the entire async event loop on this worker
+                # (including all other tenants' listeners and any HTTP requests
+                # served by this uvicorn worker).
                 try:
-                    new_emails = mail_account_service.sync_account(
-                        db, account, limit=50
+                    new_emails = await asyncio.to_thread(
+                        mail_account_service.sync_account, db, account, 50
                     )
                 except Exception as e:
                     logger.warning(

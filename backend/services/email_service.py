@@ -47,13 +47,25 @@ def load_sample_inbox(db: Session) -> List[Email]:
 
 
 def fetch_imap_emails(
-    host: str, port: int, user: str, password: str, ssl: bool = True, limit: int = 50
+    host: str,
+    port: int,
+    user: str,
+    password: str,
+    ssl: bool = True,
+    limit: int = 50,
+    timeout: int = 30,
 ) -> List[dict]:
-    """Fetch emails from an IMAP server."""
+    """Fetch emails from an IMAP server.
+
+    `timeout` (seconds) applies to every socket-level read/write. Without it,
+    a stalled Gmail IMAP connection can hang `mail.fetch(...)` indefinitely,
+    which freezes the per-account polling task — the UI keeps showing
+    LISTENING but last_sync_at never advances.
+    """
     if ssl:
-        mail = imaplib.IMAP4_SSL(host, port)
+        mail = imaplib.IMAP4_SSL(host, port, timeout=timeout)
     else:
-        mail = imaplib.IMAP4(host, port)
+        mail = imaplib.IMAP4(host, port, timeout=timeout)
 
     mail.login(user, password)
     mail.select("INBOX")
