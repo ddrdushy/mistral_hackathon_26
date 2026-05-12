@@ -241,6 +241,49 @@ async def generate_interview_link(
     )
 
 
+@router.get("/interview-queue")
+async def interview_queue(
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(current_session),
+):
+    """List every interview link this tenant has created, with candidate
+    + job context, so HR has a single page to chase pending interviews.
+    Sorted with the most-recently-touched first."""
+    rows = (
+        db.query(InterviewLink, Application, Candidate, Job)
+        .join(Application, Application.id == InterviewLink.app_id)
+        .join(Candidate, Candidate.id == Application.candidate_id)
+        .join(Job, Job.id == Application.job_id)
+        .filter(InterviewLink.tenant_id == session.tenant.id)
+        .order_by(InterviewLink.created_at.desc())
+        .limit(200)
+        .all()
+    )
+
+    base_url = os.getenv("FRONTEND_URL", "").rstrip("/")
+    out = []
+    for link, app, cand, job in rows:
+        out.append({
+            "id": link.id,
+            "token": link.token,
+            "app_id": app.id,
+            "candidate_id": cand.id,
+            "candidate_name": cand.name,
+            "candidate_email": cand.email,
+            "job_id": job.id,
+            "job_code": job.job_id,
+            "job_title": job.title,
+            "status": link.status,
+            "interview_url": f"{base_url}/interview/{link.token}",
+            "expires_at": link.expires_at.isoformat() if link.expires_at else None,
+            "opened_at": link.opened_at.isoformat() if link.opened_at else None,
+            "interview_started_at": link.interview_started_at.isoformat() if link.interview_started_at else None,
+            "interview_completed_at": link.interview_completed_at.isoformat() if link.interview_completed_at else None,
+            "created_at": link.created_at.isoformat() if link.created_at else None,
+        })
+    return {"interviews": out, "total": len(out)}
+
+
 @router.post("/send-link")
 async def send_interview_link(body: dict, db: Session = Depends(get_db), session: CurrentSession = Depends(current_session)):
     """Actually send interview link email to the candidate via SMTP."""
