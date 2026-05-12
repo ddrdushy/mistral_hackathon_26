@@ -4,6 +4,7 @@ import { use, useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/lib/api";
 import FraudSignalsCard from "@/components/candidates/FraudSignalsCard";
+import FraudHighlights from "@/components/candidates/FraudHighlights";
 import OfferCard from "@/components/offers/OfferCard";
 import { useAuth } from "@/components/auth/AuthGate";
 import TagChip, { TagSummary } from "@/components/tags/TagChip";
@@ -1719,7 +1720,8 @@ export default function CandidateDetailPage({
 
           {/* ── Resume fraud check ─────────────────────────────────────────── */}
           {app && (
-            <div id="fraud-card" className="scroll-mt-20">
+            <div id="fraud-card" className="scroll-mt-20 space-y-4">
+              <FraudHighlights applicationId={Number(id)} />
               <FraudSignalsCard
                 appId={Number(id)}
                 isOwner={isOwner}

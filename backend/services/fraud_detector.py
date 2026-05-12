@@ -66,6 +66,7 @@ def detect_fraud(filename: str, file_bytes: bytes) -> List[FraudSignal]:
 
     if extracted_text:
         signals.extend(_scan_prompt_injection(extracted_text))
+        signals.extend(_scan_invisible_unicode(extracted_text))
 
     return _dedupe(signals)
 
@@ -410,6 +411,61 @@ _INJECTION_PATTERNS = [
     (r"\[?\s*assistant\s*\]?\s*[:>]", "medium"),
     (r"hidden\s+(message|instruction|prompt)\s+(to|for)\s+(the\s+)?(recruiter|hr|llm|ai|model)", "critical"),
 ]
+
+
+# Invisible / zero-width Unicode characters. None of these have any
+# legitimate use in a resume — they're injection vehicles (hidden
+# instructions, watermark removal, fingerprinting). A few legit
+# characters that DO appear in valid CVs (regular space, NBSP  ,
+# tab) are excluded.
+_INVISIBLE_CODEPOINTS = {
+    "​": "zero-width space",
+    "‌": "zero-width non-joiner",
+    "‍": "zero-width joiner",
+    "⁠": "word joiner",
+    "﻿": "byte-order mark / zero-width no-break",
+    "‪": "left-to-right embedding",
+    "‫": "right-to-left embedding",
+    "‬": "pop directional formatting",
+    "‭": "left-to-right override",
+    "‮": "right-to-left override",
+    "᠎": "Mongolian vowel separator",
+    "͏": "combining grapheme joiner",
+}
+
+
+def _scan_invisible_unicode(text: str) -> List[FraudSignal]:
+    """Flag zero-width / direction-override characters that the LLM
+    will still 'read' but a human reviewing the PDF can't see.
+
+    Most LLMs treat these characters as semantically meaningful tokens,
+    which lets an attacker smuggle instructions that look like an
+    innocuous bullet point to a human reviewer.
+    """
+    if not text:
+        return []
+    findings: dict[str, dict] = {}
+    for i, ch in enumerate(text):
+        if ch in _INVISIBLE_CODEPOINTS:
+            label = _INVISIBLE_CODEPOINTS[ch]
+            entry = findings.setdefault(label, {"count": 0, "codepoint": f"U+{ord(ch):04X}", "first_idx": i})
+            entry["count"] += 1
+    if not findings:
+        return []
+    return [
+        FraudSignal(
+            signal_type="invisible_unicode",
+            # Multiple invisible chars in one document is a strong signal.
+            severity="high" if sum(f["count"] for f in findings.values()) >= 5 else "medium",
+            evidence={
+                "characters_found": [
+                    {"name": k, "codepoint": v["codepoint"], "count": v["count"]}
+                    for k, v in findings.items()
+                ],
+                "total_count": sum(f["count"] for f in findings.values()),
+            },
+        )
+    ]
 
 
 def _scan_prompt_injection(text: str) -> List[FraudSignal]:

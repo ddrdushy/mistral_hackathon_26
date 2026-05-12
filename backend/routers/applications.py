@@ -440,6 +440,95 @@ async def list_fraud_signals(
     }
 
 
+@router.get("/{app_id}/fraud-visual")
+async def fraud_visual(
+    app_id: int,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(current_session),
+):
+    """Return the candidate's CV rendered with fraud signals overlaid as
+    colored rectangles, one PNG per page. Pairs with the existing
+    /fraud-signals endpoint — that one gives the data, this one gives
+    HR a place to actually see where each flag landed."""
+    import base64
+    from models import ResumeFraudSignal, Email
+    from services.fraud_visualizer import render_to_dicts
+
+    app = db.query(Application).filter(
+        Application.id == app_id,
+        Application.tenant_id == session.tenant.id,
+    ).first()
+    if not app:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    # Pull all signals so we can pass both drawable + non-drawable rows
+    # to the caller; the visualizer ignores ones without a bbox/page,
+    # and the frontend separately renders the prompt-injection list.
+    rows = (
+        db.query(ResumeFraudSignal)
+        .filter(
+            ResumeFraudSignal.application_id == app_id,
+            ResumeFraudSignal.tenant_id == session.tenant.id,
+        )
+        .order_by(ResumeFraudSignal.detected_at.asc())
+        .all()
+    )
+    signals_payload = []
+    for r in rows:
+        try:
+            evidence = json.loads(r.evidence_json) if r.evidence_json else {}
+        except Exception:
+            evidence = {}
+        signals_payload.append({
+            "id": r.id,
+            "signal_type": r.signal_type,
+            "severity": r.severity,
+            "evidence": evidence,
+        })
+
+    # Recover the CV bytes from the candidate's source email attachment.
+    cand = db.query(Candidate).filter(Candidate.id == app.candidate_id).first()
+    pdf_bytes = b""
+    cv_filename = ""
+    if cand and cand.source_email_id:
+        em = db.query(Email).filter(Email.id == cand.source_email_id).first()
+        if em and em.attachments:
+            try:
+                atts = json.loads(em.attachments)
+            except Exception:
+                atts = []
+            for att in atts:
+                fname = (att.get("filename") or "").lower()
+                content_b64 = att.get("content_b64") or ""
+                if not content_b64:
+                    continue
+                if fname.endswith(".pdf") or att.get("content_type") == "application/pdf":
+                    try:
+                        pdf_bytes = base64.b64decode(content_b64)
+                        cv_filename = att.get("filename") or "resume.pdf"
+                        break
+                    except Exception:
+                        continue
+
+    pages = render_to_dicts(pdf_bytes, signals_payload) if pdf_bytes else []
+
+    # Non-drawable signals (prompt injection on the text stream — no bbox)
+    # so the frontend can show them in a separate "Text-stream issues" list.
+    drawable_ids = {m["signal_id"] for p in pages for m in p["signal_markers"]}
+    text_only_signals = [s for s in signals_payload if s["id"] not in drawable_ids]
+
+    return {
+        "filename": cv_filename,
+        "has_pdf": bool(pdf_bytes),
+        "render_scale": 1.7,  # tells the frontend bbox_px is in image-pixel space
+        "pages": pages,
+        "text_only_signals": text_only_signals,
+        "fraud_score": app.fraud_score or 0,
+        "fraud_flags_count": app.fraud_flags_count or 0,
+        "fraud_blocked": bool(app.fraud_blocked),
+    }
+
+
 class FraudOverrideRequest(BaseModel):
     reason: str = Field(..., min_length=10, max_length=2000, description="Why the block is being overridden — appears in the audit log")
 
