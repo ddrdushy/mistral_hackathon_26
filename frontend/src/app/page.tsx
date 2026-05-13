@@ -50,112 +50,79 @@ async function fetchTestimonials(): Promise<ApiTestimonial[]> {
   }
 }
 
-interface HeroStats {
-  appsLabel: string;
-  appsValue: string;
-  scoreLabel: string;
-  scoreValue: string;
-  interviewsLabel: string;
-  interviewsValue: string;
-}
-
-const FALLBACK_STATS: HeroStats = {
-  appsLabel: "Apps processed",
-  appsValue: "284+",
-  scoreLabel: "Avg resume score",
-  scoreValue: "74",
-  interviewsLabel: "Faster shortlist",
-  interviewsValue: "8×",
-};
-
-async function fetchHeroStats(): Promise<HeroStats> {
-  const base = process.env.NEXT_PUBLIC_API_URL || "https://hireops.symprio.com/api/v1";
-  try {
-    const res = await fetch(`${base}/metrics/public`, { next: { revalidate: 60 } });
-    if (!res.ok) return FALLBACK_STATS;
-    const data = (await res.json()) as {
-      apps_processed: number;
-      avg_score: number | null;
-      interviews_completed: number;
-    };
-    // While the platform is fresh, use the marketing fallback. Once real volume kicks in,
-    // switch to live numbers automatically.
-    if (data.apps_processed < 10) return FALLBACK_STATS;
-    return {
-      appsLabel: "Apps processed",
-      appsValue: formatCount(data.apps_processed),
-      scoreLabel: "Avg resume score",
-      scoreValue: data.avg_score !== null ? String(data.avg_score) : "—",
-      interviewsLabel: "AI interviews completed",
-      interviewsValue: formatCount(data.interviews_completed),
-    };
-  } catch {
-    return FALLBACK_STATS;
-  }
-}
-
-function formatCount(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
-  return String(n);
-}
-
 export default async function LandingPage() {
-  const [testimonials, stats] = await Promise.all([fetchTestimonials(), fetchHeroStats()]);
+  const testimonials = await fetchTestimonials();
   return (
     <MarketingShell>
       {/* ──────────────────────────────────────────────────────────────
-         HERO — animated blobs + subtle network bg + 3D hero illo
+         HERO — dramatic radial glow, framed illustration, feature pills
          ────────────────────────────────────────────────────────────── */}
-      <section className="relative overflow-hidden bg-gradient-to-br from-blue-50 via-white to-blue-50">
-        {/* Animated blob layer */}
-        <div className="bg-blobs absolute inset-0 -z-10 overflow-hidden">
-          <div className="blob-extra" />
-        </div>
-
-        {/* Faint neural-network image overlay (the user-provided "subtle hero bg") */}
-        <Image
-          src="/landing/hero-bg.webp"
-          alt=""
+      <section className="relative overflow-hidden bg-gradient-to-br from-blue-50 via-white to-indigo-50/40">
+        {/* Layered backdrop:
+           - top-right radial spotlight that casts the warm glow behind the illo
+           - bottom-left ambient glow for depth
+           - faint dot grid texture pinned to the whole section */}
+        <div
           aria-hidden
-          fill
-          priority
-          sizes="100vw"
-          className="-z-10 object-cover opacity-50 mix-blend-luminosity"
+          className="absolute inset-0 -z-10 pointer-events-none"
+          style={{
+            background:
+              "radial-gradient(60% 50% at 80% 20%, rgba(59,130,246,0.18), transparent 70%), radial-gradient(40% 35% at 10% 90%, rgba(99,102,241,0.14), transparent 75%)",
+          }}
         />
+        <div className="bg-dot-grid absolute inset-0 -z-10 opacity-50" />
 
-        <div className="relative max-w-7xl mx-auto px-6 pt-16 pb-20 lg:pt-24 lg:pb-28 grid grid-cols-1 lg:grid-cols-2 gap-12 lg:gap-16 items-center">
-          {/* Left column — above the fold, no scroll-reveal (would flash empty) */}
+        <div className="relative max-w-7xl mx-auto px-6 pt-20 pb-24 lg:pt-28 lg:pb-32 grid grid-cols-1 lg:grid-cols-[1.05fr_1fr] gap-12 lg:gap-14 items-center">
+          {/* Left column */}
           <div>
-            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-bold tracking-widest uppercase text-blue-700 bg-white/60 ring-1 ring-blue-200 backdrop-blur-sm">
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-bold tracking-widest uppercase text-blue-700 bg-white/70 ring-1 ring-blue-200 backdrop-blur-sm shadow-sm shadow-blue-100">
               <SparklesIcon className="w-3.5 h-3.5" />
               Powered by Mistral &amp; ElevenLabs
             </span>
 
-            <h1 className="mt-6 text-5xl sm:text-6xl lg:text-7xl font-bold tracking-tight text-slate-900 leading-[1.02]">
+            <h1 className="mt-6 text-5xl sm:text-6xl lg:text-[5.25rem] font-bold tracking-tight text-slate-900 leading-[1.02]">
               From inbox to{" "}
-              <span className="bg-gradient-to-br from-blue-500 via-blue-600 to-blue-800 bg-clip-text text-transparent animate-gradient-sweep">
-                hired
+              <span className="relative inline-block">
+                <span className="bg-gradient-to-br from-blue-500 via-indigo-600 to-violet-700 bg-clip-text text-transparent animate-gradient-sweep">
+                  hired
+                </span>
+                {/* Underline accent */}
+                <svg
+                  aria-hidden
+                  viewBox="0 0 220 12"
+                  className="absolute left-0 -bottom-2 w-full h-2 text-blue-400/70"
+                  preserveAspectRatio="none"
+                >
+                  <path
+                    d="M2 8 C 60 2, 140 2, 218 8"
+                    stroke="currentColor"
+                    strokeWidth="3"
+                    strokeLinecap="round"
+                    fill="none"
+                  />
+                </svg>
               </span>
               ,<br className="hidden sm:block" /> on autopilot
             </h1>
 
-            <p className="mt-6 max-w-xl text-lg text-slate-600 leading-relaxed">
-              The AI recruiting OS that auto-classifies applications, scores resumes, runs
-              Q&amp;A or voice interviews, and surfaces the best candidates — all from a single
-              dashboard.
+            <p className="mt-7 max-w-xl text-lg text-slate-600 leading-relaxed">
+              The AI recruiting OS that auto-classifies applications, scores resumes,
+              runs Q&amp;A or voice interviews, and surfaces the best candidates —
+              from a single dashboard.
             </p>
 
             <div className="mt-9 flex flex-col sm:flex-row gap-3">
               <Link
                 href="/signup"
-                className="group inline-flex items-center justify-center gap-2 px-7 py-3.5 rounded-full bg-blue-600 text-white font-semibold shadow-lg shadow-blue-600/25 hover:bg-blue-700 hover:shadow-blue-600/40 transition-all"
+                className="group inline-flex items-center justify-center gap-2 px-7 py-3.5 rounded-full bg-gradient-to-br from-blue-600 to-indigo-600 text-white font-semibold shadow-lg shadow-blue-600/30 hover:shadow-xl hover:shadow-blue-600/40 hover:-translate-y-0.5 transition-all"
               >
                 Start free trial
                 <ArrowRightIcon className="w-4 h-4 transition-transform group-hover:translate-x-0.5" />
               </Link>
               <Link
-                href="https://symprio.com/contact" target="_blank" rel="noopener noreferrer"
+                href="https://symprio.com/contact"
+                target="_blank"
+                rel="noopener noreferrer"
                 className="inline-flex items-center justify-center px-7 py-3.5 rounded-full bg-white text-slate-900 font-semibold border border-slate-200 hover:border-slate-300 hover:shadow-sm transition-all"
               >
                 Book a demo
@@ -166,25 +133,93 @@ export default async function LandingPage() {
               Free trial · No credit card required · 25 candidates included
             </p>
 
-            {/* Stats row */}
-            <dl className="mt-12 grid grid-cols-3 gap-6 max-w-md border-t border-slate-200 pt-7">
-              <Stat value={stats.appsValue} label={stats.appsLabel} />
-              <Stat value={stats.scoreValue} label={stats.scoreLabel} />
-              <Stat value={stats.interviewsValue} label={stats.interviewsLabel} />
-            </dl>
+            {/* Feature trust pills (replace live numeric stats so a fresh
+                tenant's low counts don't undermine credibility) */}
+            <ul className="mt-10 flex flex-wrap gap-2 max-w-xl">
+              {[
+                { label: "Sub-4s resume scoring", icon: <SparklesIcon className="w-3.5 h-3.5" /> },
+                { label: "Voice + Q&A interviews", icon: <PhoneIcon className="w-3.5 h-3.5" /> },
+                { label: "Fraud detection built-in", icon: <ShieldCheckIcon className="w-3.5 h-3.5" /> },
+                { label: "Multi-tenant + GDPR ready", icon: <CheckIcon className="w-3.5 h-3.5" /> },
+              ].map((f) => (
+                <li
+                  key={f.label}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/70 ring-1 ring-slate-200 text-xs font-medium text-slate-700 backdrop-blur-sm"
+                >
+                  <span className="text-blue-600">{f.icon}</span>
+                  {f.label}
+                </li>
+              ))}
+            </ul>
           </div>
 
-          {/* Right column — 3D hero illustration with gentle float (above the fold) */}
+          {/* Right column — illustration wrapped in a glassmorphic frame
+              so the artwork's baked-in alpha checker doesn't bleed
+              against the page background. Floating decorative chips
+              + soft glow add depth without needing more art. */}
           <div className="relative">
-            <div className="relative aspect-[16/10] w-full animate-float">
-              <Image
-                src="/landing/hero-illustration.webp"
-                alt="Resume stack flowing into a glowing AI orb that produces approved candidate cards"
-                fill
-                priority
-                sizes="(max-width:1024px) 100vw, 50vw"
-                className="object-contain drop-shadow-[0_30px_60px_rgba(37,99,235,0.18)]"
-              />
+            {/* Outer ambient glow */}
+            <div
+              aria-hidden
+              className="absolute inset-0 -m-12 rounded-[3rem] bg-[radial-gradient(closest-side,rgba(99,102,241,0.25),transparent_70%)] blur-2xl"
+            />
+
+            <div className="relative animate-float">
+              {/* Glass card frame */}
+              <div className="relative rounded-[2rem] bg-gradient-to-br from-white/80 via-white/40 to-blue-100/60 backdrop-blur-md ring-1 ring-white/60 shadow-2xl shadow-blue-900/10 p-2 sm:p-3">
+                <div className="relative aspect-[5/4] w-full overflow-hidden rounded-[1.5rem] bg-gradient-to-br from-slate-50 via-white to-blue-50">
+                  <Image
+                    src="/landing/hero-illustration.webp"
+                    alt="Resume stack flowing into a glowing AI orb that produces approved candidate cards"
+                    fill
+                    priority
+                    sizes="(max-width:1024px) 100vw, 50vw"
+                    className="object-contain p-2"
+                  />
+                  {/* Soft inner highlight */}
+                  <div
+                    aria-hidden
+                    className="pointer-events-none absolute inset-0 bg-gradient-to-tr from-transparent via-white/0 to-white/30"
+                  />
+                </div>
+              </div>
+
+              {/* Floating chip — top-left */}
+              <div className="hidden sm:flex absolute -top-4 -left-5 items-center gap-2 px-3 py-2 rounded-xl bg-white shadow-xl shadow-blue-900/10 ring-1 ring-slate-200 animate-float-slow">
+                <span className="inline-flex w-7 h-7 rounded-lg bg-emerald-100 text-emerald-700 items-center justify-center">
+                  <CheckIcon className="w-4 h-4" />
+                </span>
+                <div className="leading-tight">
+                  <p className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">
+                    Auto-scored
+                  </p>
+                  <p className="text-xs font-bold text-slate-900">+12 candidates</p>
+                </div>
+              </div>
+
+              {/* Floating chip — bottom-right */}
+              <div className="hidden sm:flex absolute -bottom-5 -right-4 items-center gap-2 px-3 py-2 rounded-xl bg-white shadow-xl shadow-indigo-900/10 ring-1 ring-slate-200 animate-float-delayed">
+                <span className="inline-flex w-7 h-7 rounded-lg bg-indigo-100 text-indigo-700 items-center justify-center">
+                  <PhoneIcon className="w-4 h-4" />
+                </span>
+                <div className="leading-tight">
+                  <p className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">
+                    Voice screen
+                  </p>
+                  <p className="text-xs font-bold text-slate-900">Live · 2m 14s</p>
+                </div>
+              </div>
+
+              {/* Floating chip — middle-right */}
+              <div className="hidden lg:flex absolute top-1/3 -right-8 items-center gap-2 px-3 py-2 rounded-xl bg-slate-900 text-white shadow-2xl shadow-slate-900/20 animate-float">
+                <span className="inline-flex w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                <div className="leading-tight">
+                  <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">
+                    Score
+                  </p>
+                  <p className="text-sm font-bold tabular-nums">87 / 100</p>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -691,15 +726,6 @@ export default async function LandingPage() {
 
 // ─────────────────────────────────────────────────────────────────────
 // Sub-components
-
-function Stat({ value, label }: { value: string; label: string }) {
-  return (
-    <div>
-      <p className="text-3xl font-bold text-slate-900 tabular-nums tracking-tight">{value}</p>
-      <p className="mt-1 text-xs text-slate-500 leading-snug">{label}</p>
-    </div>
-  );
-}
 
 function PillarCard({
   variant,

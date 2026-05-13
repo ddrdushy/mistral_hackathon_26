@@ -124,6 +124,16 @@ body {
 .animate-float {
   animation: float-bob 6s ease-in-out infinite;
 }
+/* Slower / offset variants so floating chips around the hero don't all
+   bob in lockstep — each picks a different phase + cycle length. */
+.animate-float-slow {
+  animation: float-bob 9s ease-in-out infinite;
+  animation-delay: -2s;
+}
+.animate-float-delayed {
+  animation: float-bob 7s ease-in-out infinite;
+  animation-delay: -3s;
+}
 
 /* Highlight gradient sweep — for the accent word in headlines. */
 @keyframes gradient-sweep {
@@ -157,6 +167,8 @@ body {
   .bg-blobs > .blob-extra,
   .animate-marquee,
   .animate-float,
+  .animate-float-slow,
+  .animate-float-delayed,
   .animate-gradient-sweep,
   .animate-soft-pulse {
     animation: none !important;
