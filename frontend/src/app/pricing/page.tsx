@@ -27,71 +27,63 @@ const PLANS: PlanRow[] = [
     name: "Trial",
     price: "$0",
     cadence: "free",
-    blurb: "Try the full product. No card required, no time limit.",
+    blurb: "Try the full product. No card required, no time limit. Hit a quota? Move to Business in a single email.",
     cta: "Start trial",
     ctaHref: "/signup",
+  },
+  {
+    name: "Business",
+    price: "Custom",
+    cadence: "billed monthly",
+    blurb: "For teams hiring continuously. Unlimited jobs, candidates, and interviews. Branded emails, SSO, audit logs, dedicated support — sized to your headcount.",
+    cta: "Contact sales",
+    ctaHref: mailtoSales("Interested in HireOps Business"),
     highlighted: true,
-  },
-  {
-    name: "Starter",
-    price: "$49",
-    cadence: "/ month",
-    blurb: "For small teams hiring a handful of roles per quarter.",
-    cta: "Contact sales",
-    ctaHref: mailtoSales("Interested in HireOps Starter"),
-  },
-  {
-    name: "Pro",
-    price: "$199",
-    cadence: "/ month",
-    blurb: "For active recruiters with continuous pipelines.",
-    cta: "Contact sales",
-    ctaHref: mailtoSales("Interested in HireOps Pro"),
   },
 ];
 
 interface FeatureRow {
   category: string;
-  rows: { label: string; values: [string | boolean, string | boolean, string | boolean] }[];
+  rows: { label: string; values: [string | boolean, string | boolean] }[];
 }
 
 const FEATURES: FeatureRow[] = [
   {
     category: "Limits",
     rows: [
-      { label: "Active jobs", values: ["5", "25", "Unlimited"] },
-      { label: "Candidates", values: ["25", "250", "Unlimited"] },
-      { label: "Interviews / month", values: ["10", "100", "Unlimited"] },
-      { label: "Team seats", values: ["1", "5", "Unlimited"] },
+      { label: "Active jobs", values: ["5", "Unlimited"] },
+      { label: "Candidates", values: ["25", "Unlimited"] },
+      { label: "Interviews / month", values: ["10", "Unlimited"] },
+      { label: "Team seats", values: ["1", "Unlimited"] },
     ],
   },
   {
     category: "AI features",
     rows: [
-      { label: "Email auto-classification", values: [true, true, true] },
-      { label: "Resume scoring (Mistral)", values: [true, true, true] },
-      { label: "Q&A interviews (MCQ + free-form)", values: [true, true, true] },
-      { label: "Voice interviews (ElevenLabs)", values: [true, true, true] },
-      { label: "Anti-fraud signals (face + tab + paste)", values: [true, true, true] },
+      { label: "Email auto-classification", values: [true, true] },
+      { label: "Resume scoring (Mistral)", values: [true, true] },
+      { label: "Q&A interviews (MCQ + free-form)", values: [true, true] },
+      { label: "Voice interviews (ElevenLabs)", values: [true, true] },
+      { label: "Anti-fraud signals (face + tab + paste)", values: [true, true] },
     ],
   },
   {
     category: "Hiring workflow",
     rows: [
-      { label: "Threshold-based auto-decisions", values: [true, true, true] },
-      { label: "AI hiring report per candidate", values: [true, true, true] },
-      { label: "CSV export", values: [true, true, true] },
-      { label: "Branded interview emails", values: [false, true, true] },
-      { label: "Calendar invites (.ics)", values: [true, true, true] },
+      { label: "Threshold-based auto-decisions", values: [true, true] },
+      { label: "AI hiring report per candidate", values: [true, true] },
+      { label: "CSV export", values: [true, true] },
+      { label: "Branded interview emails", values: [false, true] },
+      { label: "Calendar invites (.ics)", values: [true, true] },
     ],
   },
   {
     category: "Support & security",
     rows: [
-      { label: "Community support", values: [true, true, true] },
-      { label: "Priority email support", values: [false, true, true] },
-      { label: "SSO (coming soon)", values: [false, false, true] },
-      { label: "Audit logs (coming soon)", values: [false, false, true] },
+      { label: "Community support", values: [true, true] },
+      { label: "Priority email support", values: [false, true] },
+      { label: "SSO (coming soon)", values: [false, true] },
+      { label: "Audit logs (coming soon)", values: [false, true] },
     ],
   },
 ];
@@ -102,12 +94,12 @@ const FAQ = [
     a: "No. Start the Trial with just an email — no card, no time limit. Upgrade only when you're ready.",
   },
   {
-    q: "How do I move to Starter or Pro?",
-    a: "Email contact@symprio.com or click Contact sales above. We'll set up monthly invoicing connected to your Stripe account so billing matches your finance team's existing flow.",
+    q: "How do I move to the Business plan?",
+    a: "Email contact@symprio.com or click Contact sales above. We size pricing to your headcount and hiring volume, then bill monthly through your Stripe account.",
   },
   {
     q: "What happens if I exceed a quota on the Trial?",
-    a: "Existing data stays. You'll see an 'Upgrade to add more' prompt — talk to sales and we'll have you on a paid plan within a day.",
+    a: "Existing data stays. You'll see an 'Upgrade to add more' prompt — talk to sales and we'll have you on Business within a day.",
   },
   {
     q: "Is my candidates' data safe?",
@@ -140,31 +132,38 @@ export default function PricingPage() {
         </div>
       </section>
 
-      {/* Plan cards */}
-      <section className="max-w-6xl mx-auto px-6 -mt-4 mb-16">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+      {/* Plan cards — two-up centered layout. Trial on the left, Business on the right (highlighted gradient card). */}
+      <section className="max-w-5xl mx-auto px-6 -mt-4 mb-20">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {PLANS.map((p) => (
             <div
               key={p.name}
-              className={`rounded-2xl p-6 ${
+              className={`relative rounded-3xl p-7 sm:p-8 overflow-hidden transition-all ${
                 p.highlighted
-                  ? "bg-slate-900 text-white shadow-2xl shadow-blue-900/10"
-                  : "bg-white border border-slate-200 shadow-sm"
+                  ? "bg-gradient-to-br from-slate-900 via-indigo-900 to-blue-900 text-white shadow-2xl shadow-blue-900/30"
+                  : "bg-white border border-slate-200 shadow-sm hover:shadow-md hover:-translate-y-0.5"
               }`}
             >
               {p.highlighted && (
-                <span className="inline-block text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded-full bg-blue-500 text-white mb-2">
-                  Recommended
-                </span>
+                <>
+                  {/* Decorative glow */}
+                  <div
+                    aria-hidden
+                    className="absolute -top-20 -right-20 w-72 h-72 rounded-full bg-blue-500/30 blur-3xl pointer-events-none"
+                  />
+                  <span className="relative inline-block text-[10px] uppercase tracking-wider font-bold px-2.5 py-1 rounded-full bg-white/15 text-blue-100 ring-1 ring-white/20 mb-3">
+                    For teams
+                  </span>
+                </>
               )}
               <p
-                className={`text-sm font-semibold ${p.highlighted ? "text-blue-300" : "text-slate-500"}`}
+                className={`relative text-sm font-semibold ${p.highlighted ? "text-blue-200" : "text-slate-500"}`}
               >
                 {p.name}
               </p>
-              <p className="mt-2 flex items-baseline gap-1.5">
+              <p className="relative mt-2 flex items-baseline gap-1.5">
                 <span
-                  className={`text-4xl font-bold ${p.highlighted ? "text-white" : "text-slate-900"}`}
+                  className={`text-5xl font-bold tracking-tight ${p.highlighted ? "text-white" : "text-slate-900"}`}
                 >
                   {p.price}
                 </span>
@@ -175,16 +174,48 @@ export default function PricingPage() {
                 </span>
               </p>
               <p
-                className={`mt-2 text-sm ${p.highlighted ? "text-blue-100" : "text-slate-600"}`}
+                className={`relative mt-3 text-sm leading-relaxed ${p.highlighted ? "text-blue-100/90" : "text-slate-600"}`}
               >
                 {p.blurb}
               </p>
+
+              {/* Inline feature highlights so the card stands on its own
+                  without forcing the reader down to the comparison table */}
+              <ul className="relative mt-5 space-y-2">
+                {(p.highlighted
+                  ? [
+                      "Unlimited jobs, candidates, interviews",
+                      "Branded interview emails + calendar invites",
+                      "SSO + audit logs (coming soon)",
+                      "Dedicated onboarding + priority support",
+                      "Monthly invoicing through your Stripe account",
+                    ]
+                  : [
+                      "5 active jobs · 25 candidates",
+                      "10 interviews / month",
+                      "Every AI agent + voice + fraud detection",
+                      "Community support",
+                    ]
+                ).map((line) => (
+                  <li key={line} className="flex items-start gap-2 text-sm">
+                    <CheckIcon
+                      className={`w-4 h-4 mt-0.5 shrink-0 ${
+                        p.highlighted ? "text-blue-300" : "text-emerald-600"
+                      }`}
+                    />
+                    <span className={p.highlighted ? "text-blue-50" : "text-slate-700"}>
+                      {line}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+
               <Link
                 href={p.ctaHref}
-                className={`mt-5 w-full inline-flex items-center justify-center px-4 py-2.5 rounded-full font-semibold text-sm transition-colors ${
+                className={`relative mt-7 w-full inline-flex items-center justify-center gap-2 px-5 py-3 rounded-full font-semibold text-sm transition-all ${
                   p.highlighted
-                    ? "bg-white text-slate-900 hover:bg-slate-100"
-                    : "bg-blue-600 text-white hover:bg-blue-700"
+                    ? "bg-white text-slate-900 hover:bg-blue-50 shadow-lg shadow-blue-900/20"
+                    : "bg-slate-900 text-white hover:bg-slate-800"
                 }`}
               >
                 {p.cta}
@@ -192,6 +223,16 @@ export default function PricingPage() {
             </div>
           ))}
         </div>
+        <p className="text-center text-xs text-slate-500 mt-6">
+          Need pay-as-you-go, an agency rate, or a non-profit discount?{" "}
+          <a
+            href={mailtoSales("Custom HireOps pricing")}
+            className="font-semibold text-blue-600 hover:text-blue-700"
+          >
+            Talk to us
+          </a>
+          .
+        </p>
       </section>
 
       {/* Comparison table */}
@@ -203,17 +244,16 @@ export default function PricingPage() {
           <table className="min-w-full text-sm">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
-                <th className="text-left font-semibold text-slate-700 px-6 py-4 w-1/3"></th>
-                <th className="text-center font-semibold text-slate-700 px-6 py-4 bg-blue-50/50">Trial</th>
-                <th className="text-center font-semibold text-slate-700 px-6 py-4">Starter</th>
-                <th className="text-center font-semibold text-slate-700 px-6 py-4">Pro</th>
+                <th className="text-left font-semibold text-slate-700 px-6 py-4 w-1/2"></th>
+                <th className="text-center font-semibold text-slate-700 px-6 py-4">Trial</th>
+                <th className="text-center font-semibold text-slate-700 px-6 py-4 bg-blue-50/60">Business</th>
               </tr>
             </thead>
             <tbody>
               {FEATURES.flatMap((cat) => [
                 <tr key={`${cat.category}-header`} className="bg-slate-50/60">
                   <td
-                    colSpan={4}
+                    colSpan={3}
                     className="px-6 py-2 text-[11px] uppercase tracking-wider font-semibold text-slate-500"
                   >
                     {cat.category}
@@ -226,7 +266,7 @@ export default function PricingPage() {
                       <td
                         key={j}
                         className={`px-6 py-3 text-center ${
-                          j === 0 ? "bg-blue-50/30" : ""
+                          j === 1 ? "bg-blue-50/30" : ""
                         }`}
                       >
                         {typeof v === "boolean" ? (

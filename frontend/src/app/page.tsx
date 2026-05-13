@@ -630,7 +630,7 @@ export default async function LandingPage() {
             </p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5 max-w-4xl mx-auto">
             <Reveal delay={0}>
               <PricingCard
                 name="Trial"
@@ -639,48 +639,42 @@ export default async function LandingPage() {
                 cta="Start trial"
                 ctaHref="/signup"
                 features={[
-                  "5 active jobs",
-                  "25 candidates",
+                  "5 active jobs · 25 candidates",
                   "10 interviews / month",
-                  "Q&A + voice modes",
-                  "AI fraud detection",
+                  "Every AI agent + voice + fraud detection",
+                  "Community support",
+                  "No card. No time limit.",
                 ]}
-                highlighted
               />
             </Reveal>
             <Reveal delay={120}>
               <PricingCard
-                name="Starter"
-                price="$49"
-                cadence="/ month"
+                name="Business"
+                price="Custom"
+                cadence="billed monthly"
                 cta="Contact sales"
-                ctaHref="mailto:contact@symprio.com?subject=Interested%20in%20HireOps%20Starter"
+                ctaHref="mailto:contact@symprio.com?subject=Interested%20in%20HireOps%20Business"
                 features={[
-                  "25 active jobs",
-                  "250 candidates",
-                  "100 interviews / month",
-                  "Branded interview emails",
-                  "Priority support",
+                  "Unlimited jobs, candidates, interviews",
+                  "Branded interview emails + calendar invites",
+                  "Team seats · SSO + audit logs (soon)",
+                  "Dedicated onboarding + priority support",
+                  "Monthly invoicing through your Stripe",
                 ]}
-              />
-            </Reveal>
-            <Reveal delay={240}>
-              <PricingCard
-                name="Pro"
-                price="$199"
-                cadence="/ month"
-                cta="Contact sales"
-                ctaHref="mailto:contact@symprio.com?subject=Interested%20in%20HireOps%20Pro"
-                features={[
-                  "Unlimited jobs",
-                  "Unlimited candidates",
-                  "Unlimited interviews",
-                  "Team seats",
-                  "SSO + audit logs",
-                ]}
+                highlighted
               />
             </Reveal>
           </div>
+          <p className="text-center text-xs text-slate-500 mt-6">
+            Looking for pay-as-you-go, agency rates, or non-profit pricing?{" "}
+            <a
+              href="mailto:contact@symprio.com?subject=Custom%20HireOps%20pricing"
+              className="font-semibold text-blue-600 hover:text-blue-700"
+            >
+              Talk to us
+            </a>
+            .
+          </p>
         </div>
       </section>
 
