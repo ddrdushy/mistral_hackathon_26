@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import Link from "next/link";
 import { apiGet, apiPatch, apiPut, apiDelete } from "@/lib/api";
 
 interface AgentInfo {
@@ -45,6 +46,37 @@ interface UsageReport {
   }>;
 }
 
+interface TenantLlmUsageRow {
+  tenant_id: number;
+  tenant_name: string;
+  tenant_slug: string;
+  plan: string;
+  suspended: boolean;
+  deleted: boolean;
+  user_count: number;
+  calls: number;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  raw_cost_usd: number;
+  billable_usd: number;
+  margin_usd: number;
+  markup_multiplier: number;
+  error_count: number;
+  last_call_at: string | null;
+}
+
+interface TenantLlmUsageResponse {
+  period_days: number;
+  tenants: TenantLlmUsageRow[];
+  totals: {
+    calls: number;
+    raw_cost_usd: number;
+    billable_usd: number;
+    margin_usd: number;
+  };
+}
+
 interface EnvCheck {
   MISTRAL_API_KEY: string;
   ELEVENLABS_API_KEY: string;
@@ -87,6 +119,7 @@ const AGENT_ICONS: Record<string, string> = {
 export default function PlatformSettingsPage() {
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [usage, setUsage] = useState<UsageReport | null>(null);
+  const [tenantUsage, setTenantUsage] = useState<TenantLlmUsageResponse | null>(null);
   const [envCheck, setEnvCheck] = useState<EnvCheck | null>(null);
   const [loading, setLoading] = useState(true);
   const [editingAgent, setEditingAgent] = useState<string | null>(null);
@@ -108,14 +141,16 @@ export default function PlatformSettingsPage() {
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const [agentsRes, usageRes, envRes, meRes] = await Promise.all([
+      const [agentsRes, usageRes, envRes, meRes, byTenantRes] = await Promise.all([
         apiGet<{ agents: AgentInfo[] }>("/settings/agents"),
         apiGet<UsageReport>("/settings/llm/usage", { days: String(usageDays), include_all: "true" }),
         apiGet<EnvCheck>("/settings/env-check"),
         apiGet<MeResponseLite>("/auth/me"),
+        apiGet<TenantLlmUsageResponse>("/admin/llm-usage/by-tenant", { days: String(usageDays) }).catch(() => null),
       ]);
       setAgents(agentsRes.agents);
       setUsage(usageRes);
+      setTenantUsage(byTenantRes);
       setEnvCheck(envRes);
       setIsSuperadmin(meRes.user.is_superadmin);
       if (meRes.user.is_superadmin) {
@@ -452,6 +487,98 @@ export default function PlatformSettingsPage() {
               </div>
             </div>
           )}
+
+          {/* Per-Tenant Usage */}
+          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+            <div className="flex items-start justify-between gap-3 mb-4 flex-wrap">
+              <div>
+                <h3 className="text-base font-semibold text-slate-900">Usage by Tenant</h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Per-tenant LLM spend over the last {usageDays === 1 ? "24 hours" : `${usageDays} days`}.
+                  Billable is what they&apos;d be charged (raw × their plan&apos;s markup); margin is the delta.
+                </p>
+              </div>
+              {tenantUsage && (
+                <div className="text-right text-xs text-slate-500">
+                  <div>Raw <span className="font-mono text-slate-700">${tenantUsage.totals.raw_cost_usd.toFixed(4)}</span></div>
+                  <div>Billable <span className="font-mono text-slate-700">${tenantUsage.totals.billable_usd.toFixed(4)}</span></div>
+                  <div>Margin <span className="font-mono text-emerald-700">${tenantUsage.totals.margin_usd.toFixed(4)}</span></div>
+                </div>
+              )}
+            </div>
+
+            {!tenantUsage ? (
+              <p className="text-sm text-slate-400 italic">Loading per-tenant breakdown…</p>
+            ) : tenantUsage.tenants.length === 0 ? (
+              <p className="text-sm text-slate-400 italic">No tenant LLM activity in this window.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-slate-100">
+                      <th className="text-left text-xs font-medium text-slate-500 uppercase tracking-wider pb-3">Tenant</th>
+                      <th className="text-left text-xs font-medium text-slate-500 uppercase tracking-wider pb-3">Plan</th>
+                      <th className="text-right text-xs font-medium text-slate-500 uppercase tracking-wider pb-3">Calls</th>
+                      <th className="text-right text-xs font-medium text-slate-500 uppercase tracking-wider pb-3">Tokens</th>
+                      <th className="text-right text-xs font-medium text-slate-500 uppercase tracking-wider pb-3">Raw cost</th>
+                      <th className="text-right text-xs font-medium text-slate-500 uppercase tracking-wider pb-3">Markup</th>
+                      <th className="text-right text-xs font-medium text-slate-500 uppercase tracking-wider pb-3">Billable</th>
+                      <th className="text-right text-xs font-medium text-slate-500 uppercase tracking-wider pb-3">Margin</th>
+                      <th className="text-right text-xs font-medium text-slate-500 uppercase tracking-wider pb-3">Last call</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-50">
+                    {tenantUsage.tenants.map((t) => (
+                      <tr key={t.tenant_id} className={`hover:bg-slate-50 ${t.suspended || t.deleted ? "opacity-60" : ""}`}>
+                        <td className="py-2.5">
+                          {t.tenant_id > 0 ? (
+                            <Link
+                              href={`/admin/tenants/${t.tenant_id}`}
+                              className="text-sm font-medium text-slate-900 hover:text-indigo-600"
+                            >
+                              {t.tenant_name}
+                            </Link>
+                          ) : (
+                            <span className="text-sm text-slate-500 italic">{t.tenant_name}</span>
+                          )}
+                          {t.suspended && (
+                            <span className="ml-1.5 text-[9px] uppercase tracking-wider px-1 py-0.5 rounded bg-amber-100 text-amber-800">
+                              Suspended
+                            </span>
+                          )}
+                          {t.deleted && (
+                            <span className="ml-1.5 text-[9px] uppercase tracking-wider px-1 py-0.5 rounded bg-rose-100 text-rose-800">
+                              Deleted
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-2.5 text-xs uppercase tracking-wider text-slate-500">
+                          {t.plan}
+                        </td>
+                        <td className="py-2.5 text-right tabular-nums text-slate-700">{t.calls.toLocaleString()}</td>
+                        <td className="py-2.5 text-right tabular-nums text-slate-600 text-xs">
+                          {t.total_tokens.toLocaleString()}
+                        </td>
+                        <td className="py-2.5 text-right tabular-nums text-slate-700">${t.raw_cost_usd.toFixed(4)}</td>
+                        <td className="py-2.5 text-right tabular-nums text-slate-500 text-xs">
+                          {t.markup_multiplier.toFixed(1)}×
+                        </td>
+                        <td className="py-2.5 text-right tabular-nums font-semibold text-slate-900">
+                          ${t.billable_usd.toFixed(4)}
+                        </td>
+                        <td className="py-2.5 text-right tabular-nums text-emerald-700">
+                          ${t.margin_usd.toFixed(4)}
+                        </td>
+                        <td className="py-2.5 text-right text-xs text-slate-400">
+                          {t.last_call_at ? new Date(t.last_call_at).toLocaleString() : "—"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
 
           {/* Recent Calls Log */}
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">

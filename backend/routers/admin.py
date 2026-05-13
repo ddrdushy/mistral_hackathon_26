@@ -14,7 +14,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
-from sqlalchemy import func, or_
+from sqlalchemy import func, or_, case
 from sqlalchemy.orm import Session
 
 from fastapi.responses import StreamingResponse
@@ -710,6 +710,170 @@ def analytics(
         llm_spend_total_30d_usd=round(spend_total, 4),
         top_spenders_30d=top_spenders,
         per_agent_breakdown_30d=agent_breakdown,
+    )
+
+
+# ── LLM usage by tenant ───────────────────────────────────────────────────
+
+
+class TenantLlmUsageRow(BaseModel):
+    tenant_id: int
+    tenant_name: str
+    tenant_slug: str
+    plan: str
+    suspended: bool
+    deleted: bool
+    user_count: int
+    calls: int
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
+    raw_cost_usd: float          # what the platform pays the provider
+    billable_usd: float          # what the tenant would be charged (raw × plan markup)
+    margin_usd: float            # billable - raw
+    markup_multiplier: float     # this tenant's plan multiplier
+    error_count: int
+    last_call_at: Optional[str] = None
+
+
+class TenantLlmUsageResponse(BaseModel):
+    period_days: int
+    tenants: list[TenantLlmUsageRow]
+    totals: dict  # {"calls", "raw_cost_usd", "billable_usd", "margin_usd"}
+
+
+@router.get("/llm-usage/by-tenant", response_model=TenantLlmUsageResponse)
+def llm_usage_by_tenant(
+    days: int = 30,
+    db: Session = Depends(get_db),
+    _: CurrentSession = Depends(require_superadmin),
+):
+    """Super-admin only: per-tenant LLM spend breakdown.
+
+    Returns every tenant that has at least one LlmUsage row in the window,
+    aggregated with calls / tokens / raw cost. For each tenant we also
+    compute the marked-up billable cost using their current plan's
+    markup multiplier — so the admin sees raw + billable + margin
+    side by side. Sorted by raw_cost_usd desc.
+    """
+    days = max(1, min(int(days or 30), 365))
+    cutoff = datetime.utcnow() - timedelta(days=days)
+
+    rows = (
+        db.query(
+            LlmUsage.tenant_id,
+            func.count(LlmUsage.id).label("calls"),
+            func.coalesce(func.sum(LlmUsage.input_tokens), 0).label("in_tokens"),
+            func.coalesce(func.sum(LlmUsage.output_tokens), 0).label("out_tokens"),
+            func.coalesce(func.sum(LlmUsage.cost_usd), 0.0).label("cost"),
+            func.sum(
+                case((LlmUsage.status == "error", 1), else_=0)
+            ).label("errors"),
+            func.max(LlmUsage.created_at).label("last_at"),
+        )
+        .filter(LlmUsage.created_at >= cutoff)
+        .group_by(LlmUsage.tenant_id)
+        .all()
+    )
+
+    # Hydrate tenant metadata in one round-trip.
+    tenant_ids = [r.tenant_id for r in rows if r.tenant_id is not None]
+    tenant_map: dict[int, Tenant] = {
+        t.id: t
+        for t in db.query(Tenant).filter(Tenant.id.in_(tenant_ids)).all()
+    } if tenant_ids else {}
+    # Per-tenant user counts (one query, grouped).
+    user_counts: dict[int, int] = {}
+    if tenant_ids:
+        for tid, n in (
+            db.query(User.tenant_id, func.count(User.id))
+            .filter(User.tenant_id.in_(tenant_ids))
+            .group_by(User.tenant_id)
+            .all()
+        ):
+            user_counts[tid] = int(n or 0)
+
+    from billing.plans import get_plan
+
+    out: list[TenantLlmUsageRow] = []
+    totals_raw = 0.0
+    totals_bill = 0.0
+    totals_calls = 0
+
+    # Orphaned rows (tenant_id IS NULL — old data from the racing-worker
+    # bug we fixed earlier). Surface them as a single synthetic "Untagged"
+    # row so they don't disappear from the admin view.
+    null_row = next((r for r in rows if r.tenant_id is None), None)
+    real_rows = [r for r in rows if r.tenant_id is not None]
+    for r in real_rows:
+        t = tenant_map.get(r.tenant_id)
+        markup = 1.0
+        if t and t.plan:
+            try:
+                markup = float(get_plan(t.plan).llm_markup_multiplier or 1.0)
+            except Exception:
+                markup = 1.0
+        raw = round(float(r.cost or 0.0), 4)
+        billable = round(raw * markup, 4)
+        out.append(TenantLlmUsageRow(
+            tenant_id=r.tenant_id,
+            tenant_name=t.name if t else f"#{r.tenant_id}",
+            tenant_slug=t.slug if t else "",
+            plan=t.plan if t else "?",
+            suspended=bool(t.suspended) if t else False,
+            deleted=t.deleted_at is not None if t else False,
+            user_count=user_counts.get(r.tenant_id, 0),
+            calls=int(r.calls or 0),
+            input_tokens=int(r.in_tokens or 0),
+            output_tokens=int(r.out_tokens or 0),
+            total_tokens=int((r.in_tokens or 0) + (r.out_tokens or 0)),
+            raw_cost_usd=raw,
+            billable_usd=billable,
+            margin_usd=round(billable - raw, 4),
+            markup_multiplier=markup,
+            error_count=int(r.errors or 0),
+            last_call_at=r.last_at.isoformat() if r.last_at else None,
+        ))
+        totals_raw += raw
+        totals_bill += billable
+        totals_calls += int(r.calls or 0)
+
+    out.sort(key=lambda r: r.raw_cost_usd, reverse=True)
+
+    if null_row:
+        raw = round(float(null_row.cost or 0.0), 4)
+        out.append(TenantLlmUsageRow(
+            tenant_id=0,
+            tenant_name="(orphan — no tenant)",
+            tenant_slug="",
+            plan="?",
+            suspended=False,
+            deleted=False,
+            user_count=0,
+            calls=int(null_row.calls or 0),
+            input_tokens=int(null_row.in_tokens or 0),
+            output_tokens=int(null_row.out_tokens or 0),
+            total_tokens=int((null_row.in_tokens or 0) + (null_row.out_tokens or 0)),
+            raw_cost_usd=raw,
+            billable_usd=raw,
+            margin_usd=0.0,
+            markup_multiplier=1.0,
+            error_count=int(null_row.errors or 0),
+            last_call_at=null_row.last_at.isoformat() if null_row.last_at else None,
+        ))
+        totals_raw += raw
+        totals_bill += raw
+        totals_calls += int(null_row.calls or 0)
+
+    return TenantLlmUsageResponse(
+        period_days=days,
+        tenants=out,
+        totals={
+            "calls": totals_calls,
+            "raw_cost_usd": round(totals_raw, 4),
+            "billable_usd": round(totals_bill, 4),
+            "margin_usd": round(totals_bill - totals_raw, 4),
+        },
     )
 
 
