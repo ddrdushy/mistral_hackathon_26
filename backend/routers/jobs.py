@@ -9,7 +9,7 @@ from sqlalchemy import func
 from database import get_db
 from models import Job, Application
 from schemas import JobCreate, JobUpdate, JobResponse, JobListResponse
-from agents.job_generator import generate_job_details
+from agents.job_generator import generate_job_details, refine_job_from_text
 from auth.dependencies import current_session, CurrentSession
 from billing.plans import check_quota
 from billing.cost_guard import check_llm_budget
@@ -35,6 +35,72 @@ async def generate_job(
     result = await generate_job_details(req.title.strip(), tenant=session.tenant)
     result["title"] = req.title.strip()
     return result
+
+
+class JobRefineRequest(BaseModel):
+    text: str = Field(..., description="Raw JD text (pasted or extracted from a file)")
+
+
+@router.post("/refine")
+async def refine_job(
+    req: JobRefineRequest,
+    session: CurrentSession = Depends(current_session),
+):
+    """Accept a pasted/typed JD and return the same structured dict as
+    /jobs/generate, so HR can polish their own draft with AI instead of
+    starting from a title only.
+
+    The frontend feeds either pasted text or text extracted from an
+    uploaded PDF/DOCX (via /jobs/refine-file) into this endpoint.
+    """
+    gate_agent(session.tenant, "job_generator")
+    check_llm_budget()
+    text = (req.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Paste or upload a JD first")
+    if len(text) < 30:
+        raise HTTPException(
+            status_code=400,
+            detail="That's awfully short for a JD. Paste the full posting and try again.",
+        )
+    return await refine_job_from_text(text, tenant=session.tenant)
+
+
+@router.post("/refine-file")
+async def refine_job_file(
+    file: "UploadFile" = None,  # filled by FastAPI below
+    session: CurrentSession = Depends(current_session),
+):
+    """Same as /refine but accepts a PDF/DOCX/TXT file. We extract the
+    text with the resume_service utilities (a JD parses fine with the
+    same code) and pass it through ``refine_job_from_text``.
+    """
+    gate_agent(session.tenant, "job_generator")
+    check_llm_budget()
+    if file is None:
+        raise HTTPException(status_code=400, detail="No file provided")
+    from services.resume_service import extract_resume_text
+    file_bytes = await file.read()
+    if not file_bytes:
+        raise HTTPException(status_code=400, detail="Empty file")
+    if len(file_bytes) > 5 * 1024 * 1024:  # JDs are tiny — 5 MB plenty
+        raise HTTPException(status_code=413, detail="JD file too large (5 MB limit)")
+    fname = file.filename or "jd.pdf"
+    if not fname.lower().endswith((".pdf", ".docx", ".doc", ".txt", ".tex")):
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported file type — upload a PDF, DOCX, DOC, TXT, or TEX",
+        )
+    try:
+        text = extract_resume_text(fname, file_bytes=file_bytes)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Couldn't read file: {e}")
+    if not text or not text.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="No text extractable from this file — try a different format",
+        )
+    return await refine_job_from_text(text, tenant=session.tenant)
 
 
 def _generate_job_id(db: Session, tenant_id: int) -> str:
@@ -268,6 +334,8 @@ async def get_job(
 async def suggested_candidates(
     job_id: int,
     limit: int = 10,
+    min_score: int = 60,
+    min_overlap: int = 2,
     extract_missing: bool = True,
     db: Session = Depends(get_db),
     session: CurrentSession = Depends(current_session),
@@ -278,6 +346,15 @@ async def suggested_candidates(
     each candidate's profile_skills. Uses the cached profile_extracted_at
     column so we never re-LLM the same resume. Candidates without a profile
     yet are extracted on-the-fly (capped to PROFILE_LAZY_CAP per call).
+
+    Filtering knobs:
+      • ``min_score`` (default 60): only return matches at least this strong.
+        The old default-of-5 surfaced 1-keyword-overlap noise; 60 means the
+        candidate needs real skill/role/seniority alignment, not a single
+        coincidental tag.
+      • ``min_overlap`` (default 2): require at least N skill matches in
+        common. Stops "matched jira → 40% score" style false positives when
+        the job only has 4 required skills.
     """
     from models import Candidate
     from agents.profile_extractor import extract_profile
@@ -346,6 +423,16 @@ async def suggested_candidates(
             continue
 
         overlap = job_skills & cand_skills
+        # Hard floor on skill overlap: one shared keyword like "jira" is
+        # noise, not a match. Demand at least min_overlap shared skills
+        # OR a clean role-title match to qualify.
+        cand_role = (c.profile_role or "").lower()
+        role_match = bool(
+            cand_role and job_role and (cand_role in job_role or job_role in cand_role)
+        )
+        if len(overlap) < min_overlap and not role_match:
+            continue
+
         # Tag overlap is the primary signal — ratio against the job's
         # required skills means a candidate matching all 4/4 scores higher
         # than one matching 6/12 of an unfocused job.
@@ -353,21 +440,30 @@ async def suggested_candidates(
             base = (len(overlap) / len(job_skills)) * 80
         else:
             base = 0
-        # Role match bonus — substring either way
-        cand_role = (c.profile_role or "").lower()
-        if cand_role and job_role and (cand_role in job_role or job_role in cand_role):
+        if role_match:
             base += 12
         # Seniority match
         if c.profile_seniority and job_seniority and c.profile_seniority in job_seniority:
             base += 8
         score = round(min(base, 100), 1)
-        if score < 5:
+        if score < min_score:
             continue
+
+        # Reachability flags — feeds the UI's "Missing email" pill and
+        # excludes unreachable rows from auto-select / outreach.
+        email_str = (c.email or "").strip()
+        email_missing = (not email_str) or email_str.lower().endswith("@uploaded.local")
+        phone_str = (c.phone or "").strip()
+        phone_missing = not phone_str
 
         suggestions.append({
             "candidate_id": c.id,
             "name": c.name,
-            "email": c.email,
+            "email": "" if email_missing else email_str,
+            "phone": phone_str,
+            "email_missing": email_missing,
+            "phone_missing": phone_missing,
+            "reachable": not (email_missing and phone_missing),
             "role": c.profile_role,
             "seniority": c.profile_seniority,
             "years_experience": c.profile_years_experience,
@@ -384,6 +480,8 @@ async def suggested_candidates(
         "suggestions": suggestions[:limit],
         "total_profiled": sum(1 for c in candidates if c.profile_extracted_at),
         "total_candidates": len(candidates),
+        "min_score": min_score,
+        "min_overlap": min_overlap,
     }
 
 

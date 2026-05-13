@@ -141,6 +141,111 @@ Return ONLY valid JSON, no markdown, no explanation."""
         return _mock_generate(title)
 
 
+async def refine_job_from_text(raw_text: str, tenant=None) -> dict:
+    """Parse a user-supplied JD (pasted text or extracted PDF/DOCX) into
+    the same structured dict shape as ``generate_job_details``.
+
+    Use case: HR has their own JD draft and wants AI to clean it up +
+    structure it, instead of generating from scratch. We keep what's
+    in the text — title, location, level, content — and just normalise
+    the shape (department, must_have/nice_to_have skills, bulleted
+    responsibilities + qualifications, polished description).
+    """
+    text = (raw_text or "").strip()
+    if not text:
+        raise ValueError("No JD text provided")
+    # Cap input — most JDs are under 4k chars; 12k is room for the
+    # rambly enterprise ones without blowing the prompt budget.
+    text = text[:12000]
+
+    if USE_MOCK or not os.environ.get("MISTRAL_API_KEY"):
+        # Mock path: try to lift a plausible title from the first
+        # non-empty line, then reuse the title-based mock generator so
+        # the UI still has something to render in dev without a key.
+        title_guess = ""
+        for line in text.splitlines():
+            line = line.strip()
+            if line and len(line) < 120:
+                title_guess = line
+                break
+        return _mock_generate(title_guess or "Open Position")
+
+    try:
+        from mistralai import Mistral
+        from services.llm_tracker import LLMCallTimer
+
+        client = Mistral(api_key=os.environ["MISTRAL_API_KEY"])
+        company_block = _build_company_context(tenant)
+
+        prompt = f"""You are an expert technical recruiter cleaning up and \
+structuring a job description that the user has provided.
+
+{company_block}USER-PROVIDED JD TEXT:
+\"\"\"
+{text}
+\"\"\"
+
+Read the JD above carefully. Extract everything that's present and \
+return a JSON object matching this schema:
+
+{{
+  "title": "the role title as it appears in the JD",
+  "department": "Engineering" | "IT" | "Data & Analytics" | "Product" | "Design" | "Marketing" | "Sales" | "Operations" | "Human Resources" | "Finance" | "Operations",
+  "location": "City, Country" | "Remote" | "Hybrid — City, Country",
+  "seniority": "junior" | "mid" | "senior" | "lead",
+  "must_have_skills": ["skill1", "skill2", ...],
+  "nice_to_have_skills": ["skill1", "skill2", ...],
+  "responsibilities": ["responsibility1", "responsibility2", ...],
+  "qualifications": ["qual1", "qual2", ...],
+  "description": "Full job description in 3-4 polished paragraphs"
+}}
+
+REQUIREMENTS:
+- KEEP the role's actual scope from the JD. Don't substitute generic content.
+- If the JD lists responsibilities as bullets, lift them; otherwise extract them from prose. Same for qualifications.
+- "must_have_skills" / "nice_to_have_skills" must be CONCRETE technologies / tools / certifications. Soft skills go in the description, not the skills arrays.
+- "seniority": infer from years-of-experience requirement + title (junior/mid/senior/lead). Default "mid" if unclear.
+- "description": rewrite the JD into a tight 3-4 paragraph posting, preserving the responsibilities, requirements, and company context. Don't add fluff that wasn't in the original.
+- If a field can't be determined from the text, infer the most reasonable default — never invent specific facts (e.g. don't make up a city; default to "Remote" if no location is given).
+
+Return ONLY valid JSON, no markdown, no explanation."""
+
+        with LLMCallTimer("job_generator", "mistral-large-latest") as timer:
+            response = client.chat.complete(
+                model="mistral-large-latest",
+                messages=[{"role": "user", "content": prompt}],
+                response_format={"type": "json_object"},
+            )
+            usage = response.usage
+            if usage:
+                timer.input_tokens = usage.prompt_tokens
+                timer.output_tokens = usage.completion_tokens
+
+        result = json.loads(response.choices[0].message.content)
+
+        # Normalise to the same shape /generate returns so the FE can
+        # reuse the existing form-fill code path.
+        if "must_have_skills" in result and "skills" not in result:
+            result["skills"] = result["must_have_skills"]
+        if "skills" not in result or not isinstance(result["skills"], list):
+            result["skills"] = []
+        if "responsibilities" not in result or not isinstance(result["responsibilities"], list):
+            result["responsibilities"] = []
+        if "qualifications" not in result or not isinstance(result["qualifications"], list):
+            result["qualifications"] = []
+        result.setdefault("title", "")
+        result.setdefault("department", "")
+        result.setdefault("location", "Remote")
+        if result.get("seniority") not in ("junior", "mid", "senior", "lead"):
+            result["seniority"] = "mid"
+        result.setdefault("description", text)
+        return result
+
+    except Exception as e:
+        print(f"Mistral API error (refine): {e}, falling back to mock")
+        return _mock_generate("Open Position")
+
+
 def _mock_generate(title: str) -> dict:
     """Mock job generation for development — produces LinkedIn-quality JDs."""
     title_lower = title.lower()

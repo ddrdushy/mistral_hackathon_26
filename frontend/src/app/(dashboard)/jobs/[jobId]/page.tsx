@@ -35,6 +35,10 @@ interface TalentBankSuggestion {
   candidate_id: number;
   name: string;
   email: string;
+  phone?: string;
+  email_missing?: boolean;
+  phone_missing?: boolean;
+  reachable?: boolean;
   role: string;
   seniority: string;
   years_experience: number | null;
@@ -50,6 +54,8 @@ interface TalentBankResponse {
   suggestions: TalentBankSuggestion[];
   total_profiled: number;
   total_candidates: number;
+  min_score?: number;
+  min_overlap?: number;
 }
 
 interface ReachOutResultRow {
@@ -98,10 +104,15 @@ function TalentBankSuggestions({ jobId }: { jobId: string }) {
 
   const toggleAll = () => {
     if (!data) return;
-    if (selected.size === data.suggestions.length) {
+    // Auto-select only reachable rows — picking unreachable ones in bulk
+    // just queues no-op sends.
+    const reachable = data.suggestions.filter(
+      (s) => s.reachable !== false,
+    );
+    if (selected.size === reachable.length && reachable.every((s) => selected.has(s.candidate_id))) {
       setSelected(new Set());
     } else {
-      setSelected(new Set(data.suggestions.map((s) => s.candidate_id)));
+      setSelected(new Set(reachable.map((s) => s.candidate_id)));
     }
   };
 
@@ -172,8 +183,13 @@ function TalentBankSuggestions({ jobId }: { jobId: string }) {
             From your talent bank
           </h2>
           <p className="text-xs text-slate-500 mt-0.5">
-            Past candidates whose profile tags match this role —{" "}
-            {data.total_profiled} of {data.total_candidates} profiled
+            Strong matches only — candidates whose skills, role, and seniority
+            line up with this job ({data.suggestions.length} of{" "}
+            {data.total_profiled} profiled
+            {data.total_candidates > data.total_profiled
+              ? ` · ${data.total_candidates} total`
+              : ""}
+            ).
           </p>
         </div>
         {!empty && (
@@ -227,70 +243,103 @@ function TalentBankSuggestions({ jobId }: { jobId: string }) {
 
       {empty ? (
         <p className="text-sm text-slate-500">
-          No matching profiles yet. As resumes come in, they&apos;re tagged
-          automatically and surface here for future jobs.
+          No strong matches in the talent bank yet. We hide weak overlaps
+          (just one shared keyword like &ldquo;jira&rdquo;) on purpose — surface here
+          only when a candidate&apos;s actual skills, role, and seniority line up
+          with this job.
         </p>
       ) : (
         <ul className="divide-y divide-slate-100">
-          {data.suggestions.map((s) => (
-            <li key={s.candidate_id} className="py-3 flex items-start gap-3">
-              <input
-                type="checkbox"
-                checked={selected.has(s.candidate_id)}
-                onChange={() => toggle(s.candidate_id)}
-                className="mt-1 h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                aria-label={`Select ${s.name}`}
-              />
-              <div className="flex-shrink-0 w-12 text-center">
-                <div className="text-base font-bold text-indigo-600 tabular-nums">
-                  {s.match_score}
-                </div>
-                <div className="text-[10px] text-slate-400 uppercase tracking-wide">
-                  match
-                </div>
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <a
-                    href={`/candidates/${s.candidate_id}`}
-                    className="text-sm font-semibold text-slate-900 hover:text-indigo-700"
-                  >
-                    {s.name}
-                  </a>
-                  {s.role && (
-                    <span className="text-xs text-slate-500">· {s.role}</span>
-                  )}
-                  {s.seniority && s.seniority !== "unknown" && (
-                    <span className="text-[11px] uppercase tracking-wide text-slate-400">
-                      · {s.seniority}
-                    </span>
-                  )}
-                  {s.years_experience != null && s.years_experience > 0 && (
-                    <span className="text-xs text-slate-500">
-                      · {s.years_experience}y
-                    </span>
-                  )}
-                </div>
-                {s.summary && (
-                  <p className="text-xs text-slate-600 mt-1 line-clamp-2">
-                    {s.summary}
-                  </p>
-                )}
-                {s.matched_skills.length > 0 && (
-                  <div className="mt-1.5 flex flex-wrap gap-1">
-                    {s.matched_skills.slice(0, 8).map((sk) => (
-                      <span
-                        key={sk}
-                        className="text-[11px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200"
-                      >
-                        {sk}
-                      </span>
-                    ))}
+          {data.suggestions.map((s) => {
+            const reachable = s.reachable !== false;
+            const missing: string[] = [];
+            if (s.email_missing) missing.push("email");
+            if (s.phone_missing) missing.push("phone");
+            return (
+              <li
+                key={s.candidate_id}
+                className={`py-3 flex items-start gap-3 ${
+                  !reachable ? "opacity-70" : ""
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={selected.has(s.candidate_id)}
+                  onChange={() => reachable && toggle(s.candidate_id)}
+                  disabled={!reachable}
+                  className="mt-1 h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed"
+                  aria-label={
+                    reachable
+                      ? `Select ${s.name}`
+                      : `${s.name} has no email or phone on file — can't be reached`
+                  }
+                  title={
+                    reachable
+                      ? undefined
+                      : "No email or phone on file — open the candidate and add contact info before reaching out."
+                  }
+                />
+                <div className="flex-shrink-0 w-12 text-center">
+                  <div className="text-base font-bold text-indigo-600 tabular-nums">
+                    {s.match_score}
                   </div>
-                )}
-              </div>
-            </li>
-          ))}
+                  <div className="text-[10px] text-slate-400 uppercase tracking-wide">
+                    match
+                  </div>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <a
+                      href={`/candidates/${s.candidate_id}`}
+                      className="text-sm font-semibold text-slate-900 hover:text-indigo-700"
+                    >
+                      {s.name}
+                    </a>
+                    {s.role && (
+                      <span className="text-xs text-slate-500">· {s.role}</span>
+                    )}
+                    {s.seniority && s.seniority !== "unknown" && (
+                      <span className="text-[11px] uppercase tracking-wide text-slate-400">
+                        · {s.seniority}
+                      </span>
+                    )}
+                    {s.years_experience != null && s.years_experience > 0 && (
+                      <span className="text-xs text-slate-500">
+                        · {s.years_experience}y
+                      </span>
+                    )}
+                    {missing.length > 0 && (
+                      <span
+                        className="text-[10px] px-1.5 py-0.5 rounded bg-rose-50 text-rose-700 border border-rose-200"
+                        title={`The resume parser couldn't find ${missing.join(
+                          " or ",
+                        )} for this candidate — outbound channels need a real contact address.`}
+                      >
+                        ⚠ Missing {missing.join(" + ")}
+                      </span>
+                    )}
+                  </div>
+                  {s.summary && (
+                    <p className="text-xs text-slate-600 mt-1 line-clamp-2">
+                      {s.summary}
+                    </p>
+                  )}
+                  {s.matched_skills.length > 0 && (
+                    <div className="mt-1.5 flex flex-wrap gap-1">
+                      {s.matched_skills.slice(0, 8).map((sk) => (
+                        <span
+                          key={sk}
+                          className="text-[11px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200"
+                        >
+                          {sk}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>
