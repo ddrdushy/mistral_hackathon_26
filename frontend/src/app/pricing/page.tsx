@@ -18,7 +18,7 @@ interface PlanRow {
   highlighted?: boolean;
 }
 
-const SALES_EMAIL = "sales@symprio.com";
+const SALES_EMAIL = "contact@symprio.com";
 const mailtoSales = (subject: string) =>
   `mailto:${SALES_EMAIL}?subject=${encodeURIComponent(subject)}`;
 
@@ -103,7 +103,7 @@ const FAQ = [
   },
   {
     q: "How do I move to Starter or Pro?",
-    a: "Email sales@symprio.com or click Contact sales above. We'll set up monthly invoicing connected to your Stripe account so billing matches your finance team's existing flow.",
+    a: "Email contact@symprio.com or click Contact sales above. We'll set up monthly invoicing connected to your Stripe account so billing matches your finance team's existing flow.",
   },
   {
     q: "What happens if I exceed a quota on the Trial?",
@@ -119,7 +119,7 @@ const FAQ = [
   },
   {
     q: "Do you offer annual billing, discounts, or custom plans?",
-    a: "Yes. Email sales@symprio.com — we'll tailor pricing for startups (under 10 employees), agencies, and enterprise rollouts.",
+    a: "Yes. Email contact@symprio.com — we'll tailor pricing for startups (under 10 employees), agencies, and enterprise rollouts.",
   },
 ];
 

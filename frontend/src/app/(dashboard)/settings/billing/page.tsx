@@ -211,7 +211,7 @@ function BillingInner() {
                 </ul>
                 {!p.available && p.name !== "free" && (
                   <a
-                    href={`mailto:sales@symprio.com?subject=${encodeURIComponent(`Interested in ${p.display_name} plan`)}&body=${encodeURIComponent(
+                    href={`mailto:contact@symprio.com?subject=${encodeURIComponent(`Interested in ${p.display_name} plan`)}&body=${encodeURIComponent(
                       `Hi, I'd like to learn more about the ${p.display_name} plan for our team.`,
                     )}`}
                     className="block w-full text-center rounded-lg bg-indigo-600 text-white px-3 py-2 text-sm font-semibold hover:bg-indigo-700 transition-colors mb-2"

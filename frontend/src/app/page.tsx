@@ -619,7 +619,7 @@ export default async function LandingPage() {
                 price="$49"
                 cadence="/ month"
                 cta="Contact sales"
-                ctaHref="mailto:sales@symprio.com?subject=Interested%20in%20HireOps%20Starter"
+                ctaHref="mailto:contact@symprio.com?subject=Interested%20in%20HireOps%20Starter"
                 features={[
                   "25 active jobs",
                   "250 candidates",
@@ -635,7 +635,7 @@ export default async function LandingPage() {
                 price="$199"
                 cadence="/ month"
                 cta="Contact sales"
-                ctaHref="mailto:sales@symprio.com?subject=Interested%20in%20HireOps%20Pro"
+                ctaHref="mailto:contact@symprio.com?subject=Interested%20in%20HireOps%20Pro"
                 features={[
                   "Unlimited jobs",
                   "Unlimited candidates",
