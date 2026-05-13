@@ -387,6 +387,8 @@ export default async function LandingPage() {
                 icon: <BriefcaseIcon className="w-5 h-5" />,
                 title: "Threshold automation",
                 body: "Auto-advance, auto-reject, or hold — tuned per job. HR only sees the cases that need a human.",
+                imageSrc: "/landing/feature-threshold.webp",
+                imageAlt: "Translucent control panel with green, amber, and red threshold sliders routing candidate cards",
               },
             ].map((f, i) => (
               <Reveal key={f.title} delay={i * 80}>
