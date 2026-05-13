@@ -378,6 +378,49 @@ def _archive_current_cv(
 MAX_CV_VERSIONS = 10
 
 
+async def _extract_contact_and_profile(
+    resume_text: str,
+    tenant,
+) -> tuple[dict, "object | None"]:
+    """LLM-first contact extraction.
+
+    Sends the resume text to the profile_extractor LLM and uses its
+    structured output for name / email / phone — resumes come in every
+    layout under the sun (sidebar pills, ASCII art headers, contact
+    block buried on page 2), and a regex-on-the-first-5-lines parser
+    misses most of them. Returns ``(contact_dict, profile_or_none)``:
+
+      • ``contact_dict``: {"name", "email", "phone"} from the LLM where
+        present, regex fallback for any field the LLM left blank.
+      • ``profile_or_none``: the full ProfileExtractorOutput when the
+        LLM call succeeded (caller will apply it to skip a second
+        round-trip), or ``None`` when the plan doesn't include the
+        agent / the LLM failed.
+    """
+    regex_contact = parse_contact_info(resume_text)
+    llm_profile = None
+    if is_agent_allowed(tenant, "profile_extractor"):
+        try:
+            from agents.profile_extractor import extract_profile
+            llm_profile = await extract_profile(resume_text)
+        except Exception:
+            llm_profile = None
+
+    def _pick(field: str) -> str:
+        if llm_profile is not None:
+            val = getattr(llm_profile, field, "") or ""
+            if val.strip():
+                return val.strip()
+        return (regex_contact.get(field) or "").strip()
+
+    contact = {
+        "name": _pick("name"),
+        "email": _pick("email"),
+        "phone": _pick("phone"),
+    }
+    return contact, llm_profile
+
+
 def _prune_old_cv_versions(db: Session, candidate: Candidate) -> None:
     """Trim archived CV versions for a candidate to MAX_CV_VERSIONS - 1
     (the live `candidates` row counts as the +1). Deletes the on-disk
@@ -459,7 +502,9 @@ async def upload_candidate(
             ),
         )
 
-    contact = parse_contact_info(resume_text)
+    # LLM-first contact extraction (regex fallback if plan doesn't
+    # include the profile_extractor agent or the call fails).
+    contact, llm_profile = await _extract_contact_and_profile(resume_text, session.tenant)
     final_name = (name or contact.get("name") or "").strip()
     final_email = (email or contact.get("email") or "").strip()
     final_phone = (phone or contact.get("phone") or "").strip()
@@ -536,22 +581,19 @@ async def upload_candidate(
     except Exception:
         pass
 
-    # Run profile extraction inline so the upload response carries the LLM
-    # summary + key points back to the modal — HR sees the analysis right
-    # after pressing Upload, no second click needed. Skipped silently if
-    # the tenant's plan doesn't include the profile_extractor agent — the
-    # candidate still gets created (so trial users can build a talent
-    # bank), just without LLM tags.
-    try:
-        if is_agent_allowed(session.tenant, "profile_extractor"):
-            from agents.profile_extractor import extract_profile
+    # Apply the profile we already got from _extract_contact_and_profile
+    # — same call extracted contact + skills + role + summary, so no
+    # second LLM round-trip. If the call hadn't succeeded (plan gate
+    # or transient failure), schedule a lazy background retry so the
+    # talent bank eventually gets the tags.
+    if llm_profile is not None:
+        try:
             from services.workflow_service import _apply_profile
-            prof = await extract_profile(resume_text)
-            _apply_profile(db, candidate, prof)
+            _apply_profile(db, candidate, llm_profile)
             db.refresh(candidate)
-    except Exception:
-        # If LLM fails (budget cap, network), fall back to schedule a
-        # background retry — talent bank still works via lazy fill.
+        except Exception:
+            pass
+    else:
         try:
             import asyncio
             loop = asyncio.get_event_loop()
@@ -595,7 +637,6 @@ async def upload_candidates_bulk(
             detail="Bulk upload limited to 25 files per batch — split into smaller batches",
         )
 
-    from agents.profile_extractor import extract_profile
     from services.workflow_service import _apply_profile
 
     results = []
@@ -640,7 +681,11 @@ async def upload_candidates_bulk(
                     "looks like a job description — skipped (upload JDs via the Jobs page)"
                 )
 
-            contact = parse_contact_info(resume_text)
+            # LLM-first contact extraction (regex fallback when the
+            # plan doesn't allow the agent or the call fails).
+            contact, llm_profile = await _extract_contact_and_profile(
+                resume_text, session.tenant
+            )
             placeholder_email = f"unknown+{int(datetime.utcnow().timestamp())}-{successes}@uploaded.local"
             parsed_email = (contact.get("email") or "").strip()
             parsed_name = (contact.get("name") or fname.rsplit(".", 1)[0])[:80]
@@ -696,17 +741,14 @@ async def upload_candidates_bulk(
             except Exception:
                 pass
 
-            # Profile extract inline — HR uploaded a stack and expects
-            # all of them to be searchable when the dialog closes. Skipped
-            # for plans that don't include the profile_extractor agent.
-            try:
-                if not is_agent_allowed(session.tenant, "profile_extractor"):
-                    raise RuntimeError("profile_extractor not in plan")
-                prof = await extract_profile(resume_text)
-                _apply_profile(db, candidate, prof)
-                db.refresh(candidate)
-            except Exception:
-                pass
+            # Reuse the profile we already extracted for contact info
+            # so we don't pay for a second LLM round-trip per file.
+            if llm_profile is not None:
+                try:
+                    _apply_profile(db, candidate, llm_profile)
+                    db.refresh(candidate)
+                except Exception:
+                    pass
 
             item["ok"] = True
             item["candidate"] = _candidate_to_response(candidate)
@@ -766,15 +808,29 @@ async def upload_resume(
     candidate.resume_filename = fname
     candidate.cv_version = (candidate.cv_version or 1) + 1
     candidate.updated_at = datetime.utcnow()
+    # Force re-extraction so tags follow the new CV.
+    candidate.profile_extracted_at = None
 
-    # Update contact info from resume if not already set
+    # LLM-first contact extraction. Only fills in fields that are
+    # currently blank — never overwrites HR-edited contact info.
+    llm_profile = None
     if text:
-        contact = parse_contact_info(text)
-        if not candidate.phone and contact.get("phone"):
+        contact, llm_profile = await _extract_contact_and_profile(text, session.tenant)
+        if not (candidate.phone or "").strip() and contact.get("phone"):
             candidate.phone = contact["phone"]
+        if not (candidate.email or "").strip() and contact.get("email"):
+            candidate.email = contact["email"]
 
     db.commit()
     db.refresh(candidate)
+
+    if llm_profile is not None:
+        try:
+            from services.workflow_service import _apply_profile
+            _apply_profile(db, candidate, llm_profile)
+            db.refresh(candidate)
+        except Exception:
+            pass
 
     try:
         rel = save_resume_blob(

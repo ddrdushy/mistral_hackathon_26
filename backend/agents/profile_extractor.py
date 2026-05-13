@@ -29,6 +29,9 @@ _SYSTEM_PROMPT = """You extract structured candidate profiles from resume text. 
 Return ONLY valid JSON matching the schema below. No prose. No markdown fences.
 
 {
+  "name": "candidate's full name as it appears on the resume, or empty string if not present",
+  "email": "primary email address, or empty string if not present",
+  "phone": "primary phone number with country code if available, or empty string if not present",
   "skills": [<= 12 short skill tags, lowercase, hyphenated where useful (e.g. "power-bi", "rpa", "uipath", "react", "sql")],
   "role": "primary role title in 1-3 words, e.g. RPA Developer | Data Analyst | Frontend Engineer | DevOps Engineer",
   "seniority": "junior | mid | senior | lead | principal | unknown",
@@ -42,6 +45,9 @@ Return ONLY valid JSON matching the schema below. No prose. No markdown fences.
 
 Rules:
 - Use ONLY information present in the resume. Do not invent.
+- Name: the actual person's name (e.g. "Jane Doe"), NOT document titles like "Resume", "CV", "Curriculum Vitae", "Job Description". Return empty string if the document is not a resume.
+- Email: a real email address from the resume. Empty if none present.
+- Phone: digits + leading + for international, e.g. "+1 555-123-4567". Empty if none.
 - Skills are CONCRETE technologies / tools / methods, not soft skills.
 - Lowercase + hyphens for compound names ("power-bi" not "Power BI").
 - Key points should be the 3-6 things a recruiter would highlight when pitching this candidate to a hiring manager.
@@ -56,6 +62,12 @@ class ProfileExtractorOutput:
     years_experience: float = 0.0
     summary: str = ""
     key_points: List[str] = field(default_factory=list)
+    # Contact info pulled by the LLM. Empty strings when not present in
+    # the document or the LLM is disabled — the caller falls back to
+    # regex / form fields in that case.
+    name: str = ""
+    email: str = ""
+    phone: str = ""
 
 
 def _normalize_skill(s: str) -> str:
@@ -109,6 +121,16 @@ async def extract_profile(resume_text: str) -> ProfileExtractorOutput:
                 key_points_raw = [key_points_raw]
             key_points = [str(k).strip()[:160] for k in key_points_raw if k][:6]
 
+            # Strip common document-title noise from the name field —
+            # the LLM occasionally returns "Resume" / "Curriculum Vitae"
+            # when a candidate doesn't put their name at the top.
+            name_raw = str(data.get("name") or "").strip()[:120]
+            if name_raw.lower() in {
+                "resume", "curriculum vitae", "cv", "job description",
+                "n/a", "none", "unknown", "candidate",
+            }:
+                name_raw = ""
+
             return ProfileExtractorOutput(
                 skills=[_normalize_skill(s) for s in (data.get("skills") or []) if s][:12],
                 role=str(data.get("role") or "").strip()[:80],
@@ -116,6 +138,9 @@ async def extract_profile(resume_text: str) -> ProfileExtractorOutput:
                 years_experience=float(data.get("years_experience") or 0),
                 summary=str(data.get("summary") or "").strip()[:320],
                 key_points=key_points,
+                name=name_raw,
+                email=str(data.get("email") or "").strip()[:200],
+                phone=str(data.get("phone") or "").strip()[:40],
             )
         except Exception as e:
             logger.warning("profile_extractor LLM failed, falling back: %s", e)
