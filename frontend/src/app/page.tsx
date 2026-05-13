@@ -163,7 +163,7 @@ export default async function LandingPage() {
             </div>
 
             <p className="mt-4 text-xs text-slate-500">
-              Free forever for up to 25 candidates · No credit card required
+              Free trial · No credit card required · 25 candidates included
             </p>
 
             {/* Stats row */}
@@ -313,15 +313,55 @@ export default async function LandingPage() {
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
             {[
-              { icon: <EnvelopeIcon className="w-5 h-5" />, title: "Email auto-classification", body: "Inbound applications detected, parsed, and turned into candidate records — no manual intake." },
-              { icon: <SparklesIcon className="w-5 h-5" />, title: "Resume scoring", body: "Every resume scored 0–100 against the job, with evidence, gaps, and a recommended next action." },
-              { icon: <PhoneIcon className="w-5 h-5" />, title: "Q&A or voice interviews", body: "Pick written multi-round Q&A or live AI voice interviews. Each candidate gets unique questions." },
-              { icon: <ShieldCheckIcon className="w-5 h-5" />, title: "Anti-fraud signals", body: "Webcam face tracking, tab-switch detection, and paste alerts surface integrity issues before you decide." },
-              { icon: <ChartBarIcon className="w-5 h-5" />, title: "Decision dashboard", body: "Score gauges, fraud risk, pipeline funnel, and a 'needs HR action' queue — at a glance." },
-              { icon: <BriefcaseIcon className="w-5 h-5" />, title: "Threshold automation", body: "Auto-advance, auto-reject, or hold — tuned per job. HR only sees the cases that need a human." },
+              {
+                icon: <EnvelopeIcon className="w-5 h-5" />,
+                title: "Email auto-classification",
+                body: "Inbound applications detected, parsed, and turned into candidate records — no manual intake.",
+                imageSrc: "/landing/feature-intake.webp",
+                imageAlt: "Stylised envelope opening into a candidate profile card",
+              },
+              {
+                icon: <SparklesIcon className="w-5 h-5" />,
+                title: "Resume scoring",
+                body: "Every resume scored 0–100 against the job, with evidence, gaps, and a recommended next action.",
+                imageSrc: "/landing/feature-evaluation.webp",
+                imageAlt: "AI scoring dial showing 78 over a stack of resumes",
+              },
+              {
+                icon: <PhoneIcon className="w-5 h-5" />,
+                title: "Q&A or voice interviews",
+                body: "Pick written multi-round Q&A or live AI voice interviews. Each candidate gets unique questions.",
+                imageSrc: "/landing/feature-voice.webp",
+                imageAlt: "Headset hovering above a phone with a voice waveform",
+              },
+              {
+                icon: <ShieldCheckIcon className="w-5 h-5" />,
+                title: "Anti-fraud signals",
+                body: "Webcam face tracking, tab-switch detection, and paste alerts surface integrity issues before you decide.",
+                imageSrc: "/landing/feature-fraud.webp",
+                imageAlt: "Translucent shield with a camera lens and warning marker",
+              },
+              {
+                icon: <ChartBarIcon className="w-5 h-5" />,
+                title: "Decision dashboard",
+                body: "Score gauges, fraud risk, pipeline funnel, and a 'needs HR action' queue — at a glance.",
+                imageSrc: "/landing/feature-dashboard.webp",
+                imageAlt: "Recruiting dashboard composite with donut chart, kanban, and metrics",
+              },
+              {
+                icon: <BriefcaseIcon className="w-5 h-5" />,
+                title: "Threshold automation",
+                body: "Auto-advance, auto-reject, or hold — tuned per job. HR only sees the cases that need a human.",
+              },
             ].map((f, i) => (
               <Reveal key={f.title} delay={i * 80}>
-                <MiniFeature icon={f.icon} title={f.title} body={f.body} />
+                <MiniFeature
+                  icon={f.icon}
+                  title={f.title}
+                  body={f.body}
+                  imageSrc={f.imageSrc}
+                  imageAlt={f.imageAlt}
+                />
               </Reveal>
             ))}
           </div>
@@ -386,6 +426,122 @@ export default async function LandingPage() {
       </section>
 
       {/* ──────────────────────────────────────────────────────────────
+         ROI — time saved illustration + count-up stats
+         ────────────────────────────────────────────────────────────── */}
+      <section className="py-20 lg:py-24 bg-white relative overflow-hidden">
+        <div className="max-w-7xl mx-auto px-6 grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
+          <Reveal direction="left">
+            <span className="text-[11px] font-bold tracking-widest text-blue-600 uppercase">
+              The math
+            </span>
+            <h2 className="mt-3 text-3xl sm:text-4xl lg:text-5xl font-bold tracking-tight text-slate-900 leading-tight">
+              Hours back in your week, every week
+            </h2>
+            <p className="mt-5 text-lg text-slate-600 leading-relaxed">
+              A recruiter spends 6&ndash;8 minutes per resume on the first scan.
+              HireOps does it in under 4 seconds, with evidence. Multiply that
+              by every inbound application this month.
+            </p>
+            <dl className="mt-8 grid grid-cols-3 gap-6 border-t border-slate-200 pt-7">
+              <div>
+                <dt className="text-xs uppercase tracking-wider text-slate-500 font-semibold">
+                  Per resume
+                </dt>
+                <dd className="mt-1.5">
+                  <span className="text-3xl font-extrabold text-slate-900 tabular-nums">100×</span>
+                  <span className="block text-xs text-slate-500 mt-0.5">faster than a human pass</span>
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs uppercase tracking-wider text-slate-500 font-semibold">
+                  Shortlist
+                </dt>
+                <dd className="mt-1.5">
+                  <span className="text-3xl font-extrabold text-slate-900 tabular-nums">8×</span>
+                  <span className="block text-xs text-slate-500 mt-0.5">faster than manual review</span>
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs uppercase tracking-wider text-slate-500 font-semibold">
+                  HR hours saved
+                </dt>
+                <dd className="mt-1.5">
+                  <span className="text-3xl font-extrabold text-slate-900 tabular-nums">~25</span>
+                  <span className="block text-xs text-slate-500 mt-0.5">per 200 apps processed</span>
+                </dd>
+              </div>
+            </dl>
+            <Link
+              href="/signup"
+              className="mt-8 inline-flex items-center gap-2 px-6 py-3 rounded-full bg-slate-900 text-white font-semibold hover:bg-slate-800 transition-colors"
+            >
+              Try it free
+              <ArrowRightIcon className="w-4 h-4" />
+            </Link>
+          </Reveal>
+          <Reveal direction="right">
+            <div className="relative aspect-square w-full max-w-lg mx-auto animate-float">
+              <Image
+                src="/landing/feature-roi.webp"
+                alt="Analog clock and slow stack of paper resumes split-screen with a glowing digital timer and a single approved card"
+                fill
+                sizes="(max-width:1024px) 100vw, 50vw"
+                className="object-contain drop-shadow-[0_25px_50px_rgba(37,99,235,0.18)]"
+              />
+            </div>
+          </Reveal>
+        </div>
+      </section>
+
+      {/* ──────────────────────────────────────────────────────────────
+         MOBILE-READY — phone mockup + copy
+         ────────────────────────────────────────────────────────────── */}
+      <section className="py-20 lg:py-24 bg-gradient-to-br from-slate-50 via-blue-50/60 to-slate-50">
+        <div className="max-w-7xl mx-auto px-6 grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
+          <Reveal direction="left" className="order-2 lg:order-1">
+            <div className="relative aspect-[3/5] w-full max-w-sm mx-auto animate-float">
+              <Image
+                src="/landing/feature-mobile.webp"
+                alt="Phone screen showing a single candidate row with a score and action buttons"
+                fill
+                sizes="(max-width:1024px) 100vw, 33vw"
+                className="object-contain drop-shadow-[0_25px_50px_rgba(15,23,42,0.15)]"
+              />
+            </div>
+          </Reveal>
+          <Reveal direction="right" className="order-1 lg:order-2">
+            <span className="text-[11px] font-bold tracking-widest text-blue-600 uppercase">
+              Always on
+            </span>
+            <h2 className="mt-3 text-3xl sm:text-4xl lg:text-5xl font-bold tracking-tight text-slate-900 leading-tight">
+              Approve a shortlist
+              <br />
+              from the queue
+            </h2>
+            <p className="mt-5 text-lg text-slate-600 leading-relaxed">
+              The dashboard is fully responsive — review scored candidates,
+              advance someone to the next round, or send an interview link
+              right from your phone. No mobile app to install, no compromise.
+            </p>
+            <ul className="mt-7 space-y-3">
+              {[
+                "Push notification on every voice-screen completion",
+                "One-tap interview invite + calendar attach",
+                "WhatsApp inbound replies surface in the same inbox",
+              ].map((s) => (
+                <li key={s} className="flex items-start gap-3 text-slate-700">
+                  <span className="mt-0.5 inline-flex items-center justify-center w-5 h-5 rounded-full bg-blue-100 text-blue-700 shrink-0">
+                    <CheckIcon className="w-3.5 h-3.5" />
+                  </span>
+                  {s}
+                </li>
+              ))}
+            </ul>
+          </Reveal>
+        </div>
+      </section>
+
+      {/* ──────────────────────────────────────────────────────────────
          TESTIMONIALS — 4-up grid with quote glyphs + AI avatars
          ────────────────────────────────────────────────────────────── */}
       <section className="py-20 lg:py-28 bg-blue-50/40 relative overflow-hidden">
@@ -434,17 +590,18 @@ export default async function LandingPage() {
               Simple, fair pricing
             </h2>
             <p className="mt-4 text-slate-600">
-              Start free. Upgrade only when you outgrow it.
+              Start with a free trial. Talk to sales when you&apos;re ready to scale —
+              monthly invoicing through your Stripe account.
             </p>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
             <Reveal delay={0}>
               <PricingCard
-                name="Free"
+                name="Trial"
                 price="$0"
-                cadence="forever"
-                cta="Start free"
+                cadence="free"
+                cta="Start trial"
                 ctaHref="/signup"
                 features={[
                   "5 active jobs",
@@ -453,15 +610,16 @@ export default async function LandingPage() {
                   "Q&A + voice modes",
                   "AI fraud detection",
                 ]}
+                highlighted
               />
             </Reveal>
             <Reveal delay={120}>
               <PricingCard
                 name="Starter"
-                price="Coming soon"
-                cadence=""
-                cta="Get notified"
-                ctaHref="/signup"
+                price="$49"
+                cadence="/ month"
+                cta="Contact sales"
+                ctaHref="mailto:sales@symprio.com?subject=Interested%20in%20HireOps%20Starter"
                 features={[
                   "25 active jobs",
                   "250 candidates",
@@ -469,16 +627,15 @@ export default async function LandingPage() {
                   "Branded interview emails",
                   "Priority support",
                 ]}
-                highlighted
               />
             </Reveal>
             <Reveal delay={240}>
               <PricingCard
                 name="Pro"
-                price="Coming soon"
-                cadence=""
-                cta="Talk to us"
-                ctaHref="/signup"
+                price="$199"
+                cadence="/ month"
+                cta="Contact sales"
+                ctaHref="mailto:sales@symprio.com?subject=Interested%20in%20HireOps%20Pro"
                 features={[
                   "Unlimited jobs",
                   "Unlimited candidates",
@@ -635,16 +792,32 @@ function MiniFeature({
   icon,
   title,
   body,
+  imageSrc,
+  imageAlt,
 }: {
   icon: React.ReactNode;
   title: string;
   body: string;
+  imageSrc?: string;
+  imageAlt?: string;
 }) {
   return (
-    <div className="bg-white rounded-2xl border border-slate-200 p-6 hover:border-blue-300 hover:shadow-lg hover:shadow-blue-100/50 transition-all">
-      <div className="w-10 h-10 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center mb-4">
-        {icon}
-      </div>
+    <div className="group relative bg-white rounded-2xl border border-slate-200 p-6 hover:border-blue-300 hover:shadow-xl hover:shadow-blue-100/60 hover:-translate-y-1 transition-all overflow-hidden">
+      {imageSrc ? (
+        <div className="relative w-full aspect-[5/3] mb-4 -mx-2">
+          <Image
+            src={imageSrc}
+            alt={imageAlt || ""}
+            fill
+            sizes="(max-width:768px) 100vw, 33vw"
+            className="object-contain transition-transform duration-500 group-hover:scale-[1.04]"
+          />
+        </div>
+      ) : (
+        <div className="w-10 h-10 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center mb-4">
+          {icon}
+        </div>
+      )}
       <h3 className="font-semibold text-slate-900 mb-1.5">{title}</h3>
       <p className="text-sm text-slate-600 leading-relaxed">{body}</p>
     </div>
