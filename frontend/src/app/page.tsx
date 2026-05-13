@@ -153,39 +153,30 @@ export default async function LandingPage() {
             </ul>
           </div>
 
-          {/* Right column — illustration wrapped in a glassmorphic frame
-              so the artwork's baked-in alpha checker doesn't bleed
-              against the page background. Floating decorative chips
-              + soft glow add depth without needing more art. */}
+          {/* Right column — illustration floats freely (transparent
+              background, no frame needed). Radial glow + decorative
+              chips add depth without obscuring the artwork. */}
           <div className="relative">
-            {/* Outer ambient glow */}
+            {/* Soft ambient glow behind the illustration */}
             <div
               aria-hidden
-              className="absolute inset-0 -m-12 rounded-[3rem] bg-[radial-gradient(closest-side,rgba(99,102,241,0.25),transparent_70%)] blur-2xl"
+              className="absolute inset-0 -m-8 rounded-[3rem] bg-[radial-gradient(closest-side,rgba(99,102,241,0.28),transparent_70%)] blur-2xl pointer-events-none"
             />
 
-            <div className="relative animate-float">
-              {/* Glass card frame */}
-              <div className="relative rounded-[2rem] bg-gradient-to-br from-white/80 via-white/40 to-blue-100/60 backdrop-blur-md ring-1 ring-white/60 shadow-2xl shadow-blue-900/10 p-2 sm:p-3">
-                <div className="relative aspect-[5/4] w-full overflow-hidden rounded-[1.5rem] bg-gradient-to-br from-slate-50 via-white to-blue-50">
-                  <Image
-                    src="/landing/hero-illustration.webp"
-                    alt="Resume stack flowing into a glowing AI orb that produces approved candidate cards"
-                    fill
-                    priority
-                    sizes="(max-width:1024px) 100vw, 50vw"
-                    className="object-contain p-2"
-                  />
-                  {/* Soft inner highlight */}
-                  <div
-                    aria-hidden
-                    className="pointer-events-none absolute inset-0 bg-gradient-to-tr from-transparent via-white/0 to-white/30"
-                  />
-                </div>
+            <div className="relative">
+              <div className="relative aspect-[5/4] w-full animate-float">
+                <Image
+                  src="/landing/hero-illustration.webp"
+                  alt="Resume stack flowing into a glowing AI orb that produces approved candidate cards"
+                  fill
+                  priority
+                  sizes="(max-width:1024px) 100vw, 50vw"
+                  className="object-contain drop-shadow-[0_30px_60px_rgba(37,99,235,0.22)]"
+                />
               </div>
 
               {/* Floating chip — top-left */}
-              <div className="hidden sm:flex absolute -top-4 -left-5 items-center gap-2 px-3 py-2 rounded-xl bg-white shadow-xl shadow-blue-900/10 ring-1 ring-slate-200 animate-float-slow">
+              <div className="hidden sm:flex absolute top-2 -left-2 lg:-left-6 items-center gap-2 px-3 py-2 rounded-xl bg-white shadow-xl shadow-blue-900/10 ring-1 ring-slate-200 animate-float-slow">
                 <span className="inline-flex w-7 h-7 rounded-lg bg-emerald-100 text-emerald-700 items-center justify-center">
                   <CheckIcon className="w-4 h-4" />
                 </span>
@@ -198,7 +189,7 @@ export default async function LandingPage() {
               </div>
 
               {/* Floating chip — bottom-right */}
-              <div className="hidden sm:flex absolute -bottom-5 -right-4 items-center gap-2 px-3 py-2 rounded-xl bg-white shadow-xl shadow-indigo-900/10 ring-1 ring-slate-200 animate-float-delayed">
+              <div className="hidden sm:flex absolute bottom-2 -right-2 lg:-right-6 items-center gap-2 px-3 py-2 rounded-xl bg-white shadow-xl shadow-indigo-900/10 ring-1 ring-slate-200 animate-float-delayed">
                 <span className="inline-flex w-7 h-7 rounded-lg bg-indigo-100 text-indigo-700 items-center justify-center">
                   <PhoneIcon className="w-4 h-4" />
                 </span>
@@ -210,9 +201,9 @@ export default async function LandingPage() {
                 </div>
               </div>
 
-              {/* Floating chip — middle-right */}
-              <div className="hidden lg:flex absolute top-1/3 -right-8 items-center gap-2 px-3 py-2 rounded-xl bg-slate-900 text-white shadow-2xl shadow-slate-900/20 animate-float">
-                <span className="inline-flex w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+              {/* Floating chip — middle-right (dark) */}
+              <div className="hidden lg:flex absolute top-1/3 right-0 items-center gap-2 px-3 py-2 rounded-xl bg-slate-900 text-white shadow-2xl shadow-slate-900/25 animate-float">
+                <span className="inline-flex w-2 h-2 rounded-full bg-emerald-400 animate-soft-pulse" />
                 <div className="leading-tight">
                   <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">
                     Score
