@@ -23,7 +23,7 @@ from database import get_db
 from models import (
     Tenant, User, Job, Candidate, Application, InterviewLink, LlmUsage, AuditLog,
     Email, Event, QaSession, EmailVerification, PasswordReset, TenantInvite,
-    Testimonial, Setting,
+    Testimonial, Setting, CandidateCvVersion,
 )
 from auth.security import issue_jwt, COOKIE_NAME, JWT_TTL_DAYS, hash_password, new_token
 from auth.dependencies import require_superadmin, CurrentSession
@@ -782,6 +782,24 @@ def llm_usage_by_tenant(
         t.id: t
         for t in db.query(Tenant).filter(Tenant.id.in_(tenant_ids)).all()
     } if tenant_ids else {}
+
+    # Tenants whose ONLY users are super-admins are platform-admin home
+    # tenants — filter them out so they don't show up as "real" tenant
+    # spend. We compute this once via aggregation.
+    admin_only_tenant_ids: set[int] = set()
+    if tenant_ids:
+        for tid, total_users, super_count in (
+            db.query(
+                User.tenant_id,
+                func.count(User.id).label("total"),
+                func.sum(case((User.is_superadmin.is_(True), 1), else_=0)).label("supers"),
+            )
+            .filter(User.tenant_id.in_(tenant_ids))
+            .group_by(User.tenant_id)
+            .all()
+        ):
+            if int(total_users or 0) > 0 and int(super_count or 0) == int(total_users):
+                admin_only_tenant_ids.add(tid)
     # Per-tenant user counts (one query, grouped).
     user_counts: dict[int, int] = {}
     if tenant_ids:
@@ -806,6 +824,8 @@ def llm_usage_by_tenant(
     null_row = next((r for r in rows if r.tenant_id is None), None)
     real_rows = [r for r in rows if r.tenant_id is not None]
     for r in real_rows:
+        if r.tenant_id in admin_only_tenant_ids:
+            continue
         t = tenant_map.get(r.tenant_id)
         markup = 1.0
         if t and t.plan:
@@ -877,6 +897,175 @@ def llm_usage_by_tenant(
     )
 
 
+# ── Storage usage by tenant ───────────────────────────────────────────────
+
+
+class TenantStorageRow(BaseModel):
+    tenant_id: int
+    tenant_name: str
+    tenant_slug: str
+    plan: str
+    suspended: bool
+    deleted: bool
+    candidate_count: int
+    resume_bytes: int             # candidates.resume_text
+    attachment_bytes: int         # emails.attachments (base64-encoded blobs in JSON)
+    cv_version_bytes: int         # candidate_cv_versions.resume_text snapshots
+    total_bytes: int
+
+
+class TenantStorageResponse(BaseModel):
+    tenants: list[TenantStorageRow]
+    totals: dict  # {"total_bytes", "resume_bytes", "attachment_bytes", "cv_version_bytes", "candidate_count"}
+
+
+@router.get("/storage/by-tenant", response_model=TenantStorageResponse)
+def storage_by_tenant(
+    db: Session = Depends(get_db),
+    _: CurrentSession = Depends(require_superadmin),
+):
+    """Super-admin only: per-tenant storage footprint.
+
+    Sums byte length of the three large text columns that grow with
+    real candidate data:
+      • candidates.resume_text       (extracted CV text)
+      • emails.attachments           (JSON of base64-encoded PDFs/DOCXs)
+      • candidate_cv_versions.resume_text (historical CV snapshots)
+
+    Excludes super-admin-only home tenants so the platform admin's own
+    test data isn't reported as tenant storage.
+    """
+    # Aggregate per tenant_id in three small queries — beats per-row reads.
+    resume_rows = (
+        db.query(
+            Candidate.tenant_id,
+            func.count(Candidate.id).label("n"),
+            func.coalesce(
+                func.sum(func.octet_length(func.coalesce(Candidate.resume_text, ""))), 0
+            ).label("bytes"),
+        )
+        .group_by(Candidate.tenant_id)
+        .all()
+    )
+    attach_rows = (
+        db.query(
+            Email.tenant_id,
+            func.coalesce(
+                func.sum(func.octet_length(func.coalesce(Email.attachments, ""))), 0
+            ).label("bytes"),
+        )
+        .group_by(Email.tenant_id)
+        .all()
+    )
+    version_rows = (
+        db.query(
+            CandidateCvVersion.tenant_id,
+            func.coalesce(
+                func.sum(
+                    func.octet_length(func.coalesce(CandidateCvVersion.resume_text, ""))
+                ),
+                0,
+            ).label("bytes"),
+        )
+        .group_by(CandidateCvVersion.tenant_id)
+        .all()
+    )
+
+    # Collect every tenant_id we saw across any of the three sources.
+    tenant_ids: set[int] = set()
+    resume_by_tid: dict[int, tuple[int, int]] = {}
+    attach_by_tid: dict[int, int] = {}
+    version_by_tid: dict[int, int] = {}
+    for r in resume_rows:
+        if r.tenant_id is None:
+            continue
+        tenant_ids.add(r.tenant_id)
+        resume_by_tid[r.tenant_id] = (int(r.n or 0), int(r.bytes or 0))
+    for r in attach_rows:
+        if r.tenant_id is None:
+            continue
+        tenant_ids.add(r.tenant_id)
+        attach_by_tid[r.tenant_id] = int(r.bytes or 0)
+    for r in version_rows:
+        if r.tenant_id is None:
+            continue
+        tenant_ids.add(r.tenant_id)
+        version_by_tid[r.tenant_id] = int(r.bytes or 0)
+
+    if not tenant_ids:
+        return TenantStorageResponse(tenants=[], totals={
+            "total_bytes": 0, "resume_bytes": 0, "attachment_bytes": 0,
+            "cv_version_bytes": 0, "candidate_count": 0,
+        })
+
+    # Hydrate tenant metadata.
+    tenant_map: dict[int, Tenant] = {
+        t.id: t
+        for t in db.query(Tenant).filter(Tenant.id.in_(tenant_ids)).all()
+    }
+
+    # Identify admin-only home tenants (super-admin's personal workspace).
+    admin_only_tenant_ids: set[int] = set()
+    for tid, total_users, super_count in (
+        db.query(
+            User.tenant_id,
+            func.count(User.id).label("total"),
+            func.sum(case((User.is_superadmin.is_(True), 1), else_=0)).label("supers"),
+        )
+        .filter(User.tenant_id.in_(tenant_ids))
+        .group_by(User.tenant_id)
+        .all()
+    ):
+        if int(total_users or 0) > 0 and int(super_count or 0) == int(total_users):
+            admin_only_tenant_ids.add(tid)
+
+    out: list[TenantStorageRow] = []
+    tot_total = 0
+    tot_resume = 0
+    tot_attach = 0
+    tot_version = 0
+    tot_candidates = 0
+    for tid in tenant_ids:
+        if tid in admin_only_tenant_ids:
+            continue
+        t = tenant_map.get(tid)
+        n_cand, resume_b = resume_by_tid.get(tid, (0, 0))
+        attach_b = attach_by_tid.get(tid, 0)
+        version_b = version_by_tid.get(tid, 0)
+        total_b = resume_b + attach_b + version_b
+        out.append(TenantStorageRow(
+            tenant_id=tid,
+            tenant_name=t.name if t else f"#{tid}",
+            tenant_slug=t.slug if t else "",
+            plan=t.plan if t else "?",
+            suspended=bool(t.suspended) if t else False,
+            deleted=t.deleted_at is not None if t else False,
+            candidate_count=n_cand,
+            resume_bytes=resume_b,
+            attachment_bytes=attach_b,
+            cv_version_bytes=version_b,
+            total_bytes=total_b,
+        ))
+        tot_total += total_b
+        tot_resume += resume_b
+        tot_attach += attach_b
+        tot_version += version_b
+        tot_candidates += n_cand
+
+    out.sort(key=lambda r: r.total_bytes, reverse=True)
+
+    return TenantStorageResponse(
+        tenants=out,
+        totals={
+            "total_bytes": tot_total,
+            "resume_bytes": tot_resume,
+            "attachment_bytes": tot_attach,
+            "cv_version_bytes": tot_version,
+            "candidate_count": tot_candidates,
+        },
+    )
+
+
 # ── User management (Milestone 3) ─────────────────────────────────────────
 
 
@@ -920,11 +1109,16 @@ def list_users(
     search: Optional[str] = None,
     tenant_id: Optional[int] = None,
     role: Optional[str] = None,  # owner / member / superadmin
+    include_superadmins: bool = False,
     page: int = 1,
     per_page: int = 50,
     db: Session = Depends(get_db),
     _: CurrentSession = Depends(require_superadmin),
 ):
+    """Tenant users by default. Pass include_superadmins=true (or
+    role=superadmin) to see platform admins — otherwise they're filtered
+    out so the user list shows actual tenant recruiters only.
+    """
     query = db.query(User)
     if search:
         ilike = f"%{search.lower()}%"
@@ -940,6 +1134,9 @@ def list_users(
         query = query.filter(User.is_superadmin.is_(True))
     elif role in ("owner", "member"):
         query = query.filter(User.role == role)
+    elif not include_superadmins:
+        # Default tenant-users-only view.
+        query = query.filter(User.is_superadmin.is_(False))
 
     total = query.count()
     users = (

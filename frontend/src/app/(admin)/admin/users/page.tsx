@@ -62,7 +62,8 @@ export default function AdminUsersPage() {
       <div>
         <h1 className="text-2xl font-semibold text-slate-900 mb-1">Users</h1>
         <p className="text-sm text-slate-500">
-          Every user across every tenant. Search, disable, reset password, or grant superadmin.
+          Tenant recruiters by default — platform superadmins are hidden unless you
+          select the <span className="font-semibold text-slate-700">Superadmin</span> filter below.
         </p>
       </div>
 
@@ -100,7 +101,11 @@ export default function AdminUsersPage() {
                     : "bg-slate-100 text-slate-700 hover:bg-slate-200"
                 }`}
               >
-                {r === "all" ? "All" : r.charAt(0).toUpperCase() + r.slice(1)}
+                {r === "all"
+                  ? "Tenant users"
+                  : r === "superadmin"
+                  ? "Superadmin"
+                  : r.charAt(0).toUpperCase() + r.slice(1)}
               </button>
             ))}
           </div>

@@ -77,6 +77,43 @@ interface TenantLlmUsageResponse {
   };
 }
 
+interface TenantStorageRow {
+  tenant_id: number;
+  tenant_name: string;
+  tenant_slug: string;
+  plan: string;
+  suspended: boolean;
+  deleted: boolean;
+  candidate_count: number;
+  resume_bytes: number;
+  attachment_bytes: number;
+  cv_version_bytes: number;
+  total_bytes: number;
+}
+
+interface TenantStorageResponse {
+  tenants: TenantStorageRow[];
+  totals: {
+    total_bytes: number;
+    resume_bytes: number;
+    attachment_bytes: number;
+    cv_version_bytes: number;
+    candidate_count: number;
+  };
+}
+
+function formatBytes(n: number): string {
+  if (!n) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let v = n;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i += 1;
+  }
+  return `${v < 10 && i > 0 ? v.toFixed(2) : v < 100 && i > 0 ? v.toFixed(1) : Math.round(v)} ${units[i]}`;
+}
+
 interface EnvCheck {
   MISTRAL_API_KEY: string;
   ELEVENLABS_API_KEY: string;
@@ -120,6 +157,7 @@ export default function PlatformSettingsPage() {
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [usage, setUsage] = useState<UsageReport | null>(null);
   const [tenantUsage, setTenantUsage] = useState<TenantLlmUsageResponse | null>(null);
+  const [tenantStorage, setTenantStorage] = useState<TenantStorageResponse | null>(null);
   const [envCheck, setEnvCheck] = useState<EnvCheck | null>(null);
   const [loading, setLoading] = useState(true);
   const [editingAgent, setEditingAgent] = useState<string | null>(null);
@@ -141,16 +179,18 @@ export default function PlatformSettingsPage() {
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const [agentsRes, usageRes, envRes, meRes, byTenantRes] = await Promise.all([
+      const [agentsRes, usageRes, envRes, meRes, byTenantRes, storageRes] = await Promise.all([
         apiGet<{ agents: AgentInfo[] }>("/settings/agents"),
         apiGet<UsageReport>("/settings/llm/usage", { days: String(usageDays), include_all: "true" }),
         apiGet<EnvCheck>("/settings/env-check"),
         apiGet<MeResponseLite>("/auth/me"),
         apiGet<TenantLlmUsageResponse>("/admin/llm-usage/by-tenant", { days: String(usageDays) }).catch(() => null),
+        apiGet<TenantStorageResponse>("/admin/storage/by-tenant").catch(() => null),
       ]);
       setAgents(agentsRes.agents);
       setUsage(usageRes);
       setTenantUsage(byTenantRes);
+      setTenantStorage(storageRes);
       setEnvCheck(envRes);
       setIsSuperadmin(meRes.user.is_superadmin);
       if (meRes.user.is_superadmin) {
@@ -572,6 +612,80 @@ export default function PlatformSettingsPage() {
                         <td className="py-2.5 text-right text-xs text-slate-400">
                           {t.last_call_at ? new Date(t.last_call_at).toLocaleString() : "—"}
                         </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          {/* Per-Tenant Storage */}
+          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+            <div className="flex items-start justify-between gap-3 mb-4 flex-wrap">
+              <div>
+                <h3 className="text-base font-semibold text-slate-900">Storage by Tenant</h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Resume text + email attachments + historical CV snapshots, summed per tenant.
+                  Super-admin home tenants are excluded. Resumes themselves live in the database
+                  as extracted text; the original PDFs/DOCXs sit base64-encoded inside <span className="font-mono">emails.attachments</span>.
+                </p>
+              </div>
+              {tenantStorage && (
+                <div className="text-right text-xs text-slate-500">
+                  <div>Total <span className="font-mono text-slate-700">{formatBytes(tenantStorage.totals.total_bytes)}</span></div>
+                  <div>Resumes <span className="font-mono text-slate-700">{formatBytes(tenantStorage.totals.resume_bytes)}</span></div>
+                  <div>Attachments <span className="font-mono text-slate-700">{formatBytes(tenantStorage.totals.attachment_bytes)}</span></div>
+                  <div>CV versions <span className="font-mono text-slate-700">{formatBytes(tenantStorage.totals.cv_version_bytes)}</span></div>
+                </div>
+              )}
+            </div>
+
+            {!tenantStorage ? (
+              <p className="text-sm text-slate-400 italic">Loading storage breakdown…</p>
+            ) : tenantStorage.tenants.length === 0 ? (
+              <p className="text-sm text-slate-400 italic">No tenant data on disk yet.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-slate-100">
+                      <th className="text-left text-xs font-medium text-slate-500 uppercase tracking-wider pb-3">Tenant</th>
+                      <th className="text-left text-xs font-medium text-slate-500 uppercase tracking-wider pb-3">Plan</th>
+                      <th className="text-right text-xs font-medium text-slate-500 uppercase tracking-wider pb-3">Candidates</th>
+                      <th className="text-right text-xs font-medium text-slate-500 uppercase tracking-wider pb-3">Resumes</th>
+                      <th className="text-right text-xs font-medium text-slate-500 uppercase tracking-wider pb-3">Attachments</th>
+                      <th className="text-right text-xs font-medium text-slate-500 uppercase tracking-wider pb-3">CV versions</th>
+                      <th className="text-right text-xs font-medium text-slate-500 uppercase tracking-wider pb-3">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-50">
+                    {tenantStorage.tenants.map((t) => (
+                      <tr key={t.tenant_id} className={`hover:bg-slate-50 ${t.suspended || t.deleted ? "opacity-60" : ""}`}>
+                        <td className="py-2.5">
+                          <Link
+                            href={`/admin/tenants/${t.tenant_id}`}
+                            className="text-sm font-medium text-slate-900 hover:text-indigo-600"
+                          >
+                            {t.tenant_name}
+                          </Link>
+                          {t.suspended && (
+                            <span className="ml-1.5 text-[9px] uppercase tracking-wider px-1 py-0.5 rounded bg-amber-100 text-amber-800">
+                              Suspended
+                            </span>
+                          )}
+                          {t.deleted && (
+                            <span className="ml-1.5 text-[9px] uppercase tracking-wider px-1 py-0.5 rounded bg-rose-100 text-rose-800">
+                              Deleted
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-2.5 text-xs uppercase tracking-wider text-slate-500">{t.plan}</td>
+                        <td className="py-2.5 text-right tabular-nums text-slate-700">{t.candidate_count.toLocaleString()}</td>
+                        <td className="py-2.5 text-right tabular-nums text-slate-600 text-xs">{formatBytes(t.resume_bytes)}</td>
+                        <td className="py-2.5 text-right tabular-nums text-slate-600 text-xs">{formatBytes(t.attachment_bytes)}</td>
+                        <td className="py-2.5 text-right tabular-nums text-slate-600 text-xs">{formatBytes(t.cv_version_bytes)}</td>
+                        <td className="py-2.5 text-right tabular-nums font-semibold text-slate-900">{formatBytes(t.total_bytes)}</td>
                       </tr>
                     ))}
                   </tbody>
