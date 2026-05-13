@@ -2,6 +2,11 @@
 // hits its own backend (via the reverse proxy) instead of an unrelated host.
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "/api/v1";
 
+/** Absolute URL to an API path — for plain <a href> downloads where you
+ * want the browser to send cookies and follow the response (Content-
+ * Disposition) directly instead of going through fetch(). */
+export const apiUrl = (path: string): string => `${API_BASE}${path}`;
+
 interface ApiOptions {
   method?: string;
   body?: unknown;

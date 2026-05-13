@@ -911,12 +911,15 @@ class TenantStorageRow(BaseModel):
     resume_bytes: int             # candidates.resume_text
     attachment_bytes: int         # emails.attachments (base64-encoded blobs in JSON)
     cv_version_bytes: int         # candidate_cv_versions.resume_text snapshots
+    disk_bytes: int               # direct-upload binaries on disk
+    disk_file_count: int          # number of files on disk for this tenant
     total_bytes: int
 
 
 class TenantStorageResponse(BaseModel):
+    upload_root: str
     tenants: list[TenantStorageRow]
-    totals: dict  # {"total_bytes", "resume_bytes", "attachment_bytes", "cv_version_bytes", "candidate_count"}
+    totals: dict  # {total_bytes, resume_bytes, attachment_bytes, cv_version_bytes, disk_bytes, disk_file_count, candidate_count}
 
 
 @router.get("/storage/by-tenant", response_model=TenantStorageResponse)
@@ -992,10 +995,19 @@ def storage_by_tenant(
         tenant_ids.add(r.tenant_id)
         version_by_tid[r.tenant_id] = int(r.bytes or 0)
 
+    # Pull per-tenant disk usage too. Tenants only on disk (no DB rows
+    # yet — unlikely but possible if an upload raced a row delete) still
+    # show up.
+    from services.resume_storage import all_tenant_disk_usage, RESUMES_ROOT
+    disk_usage_by_tid = all_tenant_disk_usage()
+    for tid in disk_usage_by_tid:
+        tenant_ids.add(tid)
+
     if not tenant_ids:
-        return TenantStorageResponse(tenants=[], totals={
+        return TenantStorageResponse(upload_root=str(RESUMES_ROOT), tenants=[], totals={
             "total_bytes": 0, "resume_bytes": 0, "attachment_bytes": 0,
-            "cv_version_bytes": 0, "candidate_count": 0,
+            "cv_version_bytes": 0, "disk_bytes": 0, "disk_file_count": 0,
+            "candidate_count": 0,
         })
 
     # Hydrate tenant metadata.
@@ -1024,6 +1036,8 @@ def storage_by_tenant(
     tot_resume = 0
     tot_attach = 0
     tot_version = 0
+    tot_disk = 0
+    tot_files = 0
     tot_candidates = 0
     for tid in tenant_ids:
         if tid in admin_only_tenant_ids:
@@ -1032,7 +1046,8 @@ def storage_by_tenant(
         n_cand, resume_b = resume_by_tid.get(tid, (0, 0))
         attach_b = attach_by_tid.get(tid, 0)
         version_b = version_by_tid.get(tid, 0)
-        total_b = resume_b + attach_b + version_b
+        disk_files, disk_b = disk_usage_by_tid.get(tid, (0, 0))
+        total_b = resume_b + attach_b + version_b + disk_b
         out.append(TenantStorageRow(
             tenant_id=tid,
             tenant_name=t.name if t else f"#{tid}",
@@ -1044,23 +1059,30 @@ def storage_by_tenant(
             resume_bytes=resume_b,
             attachment_bytes=attach_b,
             cv_version_bytes=version_b,
+            disk_bytes=disk_b,
+            disk_file_count=disk_files,
             total_bytes=total_b,
         ))
         tot_total += total_b
         tot_resume += resume_b
         tot_attach += attach_b
         tot_version += version_b
+        tot_disk += disk_b
+        tot_files += disk_files
         tot_candidates += n_cand
 
     out.sort(key=lambda r: r.total_bytes, reverse=True)
 
     return TenantStorageResponse(
+        upload_root=str(RESUMES_ROOT),
         tenants=out,
         totals={
             "total_bytes": tot_total,
             "resume_bytes": tot_resume,
             "attachment_bytes": tot_attach,
             "cv_version_bytes": tot_version,
+            "disk_bytes": tot_disk,
+            "disk_file_count": tot_files,
             "candidate_count": tot_candidates,
         },
     )
@@ -1443,6 +1465,14 @@ def hard_delete_tenant(
     db.query(User).filter(User.tenant_id == t.id).delete(synchronize_session=False)
     db.delete(t)
     db.commit()
+
+    # Wipe the tenant's resume-binary directory off disk. Best-effort —
+    # if it fails the DB delete already succeeded.
+    try:
+        from services.resume_storage import delete_tenant_dir
+        delete_tenant_dir(tenant_id)
+    except Exception:
+        pass
 
     record_audit(
         db, actor=session.user, action="tenant.hard_delete",

@@ -2,7 +2,7 @@
 
 import { use, useState, useEffect, useCallback } from "react";
 import Link from "next/link";
-import { apiGet, apiPost, apiPatch, apiDelete } from "@/lib/api";
+import { apiGet, apiPost, apiPatch, apiDelete, apiUrl } from "@/lib/api";
 import FraudSignalsCard from "@/components/candidates/FraudSignalsCard";
 import FraudHighlights from "@/components/candidates/FraudHighlights";
 import HrVideoPanel from "@/components/candidates/HrVideoPanel";
@@ -2498,6 +2498,7 @@ interface CvVersionRow {
   source: string;
   uploaded_at: string | null;
   char_count: number;
+  blob_available?: boolean;
 }
 
 function CandidateHistoryCards({ candidateId }: { candidateId: number }) {
@@ -2573,13 +2574,28 @@ function CandidateHistoryCards({ candidateId }: { candidateId: number }) {
                 <span className="text-xs text-slate-500 flex-shrink-0">
                   {v.uploaded_at ? timeAgo(v.uploaded_at) : ""}
                 </span>
+                {v.blob_available && (
+                  <a
+                    href={
+                      v.is_current
+                        ? apiUrl(`/candidates/${candidateId}/resume/file`)
+                        : apiUrl(`/candidates/${candidateId}/cv-versions/${v.id}/file`)
+                    }
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs font-medium text-indigo-600 hover:text-indigo-800"
+                    title="Download original file"
+                  >
+                    Download
+                  </a>
+                )}
                 {!v.is_current && v.id != null && (
                   <button
                     type="button"
                     onClick={() => viewVersion(v.id!)}
-                    className="text-xs font-medium text-indigo-600 hover:text-indigo-800"
+                    className="text-xs font-medium text-slate-500 hover:text-slate-800"
                   >
-                    View
+                    View text
                   </button>
                 )}
               </li>

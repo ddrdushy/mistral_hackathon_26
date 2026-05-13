@@ -243,6 +243,30 @@ def _run_migrations():
                     except Exception:
                         pass
 
+        # Original CV binary path (direct uploads only — email-arrived
+        # resumes keep their PDF in emails.attachments).
+        if "resume_blob_path" not in existing:
+            with engine.begin() as conn:
+                try:
+                    conn.execute(text(
+                        "ALTER TABLE candidates ADD COLUMN resume_blob_path VARCHAR DEFAULT ''"
+                    ))
+                except Exception:
+                    pass
+
+    # Archived CV versions also get a blob_path so HR can download
+    # the original PDF for any historical version, not just the current.
+    if "candidate_cv_versions" in insp.get_table_names():
+        existing_cv = {c["name"] for c in insp.get_columns("candidate_cv_versions")}
+        if "blob_path" not in existing_cv:
+            with engine.begin() as conn:
+                try:
+                    conn.execute(text(
+                        "ALTER TABLE candidate_cv_versions ADD COLUMN blob_path VARCHAR DEFAULT ''"
+                    ))
+                except Exception:
+                    pass
+
         # Email-only uniqueness turned out to be too strict — multiple
         # forwarded CVs with placeholder addresses (or family members
         # sharing an email) collapsed onto one row. Application-level

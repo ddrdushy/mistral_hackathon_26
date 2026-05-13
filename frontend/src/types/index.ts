@@ -318,6 +318,8 @@ export interface Candidate {
   phone: string;
   resume_text: string;
   resume_filename: string;
+  resume_blob_available?: boolean;
+  cv_version?: number;
   source_email_id: number | null;
   notes: string;
   talent_bank_status?: TalentBankStatus;

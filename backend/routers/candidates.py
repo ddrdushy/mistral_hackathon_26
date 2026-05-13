@@ -9,6 +9,11 @@ from database import get_db
 from models import Candidate, CandidateCvVersion, Email, CandidateTag, Tag
 from schemas import CandidateCreate, CandidateResponse, CandidateFromEmailResponse
 from services.resume_service import extract_resume_text, parse_contact_info
+from services.resume_storage import (
+    save_resume as save_resume_blob,
+    load_resume as load_resume_blob,
+    delete_resume as delete_resume_blob,
+)
 from auth.dependencies import current_session, CurrentSession
 from billing.plans import check_quota, is_agent_allowed
 
@@ -41,6 +46,7 @@ def _candidate_to_response(c: Candidate, db: Optional[Session] = None) -> dict:
         "phone": c.phone,
         "resume_text": c.resume_text,
         "resume_filename": c.resume_filename,
+        "resume_blob_available": bool((c.resume_blob_path or "").strip()),
         "cv_version": c.cv_version or 1,
         "source_email_id": c.source_email_id,
         "notes": c.notes,
@@ -320,6 +326,7 @@ def _archive_current_cv(
         version_number=candidate.cv_version or 1,
         filename=candidate.resume_filename or "",
         resume_text=candidate.resume_text or "",
+        blob_path=candidate.resume_blob_path or "",
         source=source,
         uploaded_by_user_id=user_id,
     )
@@ -426,6 +433,23 @@ async def upload_candidate(
         db.add(candidate)
     db.commit()
     db.refresh(candidate)
+
+    # Persist the original binary on disk in the tenant's directory.
+    # Saved after the commit so we have a candidate_id to namespace
+    # under. If disk write fails we still keep the row (extracted text
+    # alone is useful); we just log and skip blob_path.
+    try:
+        rel = save_resume_blob(
+            tenant_id=candidate.tenant_id,
+            candidate_id=candidate.id,
+            version=candidate.cv_version or 1,
+            filename=filename,
+            file_bytes=file_bytes,
+        )
+        candidate.resume_blob_path = rel
+        db.commit()
+    except Exception:
+        pass
 
     # Run profile extraction inline so the upload response carries the LLM
     # summary + key points back to the modal — HR sees the analysis right
@@ -561,6 +585,19 @@ async def upload_candidates_bulk(
             db.commit()
             db.refresh(candidate)
 
+            try:
+                rel = save_resume_blob(
+                    tenant_id=candidate.tenant_id,
+                    candidate_id=candidate.id,
+                    version=candidate.cv_version or 1,
+                    filename=fname,
+                    file_bytes=file_bytes,
+                )
+                candidate.resume_blob_path = rel
+                db.commit()
+            except Exception:
+                pass
+
             # Profile extract inline — HR uploaded a stack and expects
             # all of them to be searchable when the dialog closes. Skipped
             # for plans that don't include the profile_extractor agent.
@@ -606,10 +643,20 @@ async def upload_resume(
         raise HTTPException(status_code=404, detail="Candidate not found")
 
     file_bytes = await file.read()
-    text = extract_resume_text(file.filename or "resume.pdf", file_bytes=file_bytes)
+    fname = file.filename or "resume.pdf"
+    text = extract_resume_text(fname, file_bytes=file_bytes)
+
+    # Snapshot the previous version (text + blob) before overwriting.
+    _archive_current_cv(
+        db,
+        candidate,
+        source="manual_upload",
+        user_id=session.user.id if hasattr(session, "user") else None,
+    )
 
     candidate.resume_text = text
-    candidate.resume_filename = file.filename or ""
+    candidate.resume_filename = fname
+    candidate.cv_version = (candidate.cv_version or 1) + 1
     candidate.updated_at = datetime.utcnow()
 
     # Update contact info from resume if not already set
@@ -620,6 +667,20 @@ async def upload_resume(
 
     db.commit()
     db.refresh(candidate)
+
+    try:
+        rel = save_resume_blob(
+            tenant_id=candidate.tenant_id,
+            candidate_id=candidate.id,
+            version=candidate.cv_version or 1,
+            filename=fname,
+            file_bytes=file_bytes,
+        )
+        candidate.resume_blob_path = rel
+        db.commit()
+    except Exception:
+        pass
+
     return {
         "candidate": _candidate_to_response(candidate),
         "resume_extracted": bool(text),
@@ -896,6 +957,7 @@ async def list_cv_versions(
         "source": "current",
         "uploaded_at": c.updated_at.isoformat() if c.updated_at else (c.created_at.isoformat() if c.created_at else None),
         "char_count": len(c.resume_text or ""),
+        "blob_available": bool((c.resume_blob_path or "").strip()),
     }]
     for v in archived:
         out.append({
@@ -906,8 +968,90 @@ async def list_cv_versions(
             "source": v.source or "manual_upload",
             "uploaded_at": v.uploaded_at.isoformat() if v.uploaded_at else None,
             "char_count": len(v.resume_text or ""),
+            "blob_available": bool((v.blob_path or "").strip()),
         })
     return {"versions": out}
+
+
+@router.get("/{candidate_id}/resume/file")
+async def download_candidate_resume(
+    candidate_id: int,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(current_session),
+):
+    """Stream the original CV binary back to the browser.
+
+    Only works for direct uploads (we keep the original on disk under a
+    tenant-scoped dir). Email-arrived resumes still need to be fetched
+    via the inbox view since the binary lives in emails.attachments.
+    """
+    from fastapi.responses import Response
+    import mimetypes
+
+    c = db.query(Candidate).filter(
+        Candidate.id == candidate_id,
+        Candidate.tenant_id == session.tenant.id,
+    ).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+    if not (c.resume_blob_path or "").strip():
+        raise HTTPException(
+            status_code=404,
+            detail="No original file on disk for this candidate (was the CV uploaded directly?).",
+        )
+    data = load_resume_blob(c.resume_blob_path, session.tenant.id)
+    if data is None:
+        raise HTTPException(status_code=404, detail="Resume file missing on disk")
+    fname = c.resume_filename or "resume.pdf"
+    mt, _ = mimetypes.guess_type(fname)
+    return Response(
+        content=data,
+        media_type=mt or "application/octet-stream",
+        headers={
+            "Content-Disposition": f'inline; filename="{fname}"',
+            "Cache-Control": "private, no-store",
+        },
+    )
+
+
+@router.get("/{candidate_id}/cv-versions/{version_id}/file")
+async def download_cv_version_file(
+    candidate_id: int,
+    version_id: int,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(current_session),
+):
+    """Download the original binary for a specific archived CV version."""
+    from fastapi.responses import Response
+    import mimetypes
+
+    c = db.query(Candidate).filter(
+        Candidate.id == candidate_id,
+        Candidate.tenant_id == session.tenant.id,
+    ).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+    v = db.query(CandidateCvVersion).filter(
+        CandidateCvVersion.id == version_id,
+        CandidateCvVersion.candidate_id == candidate_id,
+    ).first()
+    if not v:
+        raise HTTPException(status_code=404, detail="Version not found")
+    if not (v.blob_path or "").strip():
+        raise HTTPException(status_code=404, detail="No original file archived for this version")
+    data = load_resume_blob(v.blob_path, session.tenant.id)
+    if data is None:
+        raise HTTPException(status_code=404, detail="Archived file missing on disk")
+    fname = v.filename or "resume.pdf"
+    mt, _ = mimetypes.guess_type(fname)
+    return Response(
+        content=data,
+        media_type=mt or "application/octet-stream",
+        headers={
+            "Content-Disposition": f'inline; filename="{fname}"',
+            "Cache-Control": "private, no-store",
+        },
+    )
 
 
 @router.get("/{candidate_id}/cv-versions/{version_id}/text")

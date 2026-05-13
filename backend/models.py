@@ -456,6 +456,10 @@ class Candidate(Base):
     phone = Column(String, default="")
     resume_text = Column(Text, default="")
     resume_filename = Column(String, default="")
+    # Relative path under HIREOPS_UPLOAD_DIR pointing to the original CV
+    # binary kept on disk for direct uploads. Empty for email-arrived
+    # resumes (those keep the original in emails.attachments).
+    resume_blob_path = Column(String, default="")
     cv_version = Column(Integer, default=1, nullable=False)  # bumps on re-upload
     source_email_id = Column(Integer, ForeignKey("emails.id"), nullable=True)
     notes = Column(Text, default="")
@@ -1080,6 +1084,10 @@ class CandidateCvVersion(Base):
     version_number = Column(Integer, nullable=False)
     filename = Column(String, default="")
     resume_text = Column(Text, default="")
+    # Snapshot of the binary path that pointed at this version when it
+    # was archived. Lets HR download the original PDF for an older CV
+    # version, not just the current one. Empty for email-arrived rows.
+    blob_path = Column(String, default="")
     source = Column(String, default="manual_upload")  # email | manual_upload | imported | api
     uploaded_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     uploaded_at = Column(DateTime, default=datetime.utcnow, nullable=False)

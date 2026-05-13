@@ -88,16 +88,21 @@ interface TenantStorageRow {
   resume_bytes: number;
   attachment_bytes: number;
   cv_version_bytes: number;
+  disk_bytes: number;
+  disk_file_count: number;
   total_bytes: number;
 }
 
 interface TenantStorageResponse {
+  upload_root: string;
   tenants: TenantStorageRow[];
   totals: {
     total_bytes: number;
     resume_bytes: number;
     attachment_bytes: number;
     cv_version_bytes: number;
+    disk_bytes: number;
+    disk_file_count: number;
     candidate_count: number;
   };
 }
@@ -626,10 +631,15 @@ export default function PlatformSettingsPage() {
               <div>
                 <h3 className="text-base font-semibold text-slate-900">Storage by Tenant</h3>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  Resume text + email attachments + historical CV snapshots, summed per tenant.
-                  Super-admin home tenants are excluded. Resumes themselves live in the database
-                  as extracted text; the original PDFs/DOCXs sit base64-encoded inside <span className="font-mono">emails.attachments</span>.
+                  Resume text + email attachments + historical CV snapshots in the DB, plus
+                  original-binary uploads on disk under per-tenant directories. Super-admin
+                  home tenants are excluded.
                 </p>
+                {tenantStorage?.upload_root && (
+                  <p className="text-[11px] text-slate-400 mt-0.5">
+                    Disk root: <span className="font-mono">{tenantStorage.upload_root}/tenant_&lt;id&gt;/candidate_&lt;id&gt;/</span>
+                  </p>
+                )}
               </div>
               {tenantStorage && (
                 <div className="text-right text-xs text-slate-500">
@@ -637,6 +647,10 @@ export default function PlatformSettingsPage() {
                   <div>Resumes <span className="font-mono text-slate-700">{formatBytes(tenantStorage.totals.resume_bytes)}</span></div>
                   <div>Attachments <span className="font-mono text-slate-700">{formatBytes(tenantStorage.totals.attachment_bytes)}</span></div>
                   <div>CV versions <span className="font-mono text-slate-700">{formatBytes(tenantStorage.totals.cv_version_bytes)}</span></div>
+                  <div>
+                    Disk <span className="font-mono text-slate-700">{formatBytes(tenantStorage.totals.disk_bytes)}</span>
+                    <span className="ml-1 text-[10px] text-slate-400">({tenantStorage.totals.disk_file_count} files)</span>
+                  </div>
                 </div>
               )}
             </div>
@@ -656,6 +670,7 @@ export default function PlatformSettingsPage() {
                       <th className="text-right text-xs font-medium text-slate-500 uppercase tracking-wider pb-3">Resumes</th>
                       <th className="text-right text-xs font-medium text-slate-500 uppercase tracking-wider pb-3">Attachments</th>
                       <th className="text-right text-xs font-medium text-slate-500 uppercase tracking-wider pb-3">CV versions</th>
+                      <th className="text-right text-xs font-medium text-slate-500 uppercase tracking-wider pb-3">Disk</th>
                       <th className="text-right text-xs font-medium text-slate-500 uppercase tracking-wider pb-3">Total</th>
                     </tr>
                   </thead>
@@ -685,6 +700,12 @@ export default function PlatformSettingsPage() {
                         <td className="py-2.5 text-right tabular-nums text-slate-600 text-xs">{formatBytes(t.resume_bytes)}</td>
                         <td className="py-2.5 text-right tabular-nums text-slate-600 text-xs">{formatBytes(t.attachment_bytes)}</td>
                         <td className="py-2.5 text-right tabular-nums text-slate-600 text-xs">{formatBytes(t.cv_version_bytes)}</td>
+                        <td className="py-2.5 text-right tabular-nums text-slate-600 text-xs">
+                          {formatBytes(t.disk_bytes)}
+                          {t.disk_file_count > 0 && (
+                            <span className="ml-1 text-[10px] text-slate-400">({t.disk_file_count})</span>
+                          )}
+                        </td>
                         <td className="py-2.5 text-right tabular-nums font-semibold text-slate-900">{formatBytes(t.total_bytes)}</td>
                       </tr>
                     ))}
