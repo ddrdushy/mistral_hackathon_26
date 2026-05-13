@@ -54,6 +54,11 @@ class Plan:
     max_jobs: int  # -1 for unlimited
     max_candidates: int
     max_interviews_per_month: int
+    # On-disk original-CV storage per tenant, in megabytes. Counts both
+    # the live candidate resume_blob_path and every archived CV version's
+    # blob_path. -1 = unlimited. Free plans get a tight cap so a single
+    # tenant can't fill the host.
+    max_disk_mb: int = 500
     daily_llm_budget_usd: float  # hard cap on Mistral spend per UTC day; -1 = unlimited
     # Multiplier applied to raw Mistral / ElevenLabs cost when billing
     # tenants. We pay Mistral $1, we charge the tenant $1 * markup. 1.0
@@ -80,6 +85,7 @@ PLANS: dict[PlanName, Plan] = {
         max_jobs=5,
         max_candidates=25,
         max_interviews_per_month=10,
+        max_disk_mb=int(os.getenv("FREE_MAX_DISK_MB", "100")),
         daily_llm_budget_usd=float(os.getenv("FREE_DAILY_LLM_BUDGET", "0.50")),
         # Free plan budget-capped tightly; no markup since spend is small.
         llm_markup_multiplier=float(os.getenv("FREE_LLM_MARKUP", "1.0")),
@@ -103,6 +109,7 @@ PLANS: dict[PlanName, Plan] = {
         max_jobs=25,
         max_candidates=250,
         max_interviews_per_month=100,
+        max_disk_mb=int(os.getenv("STARTER_MAX_DISK_MB", "2000")),
         daily_llm_budget_usd=float(os.getenv("STARTER_DAILY_LLM_BUDGET", "5.00")),
         llm_markup_multiplier=float(os.getenv("STARTER_LLM_MARKUP", "2.5")),
         features=[
@@ -135,6 +142,7 @@ PLANS: dict[PlanName, Plan] = {
         max_jobs=-1,
         max_candidates=-1,
         max_interviews_per_month=-1,
+        max_disk_mb=int(os.getenv("PRO_MAX_DISK_MB", "-1")),
         daily_llm_budget_usd=float(os.getenv("PRO_DAILY_LLM_BUDGET", "50.00")),
         llm_markup_multiplier=float(os.getenv("PRO_LLM_MARKUP", "2.0")),
         features=[
@@ -168,6 +176,7 @@ def get_plan(name: str) -> Plan:
         max_jobs=int(overrides.get("max_jobs")) if overrides.get("max_jobs") is not None else base.max_jobs,
         max_candidates=int(overrides.get("max_candidates")) if overrides.get("max_candidates") is not None else base.max_candidates,
         max_interviews_per_month=int(overrides.get("max_interviews_per_month")) if overrides.get("max_interviews_per_month") is not None else base.max_interviews_per_month,
+        max_disk_mb=int(overrides.get("max_disk_mb")) if overrides.get("max_disk_mb") is not None else base.max_disk_mb,
         daily_llm_budget_usd=float(overrides.get("daily_llm_budget_usd")) if overrides.get("daily_llm_budget_usd") is not None else base.daily_llm_budget_usd,
         llm_markup_multiplier=float(overrides.get("llm_markup_multiplier")) if overrides.get("llm_markup_multiplier") is not None else base.llm_markup_multiplier,
         features=overrides.get("features") if overrides.get("features") is not None else base.features,
@@ -378,11 +387,40 @@ def check_quota(db: Session, tenant: Tenant, resource: Literal["jobs", "candidat
             )
 
 
+def check_disk_quota(tenant: Tenant, additional_bytes: int) -> None:
+    """Raise 402 if persisting ``additional_bytes`` more would push the
+    tenant past their plan's disk cap. Counts on-disk original-CV
+    storage only (DB-resident extracted text is small enough to ignore).
+    """
+    limit_mb = effective_quota(tenant, "max_disk_mb")
+    if limit_mb < 0:
+        return
+    from services.resume_storage import tenant_disk_usage
+    _files, used_bytes = tenant_disk_usage(tenant.id)
+    proposed = used_bytes + int(additional_bytes or 0)
+    limit_bytes = limit_mb * 1024 * 1024
+    if proposed > limit_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail=(
+                f"Resume storage quota reached "
+                f"({used_bytes / (1024*1024):.1f} MB used of {limit_mb} MB on the "
+                f"{tenant.plan} plan). Delete unused candidates or upgrade to add more."
+            ),
+        )
+
+
 def usage_summary(db: Session, tenant: Tenant) -> dict:
     """Snapshot of current usage vs limits, for the billing UI."""
     jobs_used = count_jobs(db, tenant)
     candidates_used = count_candidates(db, tenant)
     interviews_used = count_interviews_this_month(db, tenant)
+    try:
+        from services.resume_storage import tenant_disk_usage
+        _files, disk_bytes = tenant_disk_usage(tenant.id)
+        disk_used_mb = round(disk_bytes / (1024 * 1024), 2)
+    except Exception:
+        disk_used_mb = 0.0
     return {
         "jobs": {
             "used": jobs_used,
@@ -395,5 +433,9 @@ def usage_summary(db: Session, tenant: Tenant) -> dict:
         "interviews_this_month": {
             "used": interviews_used,
             "limit": effective_quota(tenant, "max_interviews_per_month"),
+        },
+        "disk_mb": {
+            "used": disk_used_mb,
+            "limit": effective_quota(tenant, "max_disk_mb"),
         },
     }

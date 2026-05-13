@@ -109,3 +109,74 @@ def parse_contact_info(text: str) -> dict:
             break
 
     return result
+
+
+# Lines/phrases that strongly indicate a job-description document rather
+# than a candidate's resume. Tuned conservatively — we only want to fire
+# when several of these co-occur near the top of the document.
+_JD_PHRASES = re.compile(
+    r"\b("
+    r"job\s+description|position\s+description|role\s+description|"
+    r"about\s+the\s+role|about\s+the\s+position|about\s+the\s+job|"
+    r"key\s+responsibilities|primary\s+responsibilities|"
+    r"what\s+you[’']ll\s+do|what\s+we[’']re\s+looking\s+for|"
+    r"minimum\s+qualifications|preferred\s+qualifications|"
+    r"required\s+qualifications|nice\s+to\s+have|"
+    r"reports?\s+to|reporting\s+to|"
+    r"we\s+are\s+looking\s+for|we\s+are\s+hiring|"
+    r"compensation\s+(?:and|&)\s+benefits|equal\s+opportunity\s+employer|"
+    r"company\s+overview|about\s+(?:us|the\s+company)"
+    r")\b",
+    re.IGNORECASE,
+)
+
+_RESUME_PHRASES = re.compile(
+    r"\b("
+    r"work\s+experience|professional\s+experience|employment\s+history|"
+    r"education\s*(?:and|&)?\s*(?:certifications)?\s*[:\n]|"
+    r"skills?\s*[:\n]|technical\s+skills|core\s+competencies|"
+    r"certifications?\s*[:\n]|projects?\s*[:\n]|"
+    r"references\s+available|curriculum\s+vitae|résumé|resume\s*[:\n]"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def looks_like_job_description(text: str, filename: str = "") -> bool:
+    """Best-effort detection of an uploaded *job description* — i.e. the
+    user dropped a JD PDF into the candidate uploader by mistake.
+
+    Returns True when either:
+      • the filename strongly signals a JD (``jd_*``, ``*_jd.pdf``,
+        ``job_description*``), OR
+      • the text has 3+ JD-style section headers near the top AND no
+        candidate-shaped sections (Work Experience / Skills / Education).
+
+    Conservative on purpose — false positives block a real CV upload, so
+    we only fire on clear cases.
+    """
+    fname_lower = (filename or "").strip().lower()
+    if fname_lower:
+        stem = re.sub(r"\.[a-z0-9]{1,5}$", "", fname_lower)
+        if (
+            stem.startswith("jd_") or stem.startswith("jd-") or
+            stem.endswith("_jd") or stem.endswith("-jd") or
+            "job_description" in stem or "job-description" in stem or
+            stem.startswith("position_") or stem.startswith("role_")
+        ):
+            return True
+
+    if not text:
+        return False
+
+    head = "\n".join(text.split("\n")[:80])
+    jd_hits = len(set(m.group(0).lower() for m in _JD_PHRASES.finditer(head)))
+    resume_hits = len(set(m.group(0).lower() for m in _RESUME_PHRASES.finditer(text)))
+
+    # Strong JD signal: many JD headers, very few/no resume sections, and
+    # no email anywhere in the first 80 lines (real candidates always
+    # include contact details near the top).
+    has_email_in_head = bool(re.search(r"[\w.+-]+@[\w-]+\.[\w.-]+", head))
+    if jd_hits >= 3 and resume_hits <= 1 and not has_email_in_head:
+        return True
+    return False

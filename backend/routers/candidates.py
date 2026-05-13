@@ -4,7 +4,7 @@ import json
 import re
 from datetime import datetime
 from urllib.parse import quote
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Request
 
 # Hard cap on the original-binary uploads we persist. A real CV PDF is
 # under 5 MB; 15 MB is generous and stops a tenant from filling the
@@ -42,14 +42,18 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models import Candidate, CandidateCvVersion, Email, CandidateTag, Tag
 from schemas import CandidateCreate, CandidateResponse, CandidateFromEmailResponse
-from services.resume_service import extract_resume_text, parse_contact_info
+from services.resume_service import (
+    extract_resume_text,
+    parse_contact_info,
+    looks_like_job_description,
+)
 from services.resume_storage import (
     save_resume as save_resume_blob,
     load_resume as load_resume_blob,
     delete_resume as delete_resume_blob,
 )
 from auth.dependencies import current_session, CurrentSession
-from billing.plans import check_quota, is_agent_allowed
+from billing.plans import check_quota, check_disk_quota, is_agent_allowed
 
 router = APIRouter(prefix="/api/v1/candidates", tags=["candidates"])
 
@@ -367,6 +371,40 @@ def _archive_current_cv(
     db.add(snapshot)
 
 
+# How many archived CV versions to retain per candidate. The most recent
+# `MAX_CV_VERSIONS` (live + archived) stay; older archives are deleted
+# along with their on-disk binaries. Picked at 10 so HR keeps real
+# revision history without letting chatty re-uploaders fill the disk.
+MAX_CV_VERSIONS = 10
+
+
+def _prune_old_cv_versions(db: Session, candidate: Candidate) -> None:
+    """Trim archived CV versions for a candidate to MAX_CV_VERSIONS - 1
+    (the live `candidates` row counts as the +1). Deletes the on-disk
+    binary for any version we drop.
+
+    Best-effort: silently no-ops on FS errors so a sweep failure can't
+    block the upload that triggered it.
+    """
+    keep = max(1, MAX_CV_VERSIONS - 1)
+    rows = (
+        db.query(CandidateCvVersion)
+        .filter(CandidateCvVersion.candidate_id == candidate.id)
+        .order_by(CandidateCvVersion.version_number.desc())
+        .all()
+    )
+    excess = rows[keep:]
+    if not excess:
+        return
+    for v in excess:
+        if (v.blob_path or "").strip():
+            try:
+                delete_resume_blob(v.blob_path)
+            except Exception:
+                pass
+        db.delete(v)
+
+
 @router.post("/upload")
 async def upload_candidate(
     file: UploadFile = File(...),
@@ -391,6 +429,7 @@ async def upload_candidate(
     if not file_bytes:
         raise HTTPException(status_code=400, detail="Empty file")
     _check_size(file_bytes)
+    check_disk_quota(session.tenant, len(file_bytes))
 
     filename = file.filename or "resume.pdf"
     if not filename.lower().endswith((".pdf", ".docx", ".doc", ".txt", ".tex")):
@@ -408,6 +447,16 @@ async def upload_candidate(
         raise HTTPException(
             status_code=400,
             detail="No text extractable from this file — try a different format",
+        )
+
+    if looks_like_job_description(resume_text, filename):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "This looks like a job description, not a candidate resume. "
+                "Job descriptions belong on the Jobs page — try creating a "
+                "new job and uploading this file as the JD instead."
+            ),
         )
 
     contact = parse_contact_info(resume_text)
@@ -441,6 +490,7 @@ async def upload_candidate(
         candidate = existing
         # Snapshot v(N) into the archive BEFORE we overwrite with v(N+1).
         _archive_current_cv(db, candidate, source="manual_upload", user_id=session.user.id if hasattr(session, "user") else None)
+        _prune_old_cv_versions(db, candidate)
         candidate.resume_text = resume_text
         candidate.resume_filename = filename
         candidate.cv_version = (candidate.cv_version or 1) + 1
@@ -575,12 +625,20 @@ async def upload_candidates_bulk(
                 raise ValueError(
                     f"file too large (limit {MAX_RESUME_BYTES // (1024 * 1024)} MB)"
                 )
+            try:
+                check_disk_quota(session.tenant, len(file_bytes))
+            except HTTPException as e:
+                raise ValueError(e.detail if isinstance(e.detail, str) else "disk quota reached")
             fname = f.filename or "resume.pdf"
             if not fname.lower().endswith((".pdf", ".docx", ".doc", ".txt", ".tex")):
                 raise ValueError("unsupported file type")
             resume_text = extract_resume_text(fname, file_bytes=file_bytes)
             if not resume_text or not resume_text.strip():
                 raise ValueError("no text extractable")
+            if looks_like_job_description(resume_text, fname):
+                raise ValueError(
+                    "looks like a job description — skipped (upload JDs via the Jobs page)"
+                )
 
             contact = parse_contact_info(resume_text)
             placeholder_email = f"unknown+{int(datetime.utcnow().timestamp())}-{successes}@uploaded.local"
@@ -602,6 +660,7 @@ async def upload_candidates_bulk(
             if existing:
                 candidate = existing
                 _archive_current_cv(db, candidate, source="manual_upload", user_id=session.user.id if hasattr(session, "user") else None)
+                _prune_old_cv_versions(db, candidate)
                 candidate.resume_text = resume_text
                 candidate.resume_filename = fname
                 candidate.cv_version = (candidate.cv_version or 1) + 1
@@ -685,8 +744,14 @@ async def upload_resume(
     if not file_bytes:
         raise HTTPException(status_code=400, detail="Empty file")
     _check_size(file_bytes)
+    check_disk_quota(session.tenant, len(file_bytes))
     fname = file.filename or "resume.pdf"
     text = extract_resume_text(fname, file_bytes=file_bytes)
+    if text and looks_like_job_description(text, fname):
+        raise HTTPException(
+            status_code=400,
+            detail="This file looks like a job description, not a candidate resume.",
+        )
 
     # Snapshot the previous version (text + blob) before overwriting.
     _archive_current_cv(
@@ -695,6 +760,7 @@ async def upload_resume(
         source="manual_upload",
         user_id=session.user.id if hasattr(session, "user") else None,
     )
+    _prune_old_cv_versions(db, candidate)
 
     candidate.resume_text = text
     candidate.resume_filename = fname
@@ -1041,6 +1107,7 @@ async def list_cv_versions(
 @router.get("/{candidate_id}/resume/file")
 async def download_candidate_resume(
     candidate_id: int,
+    request: Request,
     db: Session = Depends(get_db),
     session: CurrentSession = Depends(current_session),
 ):
@@ -1070,6 +1137,27 @@ async def download_candidate_resume(
     fname = c.resume_filename or "resume.pdf"
     mt, _ = mimetypes.guess_type(fname)
     is_pdf = (mt == "application/pdf")
+
+    # Audit-log every CV download. Compliance teams (and us) need to
+    # know who pulled a candidate's original file and when — this is
+    # PII leaving the system. Best-effort: don't block the download
+    # if the audit write fails.
+    try:
+        from auth.audit import record_audit
+        record_audit(
+            db,
+            actor=session.user,
+            action="candidate.resume_download",
+            tenant_id=session.tenant.id,
+            resource_type="candidate",
+            resource_id=str(candidate_id),
+            payload={"filename": fname, "bytes": len(data), "scope": "current"},
+            request=request,
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+
     return Response(
         content=data,
         media_type=mt or "application/octet-stream",
@@ -1089,6 +1177,7 @@ async def download_candidate_resume(
 async def download_cv_version_file(
     candidate_id: int,
     version_id: int,
+    request: Request,
     db: Session = Depends(get_db),
     session: CurrentSession = Depends(current_session),
 ):
@@ -1116,6 +1205,29 @@ async def download_cv_version_file(
     fname = v.filename or "resume.pdf"
     mt, _ = mimetypes.guess_type(fname)
     is_pdf = (mt == "application/pdf")
+
+    try:
+        from auth.audit import record_audit
+        record_audit(
+            db,
+            actor=session.user,
+            action="candidate.resume_download",
+            tenant_id=session.tenant.id,
+            resource_type="candidate",
+            resource_id=str(candidate_id),
+            payload={
+                "filename": fname,
+                "bytes": len(data),
+                "scope": "archived",
+                "version_id": version_id,
+                "version_number": v.version_number,
+            },
+            request=request,
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+
     return Response(
         content=data,
         media_type=mt or "application/octet-stream",
