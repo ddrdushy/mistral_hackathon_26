@@ -79,6 +79,28 @@ def _candidate_to_response(c: Candidate, db: Optional[Session] = None) -> dict:
 
     email_str = (c.email or "").strip()
     email_is_placeholder = email_str.lower().endswith("@uploaded.local")
+    phone_str = (c.phone or "").strip()
+    name_str = (c.name or "").strip()
+    # Was the name auto-derived from the filename (no real name found)?
+    # We can't perfectly detect this, but treat very obvious cases as
+    # missing: empty, "Untitled candidate", or all-uppercase document
+    # markers like "JOB DESCRIPTION" / "RESUME".
+    name_is_placeholder = (
+        not name_str
+        or name_str == "Untitled candidate"
+        or name_str.upper() in {"JOB DESCRIPTION", "RESUME", "CURRICULUM VITAE", "CV"}
+    )
+
+    email_missing = (not email_str) or email_is_placeholder
+    phone_missing = not phone_str
+
+    missing_fields: list[str] = []
+    if email_missing:
+        missing_fields.append("email")
+    if phone_missing:
+        missing_fields.append("phone")
+    if name_is_placeholder:
+        missing_fields.append("name")
     return {
         "id": c.id,
         "name": c.name,
@@ -86,8 +108,12 @@ def _candidate_to_response(c: Candidate, db: Optional[Session] = None) -> dict:
         # UI's "missing email" treatment fires consistently across new
         # uploads (now empty) and older rows (still on @uploaded.local).
         "email": "" if email_is_placeholder else c.email,
-        "email_missing": (not email_str) or email_is_placeholder,
+        "email_missing": email_missing,
         "phone": c.phone,
+        "phone_missing": phone_missing,
+        "name_missing": name_is_placeholder,
+        # Aggregated list — let the UI iterate without re-deriving.
+        "missing_fields": missing_fields,
         "resume_text": c.resume_text,
         "resume_filename": c.resume_filename,
         "resume_blob_available": bool((c.resume_blob_path or "").strip()),

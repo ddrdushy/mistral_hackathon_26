@@ -33,6 +33,9 @@ interface TalentBankCandidate {
   email: string;
   email_missing?: boolean;
   phone: string;
+  phone_missing?: boolean;
+  name_missing?: boolean;
+  missing_fields?: string[];
   resume_filename: string;
   resume_blob_available?: boolean;
   cv_version?: number;
@@ -551,24 +554,23 @@ export default function TalentBankPage() {
                                   </span>
                                 )
                               )}
-                              {c.phone && (
+                              {!c.phone_missing && c.phone && (
                                 <span className="inline-flex items-center gap-1 text-slate-500">
                                   ☎ {c.phone}
                                 </span>
                               )}
-                              {c.email_missing ? (
+                              {!c.email_missing && c.email && (
+                                <span className="inline-flex items-center gap-1 text-slate-500 truncate max-w-[180px]" title={c.email}>
+                                  ✉ {c.email}
+                                </span>
+                              )}
+                              {(c.missing_fields ?? []).length > 0 && (
                                 <span
                                   className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-rose-50 text-rose-700 border border-rose-200"
-                                  title="No email found on this CV. Open the candidate to add one — interview invites, offers, and outreach all need a real email address."
+                                  title={`The resume parser couldn't find the following on this CV: ${(c.missing_fields ?? []).join(", ")}. Open the candidate and add them — outbound channels (email, WhatsApp, voice) need real contact info.`}
                                 >
-                                  ⚠ No email
+                                  ⚠ Missing: {(c.missing_fields ?? []).join(", ")}
                                 </span>
-                              ) : (
-                                c.email && (
-                                  <span className="inline-flex items-center gap-1 text-slate-500 truncate max-w-[180px]" title={c.email}>
-                                    ✉ {c.email}
-                                  </span>
-                                )
                               )}
                               {!c.profile?.extracted_at && (
                                 <span

@@ -317,10 +317,19 @@ export interface Candidate {
   email: string;
   /** True when the candidate has no real email — either it was missing
    * at upload time (LLM/regex couldn't find one) or it's a legacy
-   * @uploaded.local placeholder. UI surfaces a "No email" badge and
+   * @uploaded.local placeholder. UI surfaces a missing-field badge and
    * outbound sends refuse to fire until HR adds one. */
   email_missing?: boolean;
   phone: string;
+  /** True when phone is empty — WhatsApp / voice screening can't run. */
+  phone_missing?: boolean;
+  /** True when name is a placeholder (empty, "Untitled candidate",
+   * "Job Description", etc.) — the resume parser couldn't find a real
+   * candidate name. */
+  name_missing?: boolean;
+  /** Aggregated list of fields the parser couldn't find. UI iterates
+   * these to render a single "Missing: email, phone" pill. */
+  missing_fields?: string[];
   resume_text: string;
   resume_filename: string;
   resume_blob_available?: boolean;
