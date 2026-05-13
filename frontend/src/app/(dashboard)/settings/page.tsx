@@ -913,15 +913,28 @@ function TwilioIntegrationPanel() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
             <div>
               <label className="block text-xs font-medium text-slate-600 uppercase tracking-wider mb-1.5">
-                Account SID
+                Account SID{" "}
+                <span className="text-slate-400 normal-case">(starts with AC, 34 chars)</span>
               </label>
               <input
                 type="text"
                 value={accountSid}
                 onChange={(e) => setAccountSid(e.target.value)}
-                placeholder="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                placeholder="AC1a2b3c4d5e6f7g8h9i0j…"
                 className="w-full px-3 py-2 text-sm font-mono border border-slate-300 rounded-md focus:outline-none focus:ring-1 focus:ring-indigo-500"
               />
+              <p className="text-[11px] text-slate-400 mt-1">
+                Copy from{" "}
+                <a
+                  href="https://console.twilio.com"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-indigo-600 hover:underline"
+                >
+                  twilio.com/console
+                </a>{" "}
+                — top of the dashboard.
+              </p>
             </div>
             <div>
               <label className="block text-xs font-medium text-slate-600 uppercase tracking-wider mb-1.5">

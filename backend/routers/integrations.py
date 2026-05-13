@@ -61,15 +61,20 @@ def put_twilio(
     ).first()
     is_create = existing is None
 
-    row = twilio_service.upsert_config(
-        db,
-        tenant_id=session.tenant.id,
-        account_sid=req.account_sid,
-        auth_token=req.auth_token,
-        whatsapp_from=req.whatsapp_from,
-        sms_from=req.sms_from,
-        enabled=req.enabled,
-    )
+    try:
+        row = twilio_service.upsert_config(
+            db,
+            tenant_id=session.tenant.id,
+            account_sid=req.account_sid,
+            auth_token=req.auth_token,
+            whatsapp_from=req.whatsapp_from,
+            sms_from=req.sms_from,
+            enabled=req.enabled,
+        )
+    except twilio_service.TwilioConfigError as e:
+        # Surface validation messages as 400 with the message as detail
+        # — the settings UI displays it as a field-level error pill.
+        raise HTTPException(status_code=400, detail=str(e))
     write_audit(
         db,
         action="integration.twilio.create" if is_create else "integration.twilio.update",
@@ -133,8 +138,18 @@ def test_twilio(
         cfg = twilio_service.load_config(db, session.tenant.id)
     except twilio_service.TwilioConfigError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    # Validate the recipient too — Twilio rejects non-E.164 numbers with
+    # a generic 400 that's harder to debug than this field-level message.
     try:
-        result = twilio_service.send_test_message(cfg, req.to)
+        to_e164 = twilio_service._normalise_phone(
+            req.to.replace("whatsapp:", ""),
+            field="Test recipient",
+            required=True,
+        )
+    except twilio_service.TwilioConfigError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    try:
+        result = twilio_service.send_test_message(cfg, to_e164)
     except Exception as e:
         # Persist the error so the Settings UI can surface it.
         row = db.query(TenantIntegration).filter(

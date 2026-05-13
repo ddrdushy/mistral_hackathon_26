@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass
 from typing import Optional
 
@@ -164,6 +165,59 @@ def send_test_message(config: TwilioConfig, to: str) -> dict:
 # ─── Persistence helpers used by the integrations router ─────────────────────
 
 
+_TWILIO_SID_RE = re.compile(r"^AC[0-9a-fA-F]{32}$")
+_E164_RE = re.compile(r"^\+[1-9]\d{6,14}$")
+
+
+def _validate_account_sid(sid: str) -> str:
+    """Twilio Account SIDs are exactly `AC` + 32 hex chars (34 total).
+
+    Reject placeholders like `ACxxxxxxxx…` (the literal placeholder text
+    from the settings UI input) and obvious typos before we try to use
+    them as basic-auth usernames — otherwise the user only learns it's
+    wrong after a `401 Authentication Error - invalid username` from
+    Twilio (the exact UX we just hit).
+    """
+    sid = (sid or "").strip()
+    if not sid:
+        raise TwilioConfigError("Account SID is required")
+    if not _TWILIO_SID_RE.match(sid):
+        raise TwilioConfigError(
+            "Account SID looks invalid — it must start with 'AC' and be "
+            "followed by exactly 32 hexadecimal characters (you can copy it "
+            "from twilio.com/console)."
+        )
+    return sid
+
+
+def _normalise_phone(raw: str, *, field: str, required: bool = False) -> str:
+    """Coerce a phone number into strict E.164 (`+` then 7–15 digits).
+
+    Twilio's REST API only accepts E.164. We strip whitespace and common
+    formatting chars, then insist on the leading `+`. Empty string is
+    allowed when ``required`` is False (SMS-from is optional).
+    """
+    cleaned = re.sub(r"[\s\-()]", "", (raw or "").strip())
+    if not cleaned:
+        if required:
+            raise TwilioConfigError(f"{field} is required (E.164 format, e.g. +14155551234)")
+        return ""
+    if not cleaned.startswith("+"):
+        # Numbers without a + can't be unambiguously routed by Twilio.
+        # Reject rather than silently prepending a country code we'd be
+        # guessing at.
+        raise TwilioConfigError(
+            f"{field} must start with '+' and a country code (E.164 format, "
+            f"e.g. +14155551234). Got: {raw!r}"
+        )
+    if not _E164_RE.match(cleaned):
+        raise TwilioConfigError(
+            f"{field} doesn't look like a valid international phone number. "
+            f"Expected: +CCXXXXXXXXXX (country code + 6–14 digits)."
+        )
+    return cleaned
+
+
 def upsert_config(
     db: Session,
     tenant_id: int,
@@ -175,16 +229,25 @@ def upsert_config(
 ) -> TenantIntegration:
     """Save or update the tenant's Twilio integration. Empty auth_token means
     'keep the existing one' so the UI can submit the form without resending
-    the secret on every save."""
+    the secret on every save.
+
+    Validates the Account SID format and normalises phone numbers to
+    E.164 before persisting — both are common sources of 401/400 errors
+    from Twilio that we want to surface as friendly field-level messages
+    instead of a generic API rejection.
+    """
     from services.secrets_crypto import encrypt
+    sid = _validate_account_sid(account_sid)
+    wa_from = _normalise_phone(whatsapp_from, field="WhatsApp from")
+    sms_f = _normalise_phone(sms_from, field="SMS from")
     row = db.query(TenantIntegration).filter(
         TenantIntegration.tenant_id == tenant_id,
         TenantIntegration.provider == PROVIDER,
     ).first()
     cfg = {
-        "account_sid": (account_sid or "").strip(),
-        "whatsapp_from": (whatsapp_from or "").strip(),
-        "sms_from": (sms_from or "").strip(),
+        "account_sid": sid,
+        "whatsapp_from": wa_from,
+        "sms_from": sms_f,
     }
     if row:
         row.config_json = json.dumps(cfg)
