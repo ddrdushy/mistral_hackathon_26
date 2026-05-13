@@ -44,8 +44,8 @@ Return ONLY valid JSON matching the schema below. No prose. No markdown fences.
 }
 
 Rules:
-- Use ONLY information present in the resume. Do not invent.
-- Name: the actual person's name (e.g. "Jane Doe"), NOT document titles like "Resume", "CV", "Curriculum Vitae", "Job Description". Return empty string if the document is not a resume.
+- Use ONLY information present in the resume. Do not invent. Do not transform an email local-part into a name.
+- Name: the actual person's full name as it APPEARS verbatim in the resume text (e.g. "Jane Doe"). NOT document titles like "Resume", "CV", "Curriculum Vitae", "Job Description". NOT a name derived from the email address (e.g. don't return "Dushyanth" just because the email is "dushy2009@gmail.com" — find the real name in the body). Return empty string if no candidate name appears.
 - Email: a real email address from the resume. Empty if none present.
 - Phone: digits + leading + for international, e.g. "+1 555-123-4567". Empty if none.
 - Skills are CONCRETE technologies / tools / methods, not soft skills.
@@ -130,6 +130,19 @@ async def extract_profile(resume_text: str) -> ProfileExtractorOutput:
                 "n/a", "none", "unknown", "candidate",
             }:
                 name_raw = ""
+
+            # Sanity check: the returned name MUST appear verbatim in
+            # the resume text. The LLM has been observed to hallucinate
+            # a name from the email local-part (e.g. "dushy2009@gmail.com"
+            # → "Dushyanth") when the CV's real name is something else
+            # entirely. We require at least the first token of the
+            # candidate's name to show up case-insensitively in the
+            # source — otherwise blank it out and let the caller fall
+            # back to the regex parser.
+            if name_raw:
+                first_token = name_raw.split()[0].lower()
+                if first_token and first_token not in text.lower():
+                    name_raw = ""
 
             return ProfileExtractorOutput(
                 skills=[_normalize_skill(s) for s in (data.get("skills") or []) if s][:12],

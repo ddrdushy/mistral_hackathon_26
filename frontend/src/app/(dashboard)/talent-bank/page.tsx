@@ -857,6 +857,10 @@ function UploadCvDialog({
   const [error, setError] = useState<string | null>(null);
   const [results, setResults] = useState<UploadedSummary[] | null>(null);
   const [parsed, setParsed] = useState<ParseResult | null>(null);
+  // Per-file progress tracking for bulk uploads. Lets HR watch every CV
+  // tick through pending → parsing → done|failed without blocking on a
+  // single blob request.
+  const [perFile, setPerFile] = useState<Record<string, { status: "pending" | "parsing" | "done" | "failed"; message?: string }>>({});
 
   if (!open) return null;
 
@@ -926,36 +930,51 @@ function UploadCvDialog({
         const data = (await res.json()) as UploadedSummary;
         setResults([data]);
       } else {
-        const fd = new FormData();
-        for (const f of files) fd.append("files", f);
-        const res = await fetch(`${API_BASE}/candidates/upload-bulk`, {
-          method: "POST",
-          credentials: "include",
-          body: fd,
-        });
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({}));
-          throw new Error(body.detail || `Upload failed (${res.status})`);
+        // Multi-file: fire one /upload per file sequentially so we get
+        // per-file progress (each LLM call is 1-3 seconds; users want
+        // to see the ticker tick, not a frozen spinner). We could
+        // parallelise but ElevenLabs-style burst limits on Mistral get
+        // grumpy past ~3 concurrent.
+        const init: Record<string, { status: "pending" | "parsing" | "done" | "failed"; message?: string }> = {};
+        for (const f of files) init[f.name] = { status: "pending" };
+        setPerFile(init);
+
+        const okResults: UploadedSummary[] = [];
+        const failures: { filename: string; error: string }[] = [];
+
+        for (const f of files) {
+          setPerFile((prev) => ({ ...prev, [f.name]: { status: "parsing" } }));
+          try {
+            const fd = new FormData();
+            fd.append("file", f);
+            const res = await fetch(`${API_BASE}/candidates/upload`, {
+              method: "POST",
+              credentials: "include",
+              body: fd,
+            });
+            if (!res.ok) {
+              const body = await res.json().catch(() => ({}));
+              throw new Error(body.detail || `HTTP ${res.status}`);
+            }
+            const data = (await res.json()) as UploadedSummary;
+            okResults.push(data);
+            setPerFile((prev) => ({ ...prev, [f.name]: { status: "done" } }));
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : "Upload failed";
+            failures.push({ filename: f.name, error: msg });
+            setPerFile((prev) => ({
+              ...prev,
+              [f.name]: { status: "failed", message: msg },
+            }));
+          }
         }
-        const data = (await res.json()) as {
-          results: {
-            ok: boolean;
-            candidate: UploadedSummary["candidate"] | null;
-            error: string | null;
-            filename: string;
-          }[];
-          uploaded: number;
-          failed: number;
-        };
-        setResults(
-          data.results
-            .filter((r) => r.ok && r.candidate)
-            .map((r) => ({ candidate: r.candidate! })),
-        );
-        if (data.failed > 0) {
-          const errs = data.results.filter((r) => !r.ok);
+
+        setResults(okResults);
+        if (failures.length > 0) {
           setError(
-            `${data.failed} file(s) failed: ${errs.map((e) => `${e.filename} (${e.error})`).join(", ")}`,
+            `${failures.length} file(s) failed: ${failures
+              .map((e) => `${e.filename} (${e.error})`)
+              .join(", ")}`,
           );
         }
       }
@@ -1011,17 +1030,63 @@ function UploadCvDialog({
               </div>
             )}
             {files.length > 0 && (
-              <ul className="mt-2 max-h-32 overflow-y-auto text-xs text-slate-600 space-y-0.5">
-                {files.map((f, i) => (
-                  <li key={i} className="flex justify-between">
-                    <span className="truncate">{f.name}</span>
-                    <span className="text-slate-400 ml-2 flex-shrink-0">
-                      {(f.size / 1024).toFixed(0)} KB
-                    </span>
-                  </li>
-                ))}
+              <ul className="mt-2 max-h-48 overflow-y-auto text-xs text-slate-600 space-y-1">
+                {files.map((f, i) => {
+                  const p = perFile[f.name];
+                  const dot = p?.status === "done"
+                    ? "bg-emerald-500"
+                    : p?.status === "failed"
+                    ? "bg-rose-500"
+                    : p?.status === "parsing"
+                    ? "bg-indigo-500 animate-pulse"
+                    : "bg-slate-300";
+                  const label = p?.status === "done"
+                    ? "uploaded"
+                    : p?.status === "failed"
+                    ? (p.message || "failed").slice(0, 40)
+                    : p?.status === "parsing"
+                    ? "analyzing…"
+                    : `${(f.size / 1024).toFixed(0)} KB`;
+                  return (
+                    <li key={i} className="flex items-center gap-2">
+                      <span className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${dot}`} />
+                      <span className="truncate flex-1">{f.name}</span>
+                      <span
+                        className={`text-[10px] flex-shrink-0 ${
+                          p?.status === "failed"
+                            ? "text-rose-600"
+                            : p?.status === "done"
+                            ? "text-emerald-700"
+                            : "text-slate-500"
+                        }`}
+                      >
+                        {label}
+                      </span>
+                    </li>
+                  );
+                })}
               </ul>
             )}
+            {busy && files.length > 1 && (() => {
+              const done = Object.values(perFile).filter(
+                (p) => p.status === "done" || p.status === "failed",
+              ).length;
+              const pct = Math.round((done / files.length) * 100);
+              return (
+                <div className="mt-3">
+                  <div className="flex justify-between text-[11px] text-slate-500 mb-1">
+                    <span>Processed {done} of {files.length}</span>
+                    <span>{pct}%</span>
+                  </div>
+                  <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-indigo-500 transition-all"
+                      style={{ width: `${pct}%` }}
+                    />
+                  </div>
+                </div>
+              );
+            })()}
             {files.length > 1 && (
               <p className="text-xs text-indigo-700 mt-2">
                 Bulk upload — overrides below are ignored when multiple files
@@ -1162,13 +1227,20 @@ function UploadCvDialog({
               disabled={busy || files.length === 0}
               className="px-4 py-1.5 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-md disabled:opacity-50"
             >
-              {busy
-                ? files.length > 1
-                  ? `Analyzing ${files.length} CVs...`
-                  : "Analyzing..."
-                : files.length > 1
-                ? `Upload ${files.length} to talent bank`
-                : "Upload to talent bank"}
+              {(() => {
+                if (busy) {
+                  if (files.length > 1) {
+                    const done = Object.values(perFile).filter(
+                      (p) => p.status === "done" || p.status === "failed",
+                    ).length;
+                    return `Processing ${done + 1}/${files.length}…`;
+                  }
+                  return "Analyzing…";
+                }
+                return files.length > 1
+                  ? `Upload ${files.length} to talent bank`
+                  : "Upload to talent bank";
+              })()}
             </button>
           )}
         </div>

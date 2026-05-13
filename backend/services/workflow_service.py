@@ -567,12 +567,19 @@ def _create_candidate_from_email(em: Email, db: Session) -> Candidate:
         email_id=em.id,
     )
 
+    # Pick the candidate's name. Crucially we DROP `em.from_name` and the
+    # email-address local-part as fallbacks: when a recruiter forwards a
+    # CV from their own inbox the sender is the recruiter, not the
+    # candidate, and we'd end up labelling someone else's CV with the
+    # recruiter's name. If we can't find the name in the CV/body or via
+    # the classifier, fall back to the CV filename (minus extension) so
+    # the row is still usable and HR can rename in the UI.
     name = (
         detected_name
         or cv_contact.get("name", "")
         or body_contact.get("name", "")
-        or em.from_name
-        or em.from_address.split("@")[0].replace(".", " ").title()
+        or ((resume_filename or "").rsplit(".", 1)[0].replace("_", " ").strip())
+        or "Unnamed candidate"
     )
     phone = cv_contact.get("phone", "") or body_contact.get("phone", "")
 
