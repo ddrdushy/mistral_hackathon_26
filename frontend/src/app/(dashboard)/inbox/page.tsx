@@ -50,9 +50,6 @@ export default function InboxPage() {
   const [gmailSyncing, setGmailSyncing] = useState(false);
   const statusPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Legacy sample mode
-  const [connectStatus, setConnectStatus] = useState<string>("");
-  const [connectLoading, setConnectLoading] = useState(false);
   const [classifyLoading, setClassifyLoading] = useState(false);
   const [workflowLoading, setWorkflowLoading] = useState(false);
   const [creatingCandidate, setCreatingCandidate] = useState<number | null>(null);
@@ -214,28 +211,6 @@ export default function InboxPage() {
       showToast(message, "error");
     } finally {
       setListenerToggling(false);
-    }
-  };
-
-  // ─── Legacy Handlers ───
-
-  const handleConnect = async () => {
-    setConnectLoading(true);
-    setConnectStatus("Connecting...");
-    try {
-      await apiPost("/inbox/connect", { mode: "sample" });
-      setConnectStatus("Syncing...");
-      await apiPost("/inbox/sync");
-      setConnectStatus("Synced");
-      showToast("Sample inbox loaded");
-      setPage(1);
-      fetchEmails();
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Connection failed";
-      setConnectStatus("Failed");
-      showToast(message, "error");
-    } finally {
-      setConnectLoading(false);
     }
   };
 
@@ -529,13 +504,6 @@ export default function InboxPage() {
         <div className="flex flex-wrap items-center gap-3">
           <span className="text-sm font-medium text-slate-500">Quick Actions:</span>
           <button
-            onClick={handleConnect}
-            disabled={connectLoading}
-            className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-md text-indigo-700 bg-indigo-50 hover:bg-indigo-100 disabled:opacity-50 transition-colors"
-          >
-            {connectLoading ? "Loading..." : "Load Sample Inbox"}
-          </button>
-          <button
             onClick={handleClassify}
             disabled={classifyLoading}
             className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-md text-violet-700 bg-violet-50 hover:bg-violet-100 disabled:opacity-50 transition-colors"
@@ -552,9 +520,6 @@ export default function InboxPage() {
             </svg>
             {workflowLoading ? "Running..." : "Run Auto-Workflow"}
           </button>
-          {connectStatus && (
-            <span className="text-xs text-slate-500">{connectStatus}</span>
-          )}
         </div>
       </div>
 
@@ -598,7 +563,7 @@ export default function InboxPage() {
             </svg>
             <h3 className="text-sm font-medium text-slate-900 mb-1">No emails found</h3>
             <p className="text-sm text-slate-500">
-              Connect Gmail or load sample data to get started.
+              Connect your Gmail or IMAP mailbox above to start syncing applications.
             </p>
           </div>
         ) : (

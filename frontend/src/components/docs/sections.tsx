@@ -171,6 +171,28 @@ export function Dashboard() {
       </p>
       <DocImage src="/docs/screenshots/dashboard.png" alt="Dashboard" />
 
+      <h2>Quick actions (top of page)</h2>
+      <p>
+        Three shortcut tiles sit directly under the header — the most
+        common starting points for a recruiter&apos;s day:
+      </p>
+      <ul>
+        <li>
+          <strong>Sync inbox</strong> — jumps to the inbox page where the
+          IMAP listener&apos;s last sync time and any unprocessed
+          messages are visible.
+        </li>
+        <li>
+          <strong>Create job</strong> — opens the job-creation form,
+          including the &quot;already have a JD?&quot; paste/upload AI
+          refiner.
+        </li>
+        <li>
+          <strong>View candidates</strong> — list of every candidate in
+          the pipeline (not just talent bank).
+        </li>
+      </ul>
+
       <h2>Top stat tiles</h2>
       <ul>
         <li>
@@ -862,6 +884,31 @@ export function Inbox() {
           Send).
         </li>
       </ol>
+
+      <h2>Quick actions toolbar</h2>
+      <p>
+        Two manual triggers sit above the email list. Useful when you
+        want to re-run the pipeline against the current backlog without
+        waiting for the next mailbox poll:
+      </p>
+      <ul>
+        <li>
+          <strong>Classify emails</strong> — re-runs the email classifier
+          across any messages that don&apos;t have a classification yet.
+        </li>
+        <li>
+          <strong>Run auto-workflow</strong> — for every classified
+          candidate-application email that doesn&apos;t yet have a
+          Candidate row, runs the full intake pipeline (CV extract →
+          dedup → match → score).
+        </li>
+      </ul>
+
+      <Tip kind="info">
+        Sample-data loading has been removed — the inbox is now driven
+        entirely by your real connected mailbox. Use the trial signup
+        flow if you want a clean tenant to experiment in.
+      </Tip>
     </>
   );
 }
