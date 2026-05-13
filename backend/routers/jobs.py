@@ -2,7 +2,7 @@
 from typing import Optional
 import json
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -68,7 +68,7 @@ async def refine_job(
 
 @router.post("/refine-file")
 async def refine_job_file(
-    file: "UploadFile" = None,  # filled by FastAPI below
+    file: UploadFile = File(...),
     session: CurrentSession = Depends(current_session),
 ):
     """Same as /refine but accepts a PDF/DOCX/TXT file. We extract the
@@ -77,8 +77,6 @@ async def refine_job_file(
     """
     gate_agent(session.tenant, "job_generator")
     check_llm_budget()
-    if file is None:
-        raise HTTPException(status_code=400, detail="No file provided")
     from services.resume_service import extract_resume_text
     file_bytes = await file.read()
     if not file_bytes:
