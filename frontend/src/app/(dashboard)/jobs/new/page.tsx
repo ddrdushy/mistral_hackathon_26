@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiPost } from "@/lib/api";
 import { SENIORITY_OPTIONS } from "@/lib/constants";
@@ -48,6 +48,14 @@ export default function CreateJobPage() {
   const [titleError, setTitleError] = useState(false);
   const [aiGenerated, setAiGenerated] = useState(false);
 
+  // "I have my own JD" panel — HR pastes raw text or uploads a file,
+  // we run it through /jobs/refine to structure it the same way Draft
+  // with AI does.
+  const [refinePanelOpen, setRefinePanelOpen] = useState(false);
+  const [refineText, setRefineText] = useState("");
+  const [refining, setRefining] = useState(false);
+  const refineFileRef = useRef<HTMLInputElement | null>(null);
+
   const handleChange = (field: keyof JobCreate, value: string) => {
     setForm((prev) => ({ ...prev, [field]: value }));
     if (field === "title" && value.trim()) {
@@ -94,6 +102,85 @@ export default function CreateJobPage() {
     }));
   };
 
+  // Inline-editable bullets — update a single item in place.
+  const updateBullet = (
+    field: "responsibilities" | "qualifications",
+    index: number,
+    value: string,
+  ) => {
+    setForm((prev) => ({
+      ...prev,
+      [field]: prev[field].map((item, i) => (i === index ? value : item)),
+    }));
+  };
+
+  const addBullet = (field: "responsibilities" | "qualifications") => {
+    setForm((prev) => ({
+      ...prev,
+      [field]: [...prev[field], ""],
+    }));
+  };
+
+  // Shared post-LLM form-fill, used by both "Draft with AI" (from title)
+  // and "Refine with AI" (from pasted/uploaded JD).
+  const applyAiResult = (result: Partial<JobCreate>, titleFallback: string) => {
+    setForm((prev) => ({
+      title: (result.title || titleFallback || prev.title || "").trim(),
+      department: result.department || "",
+      location: result.location || "",
+      seniority: result.seniority || "mid",
+      skills: result.skills || [],
+      responsibilities: result.responsibilities || [],
+      qualifications: result.qualifications || [],
+      description: result.description || "",
+      interview_mode: prev.interview_mode,
+    }));
+    setAiGenerated(true);
+    setRefinePanelOpen(false);
+  };
+
+  const handleRefineText = async () => {
+    const text = refineText.trim();
+    if (!text) return;
+    setRefining(true);
+    setError(null);
+    try {
+      const result = await apiPost<Partial<JobCreate>>("/jobs/refine", { text });
+      applyAiResult(result, form.title);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Refine failed");
+    } finally {
+      setRefining(false);
+    }
+  };
+
+  const handleRefineFile = async (file: File) => {
+    setRefining(true);
+    setError(null);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      // apiPost only takes JSON — use fetch directly for multipart.
+      const apiBase = process.env.NEXT_PUBLIC_API_URL || "/api/v1";
+      const res = await fetch(`${apiBase}/jobs/refine-file`, {
+        method: "POST",
+        body: formData,
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.detail || `Refine failed (HTTP ${res.status})`);
+      }
+      const result = await res.json();
+      applyAiResult(result, form.title);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Refine failed");
+    } finally {
+      setRefining(false);
+      if (refineFileRef.current) refineFileRef.current.value = "";
+    }
+  };
+
   const handleGenerate = async () => {
     if (!form.title.trim()) {
       setTitleError(true);
@@ -104,18 +191,7 @@ export default function CreateJobPage() {
     setError(null);
     try {
       const result = await apiPost<JobCreate>("/jobs/generate", { title: form.title.trim() });
-      setForm((prev) => ({
-        title: form.title.trim(),
-        department: result.department || "",
-        location: result.location || "",
-        seniority: result.seniority || "mid",
-        skills: result.skills || [],
-        responsibilities: result.responsibilities || [],
-        qualifications: result.qualifications || [],
-        description: result.description || "",
-        interview_mode: prev.interview_mode,
-      }));
-      setAiGenerated(true);
+      applyAiResult(result, form.title.trim());
     } catch (err) {
       const message = err instanceof Error ? err.message : "AI generation failed";
       setError(message);
@@ -135,7 +211,17 @@ export default function CreateJobPage() {
 
     setSubmitting(true);
     try {
-      const payload: JobCreate = { ...form };
+      // Drop blank bullets — they come from "+ Add" rows the user never
+      // filled, and saving them litters the JD with empty entries.
+      const payload: JobCreate = {
+        ...form,
+        responsibilities: form.responsibilities
+          .map((s) => s.trim())
+          .filter(Boolean),
+        qualifications: form.qualifications
+          .map((s) => s.trim())
+          .filter(Boolean),
+      };
       if (autoGenerateQuestions && totalQuestions > 0) {
         // Strip zero-count types so the backend doesn't fire empty prompts.
         payload.interview_question_counts = Object.fromEntries(
@@ -221,6 +307,57 @@ export default function CreateJobPage() {
             <p className="mt-1.5 text-xs text-slate-400">
               Type a title and click <span className="font-medium">Draft with AI</span> — Mistral fills department, skills, responsibilities, qualifications, and a full description in seconds.
             </p>
+
+            {/* "I already have a JD" — paste or upload, then refine */}
+            <div className="mt-3">
+              <button
+                type="button"
+                onClick={() => setRefinePanelOpen((o) => !o)}
+                className="text-xs font-medium text-indigo-600 hover:text-indigo-800"
+              >
+                {refinePanelOpen ? "Hide" : "Already have a JD? Paste or upload it →"}
+              </button>
+              {refinePanelOpen && (
+                <div className="mt-2 rounded-lg border border-indigo-200 bg-indigo-50/40 p-3 space-y-2">
+                  <p className="text-xs text-slate-600">
+                    Paste your existing JD text, or upload a PDF / DOCX. AI will
+                    structure it into the fields below — your content stays,
+                    just gets organised.
+                  </p>
+                  <textarea
+                    value={refineText}
+                    onChange={(e) => setRefineText(e.target.value)}
+                    rows={6}
+                    placeholder="Paste the full job description here…"
+                    className="w-full px-3 py-2 rounded-md border border-slate-300 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-y"
+                  />
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleRefineText}
+                      disabled={refining || !refineText.trim()}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {refining ? "Refining…" : "Refine pasted text"}
+                    </button>
+                    <span className="text-xs text-slate-400">or</span>
+                    <input
+                      ref={refineFileRef}
+                      type="file"
+                      accept=".pdf,.docx,.doc,.txt,.tex"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        if (f) void handleRefineFile(f);
+                      }}
+                      className="text-xs text-slate-600 file:mr-2 file:px-3 file:py-1.5 file:rounded-md file:border-0 file:bg-white file:text-indigo-700 file:font-semibold file:hover:bg-indigo-50 file:cursor-pointer"
+                    />
+                    {refining && (
+                      <span className="text-xs text-slate-500">Parsing file…</span>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Department */}
@@ -451,57 +588,85 @@ export default function CreateJobPage() {
             )}
           </div>
 
-          {/* Responsibilities (AI-generated, editable) */}
-          {form.responsibilities.length > 0 && (
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">
-                Responsibilities
-              </label>
-              <ul className="space-y-1.5">
-                {form.responsibilities.map((item, idx) => (
-                  <li key={idx} className="flex items-start gap-2 group">
-                    <span className="text-indigo-400 mt-0.5 text-sm">•</span>
-                    <span className="flex-1 text-sm text-slate-700">{item}</span>
-                    <button
-                      type="button"
-                      onClick={() => removeResponsibility(idx)}
-                      className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-red-500 transition-all"
-                    >
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
+          {/* Responsibilities (AI-generated, inline-editable) */}
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">
+              Responsibilities
+            </label>
+            <ul className="space-y-1.5">
+              {form.responsibilities.map((item, idx) => (
+                <li key={idx} className="flex items-start gap-2 group">
+                  <span className="text-indigo-400 mt-2 text-sm">•</span>
+                  <textarea
+                    value={item}
+                    onChange={(e) =>
+                      updateBullet("responsibilities", idx, e.target.value)
+                    }
+                    rows={1}
+                    placeholder="Describe a responsibility…"
+                    className="flex-1 px-2 py-1 rounded border border-transparent hover:border-slate-200 focus:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-500/40 text-sm text-slate-700 resize-y"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removeResponsibility(idx)}
+                    className="mt-1.5 opacity-0 group-hover:opacity-100 text-slate-400 hover:text-red-500 transition-all"
+                    aria-label="Remove responsibility"
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </li>
+              ))}
+            </ul>
+            <button
+              type="button"
+              onClick={() => addBullet("responsibilities")}
+              className="mt-2 text-xs font-medium text-indigo-600 hover:text-indigo-800"
+            >
+              + Add responsibility
+            </button>
+          </div>
 
-          {/* Qualifications (AI-generated, editable) */}
-          {form.qualifications.length > 0 && (
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">
-                Qualifications
-              </label>
-              <ul className="space-y-1.5">
-                {form.qualifications.map((item, idx) => (
-                  <li key={idx} className="flex items-start gap-2 group">
-                    <span className="text-emerald-400 mt-0.5 text-sm">✓</span>
-                    <span className="flex-1 text-sm text-slate-700">{item}</span>
-                    <button
-                      type="button"
-                      onClick={() => removeQualification(idx)}
-                      className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-red-500 transition-all"
-                    >
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
+          {/* Qualifications (AI-generated, inline-editable) */}
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">
+              Qualifications
+            </label>
+            <ul className="space-y-1.5">
+              {form.qualifications.map((item, idx) => (
+                <li key={idx} className="flex items-start gap-2 group">
+                  <span className="text-emerald-400 mt-2 text-sm">✓</span>
+                  <textarea
+                    value={item}
+                    onChange={(e) =>
+                      updateBullet("qualifications", idx, e.target.value)
+                    }
+                    rows={1}
+                    placeholder="Describe a qualification…"
+                    className="flex-1 px-2 py-1 rounded border border-transparent hover:border-slate-200 focus:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-500/40 text-sm text-slate-700 resize-y"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removeQualification(idx)}
+                    className="mt-1.5 opacity-0 group-hover:opacity-100 text-slate-400 hover:text-red-500 transition-all"
+                    aria-label="Remove qualification"
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </li>
+              ))}
+            </ul>
+            <button
+              type="button"
+              onClick={() => addBullet("qualifications")}
+              className="mt-2 text-xs font-medium text-indigo-600 hover:text-indigo-800"
+            >
+              + Add qualification
+            </button>
+          </div>
 
           {/* Description */}
           <div>
