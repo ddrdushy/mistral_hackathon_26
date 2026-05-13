@@ -101,6 +101,18 @@ export default function TalentBankPage() {
   const [bulkResult, setBulkResult] = useState<string | null>(null);
   const [enrollOpen, setEnrollOpen] = useState(false);
 
+  // Inline resume-text viewer + per-card "re-extract" busy state.
+  const [resumeView, setResumeView] = useState<{
+    candidate_id: number;
+    name: string;
+    filename: string;
+    cv_version: number;
+    resume_text: string;
+    resume_blob_available: boolean;
+    loading: boolean;
+  } | null>(null);
+  const [reExtractingId, setReExtractingId] = useState<number | null>(null);
+
   const fetchTags = useCallback(async () => {
     try {
       const res = await apiGet<{ tags: TenantTag[] }>("/tags");
@@ -192,6 +204,67 @@ export default function TalentBankPage() {
   const addTagToCandidate = async (candidateId: number, tagId: number) => {
     await apiPost(`/candidates/${candidateId}/tags`, { tag_ids: [tagId] });
     setRefreshKey((n) => n + 1);
+  };
+
+  const openResumeView = async (c: TalentBankCandidate) => {
+    setResumeView({
+      candidate_id: c.id,
+      name: c.name,
+      filename: c.resume_filename || "",
+      cv_version: c.cv_version || 1,
+      resume_text: "",
+      resume_blob_available: !!c.resume_blob_available,
+      loading: true,
+    });
+    try {
+      const res = await apiGet<{
+        resume_text: string;
+        filename: string;
+        cv_version: number;
+        resume_blob_available: boolean;
+      }>(`/candidates/${c.id}/resume/text`);
+      setResumeView((cur) =>
+        cur && cur.candidate_id === c.id
+          ? {
+              ...cur,
+              resume_text: res.resume_text || "",
+              filename: res.filename || cur.filename,
+              cv_version: res.cv_version || cur.cv_version,
+              resume_blob_available: !!res.resume_blob_available,
+              loading: false,
+            }
+          : cur,
+      );
+    } catch (err) {
+      setResumeView((cur) =>
+        cur && cur.candidate_id === c.id
+          ? {
+              ...cur,
+              resume_text:
+                err instanceof Error
+                  ? `Failed to load: ${err.message}`
+                  : "Failed to load resume.",
+              loading: false,
+            }
+          : cur,
+      );
+    }
+  };
+
+  const reExtractProfile = async (candidateId: number) => {
+    setReExtractingId(candidateId);
+    try {
+      await apiPost(`/candidates/${candidateId}/re-extract`);
+      setRefreshKey((n) => n + 1);
+    } catch (err) {
+      alert(
+        err instanceof Error
+          ? err.message
+          : "Re-extraction failed. Try again in a moment.",
+      );
+    } finally {
+      setReExtractingId(null);
+    }
   };
 
   const totalProfiled = items.filter((c) => c.profile?.extracted_at).length;
@@ -485,10 +558,24 @@ export default function TalentBankPage() {
                               {!c.profile?.extracted_at && (
                                 <span
                                   className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-50 text-amber-700"
-                                  title="The AI hasn't finished extracting the role / skills / summary for this CV yet. This usually happens within a minute of upload; refresh to check."
+                                  title="The AI hasn't extracted the role / skills / summary for this CV yet. Click Re-extract to retry."
                                 >
                                   ⏳ Profile pending
                                 </span>
+                              )}
+                              {!c.profile?.extracted_at && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    void reExtractProfile(c.id);
+                                  }}
+                                  disabled={reExtractingId === c.id}
+                                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 hover:bg-indigo-100 disabled:opacity-60"
+                                  title="Re-run AI extraction for this resume"
+                                >
+                                  {reExtractingId === c.id ? "Re-extracting…" : "↻ Re-extract"}
+                                </button>
                               )}
                             </div>
                           </div>
@@ -569,6 +656,19 @@ export default function TalentBankPage() {
                         )}
 
                         <div className="mt-3 flex items-center gap-2 text-[11px] text-slate-500">
+                          {c.resume_filename && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void openResumeView(c);
+                              }}
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-slate-100 text-slate-700 hover:bg-slate-200 font-medium"
+                              title="Preview the extracted resume text"
+                            >
+                              👁 View
+                            </button>
+                          )}
                           {c.resume_blob_available && (
                             <a
                               href={apiUrl(`/candidates/${c.id}/resume/file`)}
@@ -620,6 +720,55 @@ export default function TalentBankPage() {
             setRefreshKey((n) => n + 1);
           }}
         />
+      )}
+
+      {resumeView && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/50 px-4"
+          onClick={() => setResumeView(null)}
+        >
+          <div
+            className="bg-white rounded-xl shadow-xl border border-slate-200 w-full max-w-3xl max-h-[85vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-6 py-3 border-b border-slate-200 flex items-center gap-3">
+              <div className="flex-1 min-w-0">
+                <h2 className="text-base font-semibold text-slate-900 truncate">
+                  {resumeView.name}
+                </h2>
+                <p className="text-xs text-slate-500 truncate">
+                  {resumeView.filename || "(no filename)"}
+                  {resumeView.cv_version > 1 ? ` · v${resumeView.cv_version}` : ""}
+                </p>
+              </div>
+              {resumeView.resume_blob_available && (
+                <a
+                  href={apiUrl(`/candidates/${resumeView.candidate_id}/resume/file`)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 px-3 py-1 rounded-md bg-indigo-50 text-indigo-700 hover:bg-indigo-100 text-xs font-medium"
+                >
+                  ⤓ Download original
+                </a>
+              )}
+              <button
+                onClick={() => setResumeView(null)}
+                className="text-slate-500 hover:text-slate-800 text-xl leading-none"
+              >
+                ✕
+              </button>
+            </div>
+            {resumeView.loading ? (
+              <div className="px-6 py-12 text-center text-sm text-slate-500">
+                Loading resume…
+              </div>
+            ) : (
+              <pre className="px-6 py-4 overflow-y-auto whitespace-pre-wrap text-xs font-mono text-slate-800 flex-1">
+                {resumeView.resume_text || "(no extracted text)"}
+              </pre>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );

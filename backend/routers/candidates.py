@@ -1160,6 +1160,100 @@ async def list_cv_versions(
     return {"versions": out}
 
 
+@router.post("/{candidate_id}/re-extract")
+async def re_extract_profile(
+    candidate_id: int,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(current_session),
+):
+    """Re-run LLM profile extraction for a candidate.
+
+    Surfaces in the talent-bank UI when ``profile_extracted_at`` is null
+    (e.g. the original upload's LLM call failed or the tenant's plan
+    didn't include the agent yet). Runs ``extract_profile`` against the
+    current ``resume_text`` and applies the result.
+
+    Returns the refreshed candidate row so the card re-renders with the
+    new role/skills/summary without a page reload.
+    """
+    c = db.query(Candidate).filter(
+        Candidate.id == candidate_id,
+        Candidate.tenant_id == session.tenant.id,
+    ).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+    if not (c.resume_text or "").strip():
+        raise HTTPException(
+            status_code=400,
+            detail="No resume text to extract from — re-upload the CV first.",
+        )
+    if not is_agent_allowed(session.tenant, "profile_extractor"):
+        raise HTTPException(
+            status_code=402,
+            detail=(
+                "Profile extraction isn't included in the current plan — "
+                "upgrade to Starter or Pro to enable AI tagging."
+            ),
+        )
+
+    from agents.profile_extractor import extract_profile
+    from services.workflow_service import _apply_profile
+    try:
+        prof = await extract_profile(c.resume_text)
+    except Exception as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"LLM extraction failed: {e}. Try again in a moment.",
+        )
+    _apply_profile(db, c, prof)
+    db.refresh(c)
+
+    # Also backfill contact fields ONLY when they're currently placeholders
+    # — don't overwrite anything HR has edited or that we got at upload time.
+    if prof.name and not (c.name or "").strip():
+        c.name = prof.name[:200]
+    if prof.email and (
+        not (c.email or "").strip() or "@uploaded.local" in (c.email or "")
+    ):
+        c.email = prof.email[:200]
+    if prof.phone and not (c.phone or "").strip():
+        c.phone = prof.phone[:40]
+    db.commit()
+    db.refresh(c)
+
+    return {
+        "candidate": _candidate_to_response(c, db=db),
+        "ok": True,
+    }
+
+
+@router.get("/{candidate_id}/resume/text")
+async def get_candidate_resume_text(
+    candidate_id: int,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(current_session),
+):
+    """Return the extracted text of the candidate's current CV.
+
+    Powers the "View" modal on the talent-bank card — recruiters often
+    want a quick text scan without opening the PDF in a new tab.
+    """
+    c = db.query(Candidate).filter(
+        Candidate.id == candidate_id,
+        Candidate.tenant_id == session.tenant.id,
+    ).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+    return {
+        "candidate_id": c.id,
+        "name": c.name,
+        "filename": c.resume_filename or "",
+        "cv_version": c.cv_version or 1,
+        "resume_text": c.resume_text or "",
+        "resume_blob_available": bool((c.resume_blob_path or "").strip()),
+    }
+
+
 @router.get("/{candidate_id}/resume/file")
 async def download_candidate_resume(
     candidate_id: int,
