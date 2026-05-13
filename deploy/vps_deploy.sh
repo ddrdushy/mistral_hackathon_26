@@ -92,10 +92,27 @@ fi
 # the live unit (the only host this would ever match), correct it back
 # to 8001 and reload. Safe no-op on every other host/unit.
 LIVE_UNIT=/etc/systemd/system/hireops-backend.service
+RELOAD_UNIT=0
 if [ -f "${LIVE_UNIT}" ] && grep -q -- '--port 8017' "${LIVE_UNIT}"; then
   sed -i 's/--port 8017/--port 8001/' "${LIVE_UNIT}"
-  systemctl daemon-reload
+  RELOAD_UNIT=1
   echo "  patched live unit port 8017 -> 8001"
+fi
+
+# The repo unit assumes a 'hireops' system user, but this host runs the
+# service as root (and the previous good unit had no User=/Group= at
+# all). If a User=hireops line ended up in the live unit and no such
+# user exists, comment those lines out so the service falls back to
+# root and matches the pre-overwrite behavior. Safe no-op elsewhere.
+if [ -f "${LIVE_UNIT}" ] && grep -q '^User=hireops' "${LIVE_UNIT}" && ! id -u hireops >/dev/null 2>&1; then
+  sed -i 's/^User=hireops$/#&/' "${LIVE_UNIT}"
+  sed -i 's/^Group=hireops$/#&/' "${LIVE_UNIT}"
+  RELOAD_UNIT=1
+  echo "  commented out User=hireops / Group=hireops (no such user on host)"
+fi
+
+if [ "${RELOAD_UNIT}" = "1" ]; then
+  systemctl daemon-reload
 fi
 
 echo "=== 7/7  restart services (only hireops) ==="
