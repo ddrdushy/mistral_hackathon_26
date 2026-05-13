@@ -20,7 +20,7 @@ import {
   scoreBg,
   timeAgo,
 } from "@/lib/constants";
-import type { Application, InterviewLink, HiringReport } from "@/types/index";
+import type { Application, Candidate, InterviewLink, HiringReport } from "@/types/index";
 import ScoreGauge from "@/components/viz/ScoreGauge";
 import RadialMeter from "@/components/viz/RadialMeter";
 import RoundBars from "@/components/viz/RoundBars";
@@ -108,6 +108,11 @@ export default function CandidateDetailPage({
   const isOwner = me?.user?.role === "owner";
 
   const [app, setApp] = useState<Application | null>(null);
+  // Candidate is loaded independently so we can still render a useful
+  // page (with name/email/CV download/Match-to-job CTA) when the
+  // candidate exists but has no Application yet — the common case for
+  // anyone uploaded directly to the talent bank.
+  const [candidate, setCandidate] = useState<Candidate | null>(null);
 
   // Application id resolved after fetch. Used by every action handler
   // below — keeps us from accidentally routing /applications/{candidate_id}
@@ -147,12 +152,21 @@ export default function CandidateDetailPage({
       setLoading(true);
       setError(null);
 
-      // The URL is /candidates/{id} where {id} is the CANDIDATE id, not
-      // an application id — but historically this page was hitting
-      // /applications/{id} which only worked when the two ids happened
-      // to line up. Fix: look up the candidate's most recent app first;
-      // fall back to the legacy app-id path so any deep-links from old
-      // emails still resolve.
+      // The URL is /candidates/{id} (CANDIDATE id). Step 1: load the
+      // candidate so we always have name/email/CV to render — even when
+      // the candidate has no Application yet (talent-bank-only). Step 2:
+      // look up the candidate's most recent application via the new
+      // ?candidate_id= filter. Step 3: fall back to /applications/{id}
+      // so legacy email deep-links (where {id} was actually an app id)
+      // still resolve.
+      let cand: Candidate | null = null;
+      try {
+        cand = await apiGet<Candidate>(`/candidates/${id}`);
+      } catch {
+        // candidate fetch can fail for old app-id deep-links; ignore
+      }
+      setCandidate(cand);
+
       let data: Application | null = null;
       try {
         const list = await apiGet<{ applications: Application[] }>(
@@ -168,22 +182,31 @@ export default function CandidateDetailPage({
           data = list.applications[0];
         }
       } catch {
-        // fall through to legacy app-id lookup
+        // fall through
       }
-      if (!data) {
-        // Either no app for this candidate yet, or the URL really IS an
-        // app id (old deep-link). Try the legacy path.
-        data = await apiGet<Application>(`/applications/${id}`);
+      if (!data && !cand) {
+        // Neither a candidate nor an app id — legacy deep-link path.
+        try {
+          data = await apiGet<Application>(`/applications/${id}`);
+        } catch {
+          // surface as 404 below
+        }
       }
+      // It's OK for data to be null when cand is set — we render a
+      // candidate-only view in that case.
       setApp(data);
+
+      if (!data && !cand) {
+        throw new Error("Candidate not found");
+      }
 
       // Fetch existing interview links if link status exists. Use the
       // app id we just resolved, NOT the URL id, since /screening/{id}/links
-      // also expects an application id.
-      const appId = data.id;
-      if (data.interview_link_status && !["expired"].includes(data.interview_link_status)) {
+      // also expects an application id. Skipped entirely in the no-app
+      // (talent-bank-only) flow.
+      if (data && data.interview_link_status && !["expired"].includes(data.interview_link_status)) {
         try {
-          const links = await apiGet<{ links: InterviewLink[] }>(`/screening/${appId}/links`);
+          const links = await apiGet<{ links: InterviewLink[] }>(`/screening/${data.id}/links`);
           if (links.links && links.links.length > 0) {
             // Get the most recent active link
             const activeLink = links.links.find(
@@ -395,6 +418,105 @@ export default function CandidateDetailPage({
     );
   }
 
+  // ── No application yet (candidate-only view) ───────────────────────────
+  // Talent-bank uploads exist as Candidate rows with zero Applications.
+  // Render their profile + CV download + a "Match to a job" CTA so the
+  // page is useful instead of dead-ending HR with "Application not found".
+
+  if (!app && candidate) {
+    const missing: string[] = [];
+    if (candidate.email_missing) missing.push("email");
+    if (candidate.phone_missing) missing.push("phone");
+    return (
+      <div className="space-y-5">
+        <Link
+          href="/candidates"
+          className="inline-flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700 transition-colors"
+        >
+          <ArrowLeftIcon className="h-4 w-4" />
+          Back to Candidates
+        </Link>
+
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+          <div className="flex items-start justify-between gap-4 flex-wrap">
+            <div>
+              <h1 className="text-2xl font-bold text-slate-900">
+                {candidate.name || "Untitled candidate"}
+              </h1>
+              <p className="text-sm text-slate-500 mt-1">
+                {!candidate.email_missing && candidate.email}
+                {!candidate.email_missing && candidate.phone && " · "}
+                {candidate.phone}
+              </p>
+              {missing.length > 0 && (
+                <span className="inline-flex items-center gap-1 mt-2 px-2 py-0.5 rounded-md text-[11px] font-medium bg-rose-50 text-rose-700 border border-rose-200">
+                  ⚠ Missing {missing.join(" + ")}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              {candidate.resume_blob_available && (
+                <a
+                  href={apiUrl(`/candidates/${candidate.id}/resume/file`)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
+                >
+                  ⤓ Download CV
+                </a>
+              )}
+            </div>
+          </div>
+
+          {candidate.profile?.summary && (
+            <p className="mt-4 text-sm text-slate-600 leading-relaxed">
+              {candidate.profile.summary}
+            </p>
+          )}
+          {candidate.profile?.skills && candidate.profile.skills.length > 0 && (
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              {candidate.profile.skills.slice(0, 12).map((sk: string) => (
+                <span
+                  key={sk}
+                  className="text-[11px] px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-200"
+                >
+                  {sk}
+                </span>
+              ))}
+            </div>
+          )}
+
+          <div className="mt-6 rounded-lg border border-indigo-200 bg-indigo-50/60 p-4">
+            <h2 className="text-sm font-semibold text-indigo-900">
+              No application yet
+            </h2>
+            <p className="text-xs text-indigo-800 mt-1 leading-relaxed">
+              This candidate sits in your talent bank — they haven&apos;t been
+              matched to an open job, so there&apos;s no scoring, interview,
+              or pipeline data to show yet. Open a job and use
+              <span className="font-semibold"> From your talent bank</span> to
+              surface this candidate, or pick a job to attach them to.
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Link
+                href="/jobs"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold bg-indigo-600 text-white hover:bg-indigo-700"
+              >
+                Browse jobs
+              </Link>
+              <Link
+                href="/talent-bank"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-white text-slate-700 border border-slate-300 hover:bg-slate-50"
+              >
+                Back to talent bank
+              </Link>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   // ── Error State ──────────────────────────────────────────────────────────
 
   if (error || !app) {
@@ -414,7 +536,7 @@ export default function CandidateDetailPage({
               Failed to load candidate
             </p>
             <p className="text-sm text-slate-500 mt-1">
-              {error || "Application not found."}
+              {error || "Candidate not found."}
             </p>
             <Button
               variant="secondary"

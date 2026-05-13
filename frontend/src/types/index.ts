@@ -334,6 +334,15 @@ export interface Candidate {
   resume_filename: string;
   resume_blob_available?: boolean;
   cv_version?: number;
+  profile?: {
+    role?: string;
+    seniority?: string;
+    years_experience?: number | null;
+    summary?: string;
+    skills?: string[];
+    key_points?: string[];
+    extracted_at?: string | null;
+  };
   source_email_id: number | null;
   notes: string;
   talent_bank_status?: TalentBankStatus;
