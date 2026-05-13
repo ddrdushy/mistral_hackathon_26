@@ -76,12 +76,28 @@ function TalentBankSuggestions({ jobId }: { jobId: string }) {
   const [reachOutSummary, setReachOutSummary] =
     useState<{ total: number; emailOk: number; whatsOk: number; failures: string[] } | null>(null);
 
+  // User-controlled match strictness. Persisted to localStorage so a
+  // recruiter's preferred threshold survives a page reload — but per
+  // browser, not per job, since "how strict" is a recruiter preference.
+  const [minScore, setMinScore] = useState<number>(() => {
+    if (typeof window === "undefined") return 35;
+    const v = parseInt(window.localStorage.getItem("hireops.match.min_score") || "");
+    return Number.isFinite(v) && v >= 0 && v <= 100 ? v : 35;
+  });
+  const [minOverlap, setMinOverlap] = useState<number>(() => {
+    if (typeof window === "undefined") return 2;
+    const v = parseInt(window.localStorage.getItem("hireops.match.min_overlap") || "");
+    return v === 1 || v === 2 || v === 3 ? v : 2;
+  });
+
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+    setLoading(true);
+    // Debounce slider changes so we don't fire a request per tick.
+    const t = setTimeout(async () => {
       try {
         const res = await apiGet<TalentBankResponse>(
-          `/jobs/${jobId}/suggested-candidates?limit=10`,
+          `/jobs/${jobId}/suggested-candidates?limit=10&min_score=${minScore}&min_overlap=${minOverlap}`,
         );
         if (!cancelled) setData(res);
       } catch {
@@ -89,11 +105,24 @@ function TalentBankSuggestions({ jobId }: { jobId: string }) {
       } finally {
         if (!cancelled) setLoading(false);
       }
-    })();
+    }, 150);
     return () => {
       cancelled = true;
+      clearTimeout(t);
     };
-  }, [jobId]);
+  }, [jobId, minScore, minOverlap]);
+
+  // Persist threshold prefs.
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem("hireops.match.min_score", String(minScore));
+    }
+  }, [minScore]);
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem("hireops.match.min_overlap", String(minOverlap));
+    }
+  }, [minOverlap]);
 
   const toggle = (id: number) => {
     setSelected((prev) => {
@@ -160,7 +189,10 @@ function TalentBankSuggestions({ jobId }: { jobId: string }) {
     }
   };
 
-  if (loading) {
+  // Full skeleton only on the very first load. Subsequent refetches
+  // (e.g. when the user drags the threshold slider) keep the panel
+  // mounted so the controls don't disappear and the list just dims.
+  if (loading && !data) {
     return (
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 mb-6">
         <div className="h-5 w-48 bg-slate-200 rounded animate-pulse mb-3" />
@@ -217,6 +249,74 @@ function TalentBankSuggestions({ jobId }: { jobId: string }) {
         )}
       </div>
 
+      {/* Threshold controls — let HR loosen or tighten the match filter
+          live. The slider drives min_score; the chip cluster drives the
+          minimum number of skill keywords that must overlap. Both
+          persist in localStorage so a recruiter's preferred strictness
+          carries across reloads. */}
+      <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2.5">
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+          <div className="flex items-center gap-3 flex-1 min-w-[260px]">
+            <label
+              htmlFor="match-threshold"
+              className="text-xs font-medium text-slate-600 whitespace-nowrap"
+              title="Match score floor. 0 = show everything with at least min_overlap skills in common; 60+ = strong matches only."
+            >
+              Min match
+            </label>
+            <input
+              id="match-threshold"
+              type="range"
+              min={0}
+              max={100}
+              step={5}
+              value={minScore}
+              onChange={(e) => setMinScore(parseInt(e.target.value, 10))}
+              className="flex-1 accent-indigo-600"
+            />
+            <span className="text-xs font-mono tabular-nums text-slate-700 w-8 text-right">
+              {minScore}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span
+              className="text-xs font-medium text-slate-600"
+              title="Minimum number of skill keywords that must appear in both the job and the candidate's profile."
+            >
+              Min skill overlap
+            </span>
+            <div className="inline-flex rounded-md border border-slate-300 overflow-hidden text-xs">
+              {[1, 2, 3].map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  onClick={() => setMinOverlap(n)}
+                  className={`px-2.5 py-1 ${
+                    minOverlap === n
+                      ? "bg-indigo-600 text-white"
+                      : "bg-white text-slate-600 hover:bg-slate-50"
+                  }`}
+                >
+                  {n}+
+                </button>
+              ))}
+            </div>
+          </div>
+          {(minScore !== 35 || minOverlap !== 2) && (
+            <button
+              type="button"
+              onClick={() => {
+                setMinScore(35);
+                setMinOverlap(2);
+              }}
+              className="text-xs font-medium text-indigo-600 hover:text-indigo-800"
+            >
+              Reset defaults
+            </button>
+          )}
+        </div>
+      </div>
+
       {reachOutSummary && (
         <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3">
           <div className="text-sm font-semibold text-emerald-900">
@@ -245,12 +345,16 @@ function TalentBankSuggestions({ jobId }: { jobId: string }) {
 
       {empty ? (
         <p className="text-sm text-slate-500">
-          No candidates in the talent bank have profile tags yet — uploads
-          surface here once the AI extractor has tagged them. As resumes come
-          in they&apos;re tagged automatically.
+          {data.total_profiled === 0
+            ? "No candidates in the talent bank have profile tags yet — uploads surface here once the AI extractor has tagged them."
+            : `No candidates match at "min ${minScore} / overlap ${minOverlap}+". Try lowering the threshold or relaxing the minimum skill overlap.`}
         </p>
       ) : (
-        <ul className="divide-y divide-slate-100">
+        <ul
+          className={`divide-y divide-slate-100 transition-opacity ${
+            loading ? "opacity-60" : ""
+          }`}
+        >
           {data.suggestions.map((s) => {
             const reachable = s.reachable !== false;
             const missing: string[] = [];
