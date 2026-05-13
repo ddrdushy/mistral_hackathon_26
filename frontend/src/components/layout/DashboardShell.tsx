@@ -8,6 +8,7 @@ import VerificationBanner from "@/components/auth/VerificationBanner";
 import OrganizationProfileBanner from "@/components/auth/OrganizationProfileBanner";
 import { HelpProvider } from "@/components/help/HelpContext";
 import FloatingHelpButton from "@/components/help/FloatingHelpButton";
+import CommandPalette from "./CommandPalette";
 
 interface DashboardShellProps {
   children: React.ReactNode;
@@ -71,6 +72,11 @@ export default function DashboardShell({ children }: DashboardShellProps) {
             far more discoverable for new users who don't scan the
             top-right corner. */}
         <FloatingHelpButton />
+
+        {/* Global Cmd-K / Ctrl-K command palette — search candidates,
+            navigate, run actions. Mounted once at the shell so it's
+            available on every dashboard route. */}
+        <CommandPalette />
       </div>
     </HelpProvider>
   );

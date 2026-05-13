@@ -112,6 +112,14 @@ export default function TopbarSearch() {
           aria-label="Search candidates"
           className="bg-transparent text-sm text-slate-700 placeholder-slate-400 outline-none w-64"
         />
+        {/* Hint that Cmd-K / Ctrl-K opens the global command palette.
+            Hidden on touch since there's no meta key. */}
+        <kbd
+          className="hidden sm:inline-flex items-center gap-0.5 text-[10px] font-mono text-slate-400 bg-white/80 border border-slate-200 rounded px-1.5 py-0.5"
+          title="Open command palette"
+        >
+          ⌘K
+        </kbd>
       </form>
 
       {open && q.trim().length >= 2 && (
