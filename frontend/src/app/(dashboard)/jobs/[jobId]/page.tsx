@@ -317,31 +317,65 @@ function TalentBankSuggestions({ jobId }: { jobId: string }) {
         </div>
       </div>
 
-      {reachOutSummary && (
-        <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3">
-          <div className="text-sm font-semibold text-emerald-900">
-            Outreach sent to {reachOutSummary.total} candidate
-            {reachOutSummary.total === 1 ? "" : "s"}
+      {reachOutSummary && (() => {
+        // Pick the banner colour off the dominant outcome. All-success
+        // → green. Some failures → amber so it's visually obvious
+        // something needs HR attention. Total failure → rose.
+        const totalSent = reachOutSummary.emailOk + reachOutSummary.whatsOk;
+        const allFailed = totalSent === 0 && reachOutSummary.failures.length > 0;
+        const someFailed = reachOutSummary.failures.length > 0 && !allFailed;
+        const tone = allFailed
+          ? "border-rose-200 bg-rose-50 text-rose-900"
+          : someFailed
+          ? "border-amber-200 bg-amber-50 text-amber-900"
+          : "border-emerald-200 bg-emerald-50 text-emerald-900";
+
+        // If any WhatsApp send failed, hint that Twilio config is the
+        // first place to check — single click straight to settings.
+        const whatsappFailed = reachOutSummary.failures.some((f) =>
+          f.toLowerCase().includes("whatsapp"),
+        );
+
+        return (
+          <div className={`mb-4 rounded-lg border p-3 ${tone}`}>
+            <div className="text-sm font-semibold">
+              {allFailed
+                ? `Outreach failed for all ${reachOutSummary.total} candidate${reachOutSummary.total === 1 ? "" : "s"}`
+                : `Outreach sent to ${reachOutSummary.total} candidate${reachOutSummary.total === 1 ? "" : "s"}`}
+            </div>
+            <div className="text-xs mt-0.5 opacity-90">
+              {reachOutSummary.emailOk} email{reachOutSummary.emailOk === 1 ? "" : "s"} delivered,
+              {" "}{reachOutSummary.whatsOk} WhatsApp{reachOutSummary.whatsOk === 1 ? "" : "s"} delivered.
+              {reachOutSummary.emailOk > 0 && reachOutSummary.whatsOk === 0 && whatsappFailed && (
+                <span className="ml-1">
+                  Email went through on its own — WhatsApp needs attention.
+                </span>
+              )}
+            </div>
+            {whatsappFailed && (
+              <a
+                href="/settings"
+                className="inline-flex items-center gap-1 mt-2 text-xs font-semibold underline underline-offset-2 hover:opacity-80"
+              >
+                Fix Twilio settings →
+              </a>
+            )}
+            {reachOutSummary.failures.length > 0 && (
+              <details className="mt-2 text-xs">
+                <summary className="cursor-pointer font-medium">
+                  {reachOutSummary.failures.length} channel
+                  {reachOutSummary.failures.length === 1 ? "" : "s"} failed — see details
+                </summary>
+                <ul className="mt-1 ml-4 list-disc space-y-0.5">
+                  {reachOutSummary.failures.map((f, i) => (
+                    <li key={i}>{f}</li>
+                  ))}
+                </ul>
+              </details>
+            )}
           </div>
-          <div className="text-xs text-emerald-800 mt-0.5">
-            {reachOutSummary.emailOk} email{reachOutSummary.emailOk === 1 ? "" : "s"} delivered,
-            {" "}{reachOutSummary.whatsOk} WhatsApp{reachOutSummary.whatsOk === 1 ? "" : "s"} delivered.
-          </div>
-          {reachOutSummary.failures.length > 0 && (
-            <details className="mt-2 text-xs text-emerald-900">
-              <summary className="cursor-pointer font-medium">
-                {reachOutSummary.failures.length} channel
-                {reachOutSummary.failures.length === 1 ? "" : "s"} failed
-              </summary>
-              <ul className="mt-1 ml-4 list-disc space-y-0.5">
-                {reachOutSummary.failures.map((f, i) => (
-                  <li key={i}>{f}</li>
-                ))}
-              </ul>
-            </details>
-          )}
-        </div>
-      )}
+        );
+      })()}
 
       {empty ? (
         <p className="text-sm text-slate-500">
