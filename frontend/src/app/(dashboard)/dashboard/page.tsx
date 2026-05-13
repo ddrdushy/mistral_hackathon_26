@@ -211,6 +211,33 @@ export default function DashboardPage() {
         </button>
       </div>
 
+      {/* Quick Actions — kept above-the-fold so HR's first reflex
+          (Sync inbox / Create job / View candidates) is one click away
+          instead of buried at the bottom of the dashboard. */}
+      <div data-tour="quick-actions" className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <QuickAction
+          href="/inbox"
+          icon={<InboxIcon className="h-6 w-6" />}
+          iconColor="bg-amber-50 text-amber-600"
+          title="Sync Inbox"
+          description="Process new emails and identify candidate applications."
+        />
+        <QuickAction
+          href="/jobs/new"
+          icon={<PlusCircleIcon className="h-6 w-6" />}
+          iconColor="bg-blue-50 text-blue-600"
+          title="Create Job"
+          description="Post a new job opening and start receiving applications."
+        />
+        <QuickAction
+          href="/candidates"
+          icon={<UserGroupIcon className="h-6 w-6" />}
+          iconColor="bg-purple-50 text-purple-600"
+          title="View Candidates"
+          description="Browse and manage all candidates in the pipeline."
+        />
+      </div>
+
       {/* Row 1: KPI cards */}
       <div data-tour="kpi-cards" className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <MetricCard
@@ -609,30 +636,6 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Row 5: Quick Actions */}
-      <div data-tour="quick-actions" className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <QuickAction
-          href="/inbox"
-          icon={<InboxIcon className="h-6 w-6" />}
-          iconColor="bg-amber-50 text-amber-600"
-          title="Sync Inbox"
-          description="Process new emails and identify candidate applications."
-        />
-        <QuickAction
-          href="/jobs/new"
-          icon={<PlusCircleIcon className="h-6 w-6" />}
-          iconColor="bg-blue-50 text-blue-600"
-          title="Create Job"
-          description="Post a new job opening and start receiving applications."
-        />
-        <QuickAction
-          href="/candidates"
-          icon={<UserGroupIcon className="h-6 w-6" />}
-          iconColor="bg-purple-50 text-purple-600"
-          title="View Candidates"
-          description="Browse and manage all candidates in the pipeline."
-        />
-      </div>
     </div>
   );
 }
