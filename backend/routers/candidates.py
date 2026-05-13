@@ -1,8 +1,42 @@
 """Candidate management endpoints."""
 from typing import Optional
 import json
+import re
 from datetime import datetime
+from urllib.parse import quote
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+
+# Hard cap on the original-binary uploads we persist. A real CV PDF is
+# under 5 MB; 15 MB is generous and stops a tenant from filling the
+# disk or OOM-ing the worker with a single request.
+MAX_RESUME_BYTES = 15 * 1024 * 1024
+
+
+def _check_size(file_bytes: bytes) -> None:
+    if len(file_bytes) > MAX_RESUME_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large — limit is {MAX_RESUME_BYTES // (1024 * 1024)} MB per resume.",
+        )
+
+
+_FILENAME_SAFE = re.compile(r"[^A-Za-z0-9._\- ]+")
+
+
+def _content_disposition(filename: str, *, inline: bool) -> str:
+    """Build a safe Content-Disposition header value.
+
+    Strips control chars from the ASCII fallback and also emits the
+    RFC 5987 ``filename*`` form so non-ASCII names (e.g. CVs with
+    accented characters) survive without breaking the header.
+    """
+    base = (filename or "resume").replace("\\", "/").split("/")[-1]
+    ascii_name = _FILENAME_SAFE.sub("_", base).strip("._ ") or "resume"
+    if len(ascii_name) > 120:
+        ascii_name = ascii_name[:120]
+    encoded = quote(base, safe="")
+    disp = "inline" if inline else "attachment"
+    return f"{disp}; filename=\"{ascii_name}\"; filename*=UTF-8''{encoded}"
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from database import get_db
@@ -356,6 +390,7 @@ async def upload_candidate(
     file_bytes = await file.read()
     if not file_bytes:
         raise HTTPException(status_code=400, detail="Empty file")
+    _check_size(file_bytes)
 
     filename = file.filename or "resume.pdf"
     if not filename.lower().endswith((".pdf", ".docx", ".doc", ".txt", ".tex")):
@@ -536,6 +571,10 @@ async def upload_candidates_bulk(
             file_bytes = await f.read()
             if not file_bytes:
                 raise ValueError("empty file")
+            if len(file_bytes) > MAX_RESUME_BYTES:
+                raise ValueError(
+                    f"file too large (limit {MAX_RESUME_BYTES // (1024 * 1024)} MB)"
+                )
             fname = f.filename or "resume.pdf"
             if not fname.lower().endswith((".pdf", ".docx", ".doc", ".txt", ".tex")):
                 raise ValueError("unsupported file type")
@@ -643,6 +682,9 @@ async def upload_resume(
         raise HTTPException(status_code=404, detail="Candidate not found")
 
     file_bytes = await file.read()
+    if not file_bytes:
+        raise HTTPException(status_code=400, detail="Empty file")
+    _check_size(file_bytes)
     fname = file.filename or "resume.pdf"
     text = extract_resume_text(fname, file_bytes=file_bytes)
 
@@ -919,11 +961,34 @@ async def delete_candidate(
             ),
         )
 
+    # Collect blob paths BEFORE we delete the row (and let cascades wipe
+    # the archived versions). Disk cleanup happens after the DB commit
+    # so a transient FS error doesn't roll back the delete.
+    blob_paths: list[str] = []
+    if (c.resume_blob_path or "").strip():
+        blob_paths.append(c.resume_blob_path)
+    for v in db.query(CandidateCvVersion).filter(
+        CandidateCvVersion.candidate_id == c.id,
+        CandidateCvVersion.blob_path.isnot(None),
+        CandidateCvVersion.blob_path != "",
+    ).all():
+        blob_paths.append(v.blob_path)
+
     # CV version snapshots, tags, communications cascade where the FK
     # is ON DELETE CASCADE; the rest fail-loud here so we know if a
     # downstream reference is unhandled.
     db.delete(c)
     db.commit()
+
+    # Best-effort: drop the on-disk originals. Per-path delete uses
+    # _resolve_relative so a bad row in the DB can't take us outside
+    # the upload root.
+    for p in blob_paths:
+        try:
+            delete_resume_blob(p)
+        except Exception:
+            pass
+
     return {"ok": True, "deleted_id": candidate_id}
 
 
@@ -1004,12 +1069,18 @@ async def download_candidate_resume(
         raise HTTPException(status_code=404, detail="Resume file missing on disk")
     fname = c.resume_filename or "resume.pdf"
     mt, _ = mimetypes.guess_type(fname)
+    is_pdf = (mt == "application/pdf")
     return Response(
         content=data,
         media_type=mt or "application/octet-stream",
         headers={
-            "Content-Disposition": f'inline; filename="{fname}"',
+            # Only PDFs render inline (Chrome's sandboxed viewer); every
+            # other type is forced to download so a malicious .txt /
+            # .docx can't render in the browser's main frame.
+            "Content-Disposition": _content_disposition(fname, inline=is_pdf),
             "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+            "Referrer-Policy": "no-referrer",
         },
     )
 
@@ -1044,12 +1115,15 @@ async def download_cv_version_file(
         raise HTTPException(status_code=404, detail="Archived file missing on disk")
     fname = v.filename or "resume.pdf"
     mt, _ = mimetypes.guess_type(fname)
+    is_pdf = (mt == "application/pdf")
     return Response(
         content=data,
         media_type=mt or "application/octet-stream",
         headers={
-            "Content-Disposition": f'inline; filename="{fname}"',
+            "Content-Disposition": _content_disposition(fname, inline=is_pdf),
             "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+            "Referrer-Policy": "no-referrer",
         },
     )
 
