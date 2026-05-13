@@ -29,6 +29,17 @@ interface InterviewData {
   company_name: string;
   elevenlabs_agent_id: string;
   screening_questions: string[];
+  /** HR-curated interview questions configured on the job. When present
+   * these are what the voice agent must ask — verbatim — instead of
+   * paraphrasing the auto-generated screening_questions. */
+  custom_questions?: Array<{
+    id: number;
+    text: string;
+    type?: string;
+    weight?: number;
+    is_required?: boolean;
+    expected_keywords?: string[];
+  }>;
   is_valid: boolean;
   error: string | null;
   scheduled_at: string | null;
@@ -293,9 +304,25 @@ export default function InterviewPage({
     }
 
     try {
-      // Format screening questions as numbered list for the agent
-      const questionsText = (interviewData.screening_questions || [])
+      // Prefer HR-curated questions when the job has them — those are
+      // what the recruiter actually wants asked verbatim. Fall back to
+      // the resume-score-generated screening_questions when no custom
+      // list exists (e.g. a Free-plan tenant that hasn't curated yet).
+      // Either way, format as a numbered list so the agent surfaces
+      // them in order.
+      const curated = interviewData.custom_questions || [];
+      const sourceList =
+        curated.length > 0
+          ? curated.map((q) => q.text)
+          : interviewData.screening_questions || [];
+      const questionsText = sourceList
         .map((q, i) => `${i + 1}. ${q}`)
+        .join("\n");
+      // Required questions get a separate variable so the agent's prompt
+      // can prioritise them. Empty string when none.
+      const requiredText = curated
+        .filter((q) => q.is_required)
+        .map((q, i) => `${i + 1}. ${q.text}`)
         .join("\n");
 
       // Detect candidate timezone
@@ -309,7 +336,12 @@ export default function InterviewPage({
           job_title: interviewData.job_title,
           job_id: interviewData.job_code,
           company_name: interviewData.company_name,
+          // `screening_questions` is the variable the ElevenLabs agent
+          // is already wired to read — we keep that name so the agent
+          // prompt doesn't need an update, but the content now comes
+          // from the curated list first.
           screening_questions: questionsText,
+          required_questions: requiredText,
           language: "English",
           timezone: timezone,
         },
