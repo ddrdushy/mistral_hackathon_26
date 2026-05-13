@@ -31,6 +31,7 @@ interface TalentBankCandidate {
   id: number;
   name: string;
   email: string;
+  email_missing?: boolean;
   phone: string;
   resume_filename: string;
   resume_blob_available?: boolean;
@@ -554,6 +555,20 @@ export default function TalentBankPage() {
                                 <span className="inline-flex items-center gap-1 text-slate-500">
                                   ☎ {c.phone}
                                 </span>
+                              )}
+                              {c.email_missing ? (
+                                <span
+                                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-rose-50 text-rose-700 border border-rose-200"
+                                  title="No email found on this CV. Open the candidate to add one — interview invites, offers, and outreach all need a real email address."
+                                >
+                                  ⚠ No email
+                                </span>
+                              ) : (
+                                c.email && (
+                                  <span className="inline-flex items-center gap-1 text-slate-500 truncate max-w-[180px]" title={c.email}>
+                                    ✉ {c.email}
+                                  </span>
+                                )
                               )}
                               {!c.profile?.extracted_at && (
                                 <span

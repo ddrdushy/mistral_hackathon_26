@@ -466,7 +466,12 @@ async def reach_out_to_candidates(
         }
 
         # ── Email ────────────────────────────────────────────────────────
-        if "email" in channels_wanted and cand.email:
+        # Skip the legacy @uploaded.local placeholders too — those used to
+        # be synthesised when a CV came in without an email; sending to
+        # them would just error at SMTP.
+        cand_email = (cand.email or "").strip()
+        has_real_email = bool(cand_email) and not cand_email.lower().endswith("@uploaded.local")
+        if "email" in channels_wanted and has_real_email:
             subject = f"Re: {job.title} at {company}"
             body_html = (
                 f"<div style='font-family:Arial,sans-serif;max-width:560px;"

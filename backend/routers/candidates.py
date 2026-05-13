@@ -77,10 +77,16 @@ def _candidate_to_response(c: Candidate, db: Optional[Session] = None) -> dict:
         ).filter(CandidateTag.candidate_id == c.id).all()
         tags = [{"id": t.id, "name": t.name, "color": t.color or "indigo"} for t in rows]
 
+    email_str = (c.email or "").strip()
+    email_is_placeholder = email_str.lower().endswith("@uploaded.local")
     return {
         "id": c.id,
         "name": c.name,
-        "email": c.email,
+        # Surface the email as empty when it's a legacy placeholder so the
+        # UI's "missing email" treatment fires consistently across new
+        # uploads (now empty) and older rows (still on @uploaded.local).
+        "email": "" if email_is_placeholder else c.email,
+        "email_missing": (not email_str) or email_is_placeholder,
         "phone": c.phone,
         "resume_text": c.resume_text,
         "resume_filename": c.resume_filename,
@@ -510,14 +516,16 @@ async def upload_candidate(
     final_phone = (phone or contact.get("phone") or "").strip()
 
     if not final_name:
-        # Last resort — derive a placeholder so the row is usable. HR can
-        # rename in the UI.
+        # Last resort — derive a placeholder name so the row is usable.
+        # HR can rename in the UI.
         final_name = (filename.rsplit(".", 1)[0] or "Untitled candidate")[:80]
+    # Email is left empty when neither the form nor the resume provided
+    # one. The UI flags missing-email candidates so HR knows they can't
+    # be emailed until a real address is added; all outbound senders
+    # (`/applications/{id}/send-interview-invite`, offer, generic email)
+    # check for a non-empty email and refuse to send.
     if not final_email:
-        # Email is "nullable but expected" everywhere downstream; placeholder
-        # keeps queries safe and surfaces in the UI as "no email" so HR can
-        # fill it in.
-        final_email = f"unknown+{int(datetime.utcnow().timestamp())}@uploaded.local"
+        final_email = ""
 
     # Strict same-person dedup: name + (email or phone) must match
     # with no contradictions. Email alone isn't enough — multiple
@@ -686,7 +694,6 @@ async def upload_candidates_bulk(
             contact, llm_profile = await _extract_contact_and_profile(
                 resume_text, session.tenant
             )
-            placeholder_email = f"unknown+{int(datetime.utcnow().timestamp())}-{successes}@uploaded.local"
             parsed_email = (contact.get("email") or "").strip()
             parsed_name = (contact.get("name") or fname.rsplit(".", 1)[0])[:80]
             parsed_phone = (contact.get("phone") or "").strip()
@@ -717,7 +724,9 @@ async def upload_candidates_bulk(
                 candidate = Candidate(
                     tenant_id=session.tenant.id,
                     name=(contact.get("name") or fname.rsplit(".", 1)[0])[:80],
-                    email=(parsed_email or placeholder_email),
+                    # Empty email when neither LLM nor regex found one
+                    # — UI flags this so HR can add it before sending.
+                    email=parsed_email,
                     phone=contact.get("phone", ""),
                     resume_text=resume_text,
                     resume_filename=fname,

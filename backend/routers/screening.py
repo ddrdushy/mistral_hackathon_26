@@ -27,6 +27,21 @@ from agents.qa_interview import (
 from auth.dependencies import current_session, CurrentSession
 from billing.plans import check_quota, gate_agent
 
+
+def _has_real_email(candidate) -> bool:
+    """True when the candidate has a deliverable email address.
+
+    Empty string and legacy ``@uploaded.local`` placeholders (from when
+    we synthesised emails for resumes without one) both return False —
+    sending to either would either error at SMTP or land nowhere.
+    """
+    email = (getattr(candidate, "email", None) or "").strip().lower()
+    if not email:
+        return False
+    if email.endswith("@uploaded.local"):
+        return False
+    return True
+
 router = APIRouter(prefix="/api/v1/screening", tags=["screening"])
 
 WEBHOOK_SECRET = os.getenv("ELEVENLABS_WEBHOOK_SECRET", "")
@@ -379,8 +394,14 @@ async def send_interview_link(body: dict, db: Session = Depends(get_db), session
     candidate = db.query(Candidate).filter(Candidate.id == app.candidate_id).first()
     job = db.query(Job).filter(Job.id == app.job_id).first()
 
-    if not candidate or not candidate.email:
-        raise HTTPException(status_code=400, detail="Candidate email not found")
+    if not candidate or not _has_real_email(candidate):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Candidate has no email on file — open the candidate, add a real "
+                "email address, then try again."
+            ),
+        )
 
     base_url = os.getenv("FRONTEND_URL", "").rstrip("/")
     interview_url = f"{base_url}/interview/{token}"
@@ -684,8 +705,14 @@ async def send_rejection_email(app_id: int, db: Session = Depends(get_db), sessi
     candidate = db.query(Candidate).filter(Candidate.id == app.candidate_id).first()
     job = db.query(Job).filter(Job.id == app.job_id).first()
 
-    if not candidate or not candidate.email:
-        raise HTTPException(status_code=400, detail="Candidate email not found")
+    if not candidate or not _has_real_email(candidate):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Candidate has no email on file — open the candidate, add a real "
+                "email address, then try again."
+            ),
+        )
 
     company = os.getenv("COMPANY_NAME", "HireOps AI")
 
@@ -714,8 +741,14 @@ async def send_custom_email_endpoint(app_id: int, body: dict, db: Session = Depe
     app = _hr_app(db, app_id, session)
 
     candidate = db.query(Candidate).filter(Candidate.id == app.candidate_id).first()
-    if not candidate or not candidate.email:
-        raise HTTPException(status_code=400, detail="Candidate email not found")
+    if not candidate or not _has_real_email(candidate):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Candidate has no email on file — open the candidate, add a real "
+                "email address, then try again."
+            ),
+        )
 
     subject = body.get("subject", "")
     email_body = body.get("body", "")
@@ -755,8 +788,14 @@ async def book_interview_slot(app_id: int, body: dict, db: Session = Depends(get
     candidate = db.query(Candidate).filter(Candidate.id == app.candidate_id).first()
     job = db.query(Job).filter(Job.id == app.job_id).first()
 
-    if not candidate or not candidate.email:
-        raise HTTPException(status_code=400, detail="Candidate email not found")
+    if not candidate or not _has_real_email(candidate):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Candidate has no email on file — open the candidate, add a real "
+                "email address, then try again."
+            ),
+        )
 
     company = os.getenv("COMPANY_NAME", "HireOps AI")
     base_url = os.getenv("FRONTEND_URL", "").rstrip("/")
@@ -885,8 +924,14 @@ async def send_email_draft(app_id: int, db: Session = Depends(get_db), session: 
     candidate = db.query(Candidate).filter(Candidate.id == app.candidate_id).first()
     job = db.query(Job).filter(Job.id == app.job_id).first()
 
-    if not candidate or not candidate.email:
-        raise HTTPException(status_code=400, detail="Candidate email not found")
+    if not candidate or not _has_real_email(candidate):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Candidate has no email on file — open the candidate, add a real "
+                "email address, then try again."
+            ),
+        )
 
     company = os.getenv("COMPANY_NAME", "HireOps AI")
     decision = score_data.get("decision", "")

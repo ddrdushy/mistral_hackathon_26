@@ -315,6 +315,11 @@ export interface Candidate {
   id: number;
   name: string;
   email: string;
+  /** True when the candidate has no real email — either it was missing
+   * at upload time (LLM/regex couldn't find one) or it's a legacy
+   * @uploaded.local placeholder. UI surfaces a "No email" badge and
+   * outbound sends refuse to fire until HR adds one. */
+  email_missing?: boolean;
   phone: string;
   resume_text: string;
   resume_filename: string;
