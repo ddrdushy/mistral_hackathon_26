@@ -72,8 +72,10 @@ fi
 echo "=== 6.5/7  resume-binary storage dir ==="
 # Direct CV uploads now persist the original file under a per-tenant
 # tree at HIREOPS_UPLOAD_DIR. Ensure the dir exists and is owned by the
-# hireops service user. Also seed the .env var if missing, in case the
-# systemd unit on this host hasn't been refreshed yet.
+# hireops service user; the path is inside the systemd unit's
+# ReadWritePaths sandbox. The env var is sourced via EnvironmentFile=
+# from backend/.env — we never overwrite the live systemd unit here
+# (the repo copy may have diverged from the live one on this host).
 UPLOAD_DIR="/var/lib/hireops/uploads"
 mkdir -p "${UPLOAD_DIR}"
 if id -u hireops >/dev/null 2>&1; then
@@ -85,13 +87,15 @@ if [ -f "${ENV_FILE}" ] && ! grep -q '^HIREOPS_UPLOAD_DIR=' "${ENV_FILE}"; then
   echo "  seeded HIREOPS_UPLOAD_DIR into .env"
 fi
 
-# Re-sync the systemd unit so the new Environment= line lands.
-if [ -f "${APP_DIR}/deploy/hireops-backend.service" ]; then
-  if ! cmp -s "${APP_DIR}/deploy/hireops-backend.service" /etc/systemd/system/hireops-backend.service 2>/dev/null; then
-    cp "${APP_DIR}/deploy/hireops-backend.service" /etc/systemd/system/hireops-backend.service
-    systemctl daemon-reload
-    echo "  refreshed hireops-backend.service unit"
-  fi
+# One-shot fix: a previous deploy iteration accidentally pushed an
+# 8017-port unit over the live 8001-port one. If we still see 8017 in
+# the live unit (the only host this would ever match), correct it back
+# to 8001 and reload. Safe no-op on every other host/unit.
+LIVE_UNIT=/etc/systemd/system/hireops-backend.service
+if [ -f "${LIVE_UNIT}" ] && grep -q -- '--port 8017' "${LIVE_UNIT}"; then
+  sed -i 's/--port 8017/--port 8001/' "${LIVE_UNIT}"
+  systemctl daemon-reload
+  echo "  patched live unit port 8017 -> 8001"
 fi
 
 echo "=== 7/7  restart services (only hireops) ==="

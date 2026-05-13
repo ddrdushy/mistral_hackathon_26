@@ -16,7 +16,7 @@ Environment=HIREOPS_UPLOAD_DIR=/var/lib/hireops/uploads
 # Single worker on purpose: the mailbox auto-pickup listener is an in-process
 # asyncio task. With multiple workers each one spawns its own listener and they
 # race on the same IMAP inbox, doubling LLM classifier costs.
-ExecStart=/opt/hireops/backend/.venv/bin/uvicorn main:app --host 127.0.0.1 --port 8017 --workers 1
+ExecStart=/opt/hireops/backend/.venv/bin/uvicorn main:app --host 127.0.0.1 --port 8001 --workers 1
 Restart=on-failure
 RestartSec=3
 StandardOutput=journal
