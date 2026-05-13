@@ -39,6 +39,7 @@ interface TalentBankSuggestion {
   email_missing?: boolean;
   phone_missing?: boolean;
   reachable?: boolean;
+  weak?: boolean;
   role: string;
   seniority: string;
   years_experience: number | null;
@@ -56,6 +57,7 @@ interface TalentBankResponse {
   total_candidates: number;
   min_score?: number;
   min_overlap?: number;
+  relaxed_to_weak?: boolean;
 }
 
 interface ReachOutResultRow {
@@ -183,13 +185,13 @@ function TalentBankSuggestions({ jobId }: { jobId: string }) {
             From your talent bank
           </h2>
           <p className="text-xs text-slate-500 mt-0.5">
-            Strong matches only — candidates whose skills, role, and seniority
-            line up with this job ({data.suggestions.length} of{" "}
-            {data.total_profiled} profiled
-            {data.total_candidates > data.total_profiled
-              ? ` · ${data.total_candidates} total`
-              : ""}
-            ).
+            {data.relaxed_to_weak
+              ? `No strong matches — showing the closest weak matches instead (${data.suggestions.length} of ${data.total_profiled} profiled).`
+              : `Candidates whose skills, role, and seniority line up with this job (${data.suggestions.length} of ${data.total_profiled} profiled${
+                  data.total_candidates > data.total_profiled
+                    ? ` · ${data.total_candidates} total`
+                    : ""
+                }).`}
           </p>
         </div>
         {!empty && (
@@ -243,10 +245,9 @@ function TalentBankSuggestions({ jobId }: { jobId: string }) {
 
       {empty ? (
         <p className="text-sm text-slate-500">
-          No strong matches in the talent bank yet. We hide weak overlaps
-          (just one shared keyword like &ldquo;jira&rdquo;) on purpose — surface here
-          only when a candidate&apos;s actual skills, role, and seniority line up
-          with this job.
+          No candidates in the talent bank have profile tags yet — uploads
+          surface here once the AI extractor has tagged them. As resumes come
+          in they&apos;re tagged automatically.
         </p>
       ) : (
         <ul className="divide-y divide-slate-100">
@@ -316,6 +317,14 @@ function TalentBankSuggestions({ jobId }: { jobId: string }) {
                         )} for this candidate — outbound channels need a real contact address.`}
                       >
                         ⚠ Missing {missing.join(" + ")}
+                      </span>
+                    )}
+                    {s.weak && (
+                      <span
+                        className="text-[10px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200"
+                        title="Weak match — only one skill in common with the role, or partial role overlap. We're showing this because no stronger matches were found."
+                      >
+                        weak match
                       </span>
                     )}
                   </div>

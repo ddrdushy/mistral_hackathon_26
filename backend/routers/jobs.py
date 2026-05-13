@@ -332,7 +332,7 @@ async def get_job(
 async def suggested_candidates(
     job_id: int,
     limit: int = 10,
-    min_score: int = 60,
+    min_score: int = 35,
     min_overlap: int = 2,
     extract_missing: bool = True,
     db: Session = Depends(get_db),
@@ -346,13 +346,17 @@ async def suggested_candidates(
     yet are extracted on-the-fly (capped to PROFILE_LAZY_CAP per call).
 
     Filtering knobs:
-      • ``min_score`` (default 60): only return matches at least this strong.
-        The old default-of-5 surfaced 1-keyword-overlap noise; 60 means the
-        candidate needs real skill/role/seniority alignment, not a single
-        coincidental tag.
       • ``min_overlap`` (default 2): require at least N skill matches in
-        common. Stops "matched jira → 40% score" style false positives when
-        the job only has 4 required skills.
+        common. Stops "matched jira → 40% score" style false positives.
+      • ``min_score`` (default 35): the resulting score must clear this.
+        Tuned so a 2-of-4-skills + role-match candidate qualifies but a
+        single coincidental tag doesn't. The previous 60-default was too
+        tight and produced zero results on real tenant data.
+
+    When NO row clears the filter, we relax min_overlap to 1 for a
+    single retry and tag those rows ``weak: true`` so the UI can label
+    them as best-effort. Stops the "no matches at all" dead-end when
+    the talent bank has profiled rows but none are a perfect fit.
     """
     from models import Candidate
     from agents.profile_extractor import extract_profile
@@ -409,67 +413,73 @@ async def suggested_candidates(
             except Exception:
                 db.rollback()
 
-    suggestions = []
-    for c in candidates:
-        if not c.profile_extracted_at:
-            continue
-        try:
-            cand_skills = {s for s in json.loads(c.profile_skills or "[]") if s}
-        except Exception:
-            cand_skills = set()
-        if not cand_skills:
-            continue
+    def _score_candidates(overlap_floor: int) -> list[dict]:
+        out: list[dict] = []
+        for c in candidates:
+            if not c.profile_extracted_at:
+                continue
+            try:
+                cand_skills = {s for s in json.loads(c.profile_skills or "[]") if s}
+            except Exception:
+                cand_skills = set()
+            if not cand_skills:
+                continue
 
-        overlap = job_skills & cand_skills
-        # Hard floor on skill overlap: one shared keyword like "jira" is
-        # noise, not a match. Demand at least min_overlap shared skills
-        # OR a clean role-title match to qualify.
-        cand_role = (c.profile_role or "").lower()
-        role_match = bool(
-            cand_role and job_role and (cand_role in job_role or job_role in cand_role)
-        )
-        if len(overlap) < min_overlap and not role_match:
-            continue
+            overlap = job_skills & cand_skills
+            cand_role = (c.profile_role or "").lower()
+            role_match = bool(
+                cand_role and job_role and (cand_role in job_role or job_role in cand_role)
+            )
+            if len(overlap) < overlap_floor and not role_match:
+                continue
 
-        # Tag overlap is the primary signal — ratio against the job's
-        # required skills means a candidate matching all 4/4 scores higher
-        # than one matching 6/12 of an unfocused job.
-        if job_skills:
-            base = (len(overlap) / len(job_skills)) * 80
-        else:
-            base = 0
-        if role_match:
-            base += 12
-        # Seniority match
-        if c.profile_seniority and job_seniority and c.profile_seniority in job_seniority:
-            base += 8
-        score = round(min(base, 100), 1)
-        if score < min_score:
-            continue
+            if job_skills:
+                base = (len(overlap) / len(job_skills)) * 80
+            else:
+                base = 0
+            if role_match:
+                base += 12
+            if c.profile_seniority and job_seniority and c.profile_seniority in job_seniority:
+                base += 8
+            score = round(min(base, 100), 1)
+            if score < min_score:
+                continue
 
-        # Reachability flags — feeds the UI's "Missing email" pill and
-        # excludes unreachable rows from auto-select / outreach.
-        email_str = (c.email or "").strip()
-        email_missing = (not email_str) or email_str.lower().endswith("@uploaded.local")
-        phone_str = (c.phone or "").strip()
-        phone_missing = not phone_str
+            email_str = (c.email or "").strip()
+            email_missing = (not email_str) or email_str.lower().endswith("@uploaded.local")
+            phone_str = (c.phone or "").strip()
+            phone_missing = not phone_str
 
-        suggestions.append({
-            "candidate_id": c.id,
-            "name": c.name,
-            "email": "" if email_missing else email_str,
-            "phone": phone_str,
-            "email_missing": email_missing,
-            "phone_missing": phone_missing,
-            "reachable": not (email_missing and phone_missing),
-            "role": c.profile_role,
-            "seniority": c.profile_seniority,
-            "years_experience": c.profile_years_experience,
-            "summary": c.profile_summary,
-            "skills": sorted(cand_skills)[:12],
-            "matched_skills": sorted(overlap),
-            "match_score": score,
-        })
+            out.append({
+                "candidate_id": c.id,
+                "name": c.name,
+                "email": "" if email_missing else email_str,
+                "phone": phone_str,
+                "email_missing": email_missing,
+                "phone_missing": phone_missing,
+                "reachable": not (email_missing and phone_missing),
+                "role": c.profile_role,
+                "seniority": c.profile_seniority,
+                "years_experience": c.profile_years_experience,
+                "summary": c.profile_summary,
+                "skills": sorted(cand_skills)[:12],
+                "matched_skills": sorted(overlap),
+                "match_score": score,
+            })
+        return out
+
+    # First pass — strict (default min_overlap=2).
+    suggestions = _score_candidates(min_overlap)
+    relaxed = False
+    # If nothing qualified AND we were running strict, relax to overlap=1
+    # so the user sees at least the weak matches. Marked weak=true so the
+    # UI can label these as best-effort instead of pretending they're
+    # strong fits.
+    if not suggestions and min_overlap > 1:
+        relaxed = True
+        suggestions = _score_candidates(1)
+        for s in suggestions:
+            s["weak"] = True
 
     suggestions.sort(key=lambda x: x["match_score"], reverse=True)
     return {
@@ -480,6 +490,7 @@ async def suggested_candidates(
         "total_candidates": len(candidates),
         "min_score": min_score,
         "min_overlap": min_overlap,
+        "relaxed_to_weak": relaxed,
     }
 
 
