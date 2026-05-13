@@ -80,7 +80,7 @@ class Plan:
 PLANS: dict[PlanName, Plan] = {
     "free": Plan(
         name="free",
-        display_name="Free",
+        display_name="Trial",
         price_monthly_usd=0,
         stripe_price_id=None,
         max_jobs=5,

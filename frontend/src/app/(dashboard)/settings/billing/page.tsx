@@ -211,14 +211,18 @@ function BillingInner() {
                 </ul>
                 {!p.available && p.name !== "free" && (
                   <a
-                    href={`mailto:support@hireops.ai?subject=${encodeURIComponent(`Upgrade to ${p.display_name} plan`)}`}
-                    className="block rounded-md bg-slate-50 border border-slate-200 px-3 py-2 mb-3 hover:bg-slate-100 transition-colors group"
+                    href={`mailto:sales@symprio.com?subject=${encodeURIComponent(`Interested in ${p.display_name} plan`)}&body=${encodeURIComponent(
+                      `Hi, I'd like to learn more about the ${p.display_name} plan for our team.`,
+                    )}`}
+                    className="block w-full text-center rounded-lg bg-indigo-600 text-white px-3 py-2 text-sm font-semibold hover:bg-indigo-700 transition-colors mb-2"
                   >
-                    <p className="text-[11px] text-slate-600 flex items-center gap-1.5">
-                      <ExclamationTriangleIcon className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-                      <span className="flex-1">Not yet available — <span className="font-semibold text-indigo-600 group-hover:underline">contact admin</span> to enable this plan.</span>
-                    </p>
+                    Contact sales
                   </a>
+                )}
+                {!p.available && p.name !== "free" && (
+                  <p className="text-[11px] text-slate-500 text-center mb-2">
+                    Sales-led pricing while we finalise self-serve checkout — we&apos;ll have you running within a day.
+                  </p>
                 )}
                 {canUpgrade && (
                   <button

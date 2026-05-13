@@ -18,31 +18,35 @@ interface PlanRow {
   highlighted?: boolean;
 }
 
+const SALES_EMAIL = "sales@symprio.com";
+const mailtoSales = (subject: string) =>
+  `mailto:${SALES_EMAIL}?subject=${encodeURIComponent(subject)}`;
+
 const PLANS: PlanRow[] = [
   {
-    name: "Free",
+    name: "Trial",
     price: "$0",
-    cadence: "forever",
-    blurb: "Try the full product. No card required.",
-    cta: "Start free",
+    cadence: "free",
+    blurb: "Try the full product. No card required, no time limit.",
+    cta: "Start trial",
     ctaHref: "/signup",
+    highlighted: true,
   },
   {
     name: "Starter",
     price: "$49",
     cadence: "/ month",
     blurb: "For small teams hiring a handful of roles per quarter.",
-    cta: "Start free, upgrade later",
-    ctaHref: "/signup",
-    highlighted: true,
+    cta: "Contact sales",
+    ctaHref: mailtoSales("Interested in HireOps Starter"),
   },
   {
     name: "Pro",
     price: "$199",
     cadence: "/ month",
     blurb: "For active recruiters with continuous pipelines.",
-    cta: "Start free, upgrade later",
-    ctaHref: "/signup",
+    cta: "Contact sales",
+    ctaHref: mailtoSales("Interested in HireOps Pro"),
   },
 ];
 
@@ -95,27 +99,27 @@ const FEATURES: FeatureRow[] = [
 const FAQ = [
   {
     q: "Do I need a credit card to sign up?",
-    a: "No. The Free plan is — and always will be — free, no card needed. We only ask for billing details when you upgrade.",
+    a: "No. Start the Trial with just an email — no card, no time limit. Upgrade only when you're ready.",
   },
   {
-    q: "Can I switch plans later?",
-    a: "Yes, anytime. Upgrades take effect immediately. Downgrades take effect at the end of your billing period — you keep your current plan until then.",
+    q: "How do I move to Starter or Pro?",
+    a: "Email sales@symprio.com or click Contact sales above. We'll set up monthly invoicing connected to your Stripe account so billing matches your finance team's existing flow.",
   },
   {
-    q: "What happens if I exceed a quota on the Free plan?",
-    a: "Existing data stays. You'll see a clear 'Upgrade to add more' prompt when you try to create the next job, candidate, or interview.",
+    q: "What happens if I exceed a quota on the Trial?",
+    a: "Existing data stays. You'll see an 'Upgrade to add more' prompt — talk to sales and we'll have you on a paid plan within a day.",
   },
   {
     q: "Is my candidates' data safe?",
     a: "Each tenant's data is isolated by tenant_id at the database level. We use Mistral and ElevenLabs APIs but don't share your data with anyone else. See our Privacy policy for details.",
   },
   {
-    q: "Can I cancel anytime?",
-    a: "Yes. Click 'Manage subscription' in Billing to open the Stripe Customer Portal, where you can cancel or change card details.",
+    q: "How does monthly billing work?",
+    a: "Once you're on a paid plan we connect to your Stripe account and invoice monthly — same payment method, same billing cycle, no separate vendor portal to manage.",
   },
   {
-    q: "Do you offer annual billing or discounts?",
-    a: "Not yet, but we will. If you're a startup with under 10 employees and want a discount, email founders@symprio.com.",
+    q: "Do you offer annual billing, discounts, or custom plans?",
+    a: "Yes. Email sales@symprio.com — we'll tailor pricing for startups (under 10 employees), agencies, and enterprise rollouts.",
   },
 ];
 
@@ -130,7 +134,8 @@ export default function PricingPage() {
             Simple, fair pricing
           </h1>
           <p className="mt-4 text-lg text-slate-600 max-w-2xl mx-auto">
-            Start free. Upgrade only when you outgrow it. No surprise fees.
+            Start with a free trial. When you outgrow it, talk to sales — we&apos;ll
+            tailor a plan and bill monthly through your Stripe account.
           </p>
         </div>
       </section>
@@ -199,8 +204,8 @@ export default function PricingPage() {
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
                 <th className="text-left font-semibold text-slate-700 px-6 py-4 w-1/3"></th>
-                <th className="text-center font-semibold text-slate-700 px-6 py-4">Free</th>
-                <th className="text-center font-semibold text-slate-700 px-6 py-4 bg-blue-50/50">Starter</th>
+                <th className="text-center font-semibold text-slate-700 px-6 py-4 bg-blue-50/50">Trial</th>
+                <th className="text-center font-semibold text-slate-700 px-6 py-4">Starter</th>
                 <th className="text-center font-semibold text-slate-700 px-6 py-4">Pro</th>
               </tr>
             </thead>
@@ -221,7 +226,7 @@ export default function PricingPage() {
                       <td
                         key={j}
                         className={`px-6 py-3 text-center ${
-                          j === 1 ? "bg-blue-50/30" : ""
+                          j === 0 ? "bg-blue-50/30" : ""
                         }`}
                       >
                         {typeof v === "boolean" ? (
@@ -265,17 +270,25 @@ export default function PricingPage() {
       <section className="bg-gradient-to-br from-blue-600 via-blue-700 to-slate-900 py-14">
         <div className="max-w-3xl mx-auto px-6 text-center">
           <h2 className="text-3xl font-bold text-white tracking-tight">
-            Try it free for as long as you like
+            Start your trial today
           </h2>
           <p className="mt-3 text-blue-100">
-            No card. No commitment. Upgrade only when it&apos;s worth it.
+            Free, no card required. Talk to sales when you&apos;re ready to scale.
           </p>
-          <Link
-            href="/signup"
-            className="mt-6 inline-flex items-center justify-center px-6 py-3 rounded-full bg-white text-blue-700 font-semibold hover:bg-blue-50 transition-colors shadow-sm"
-          >
-            Start free
-          </Link>
+          <div className="mt-6 flex flex-col sm:flex-row items-center justify-center gap-3">
+            <Link
+              href="/signup"
+              className="inline-flex items-center justify-center px-6 py-3 rounded-full bg-white text-blue-700 font-semibold hover:bg-blue-50 transition-colors shadow-sm"
+            >
+              Start trial
+            </Link>
+            <a
+              href={mailtoSales("Contact HireOps sales")}
+              className="inline-flex items-center justify-center px-6 py-3 rounded-full bg-transparent text-white font-semibold border border-white/40 hover:bg-white/10 transition-colors"
+            >
+              Contact sales
+            </a>
+          </div>
         </div>
       </section>
     </MarketingShell>

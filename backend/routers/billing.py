@@ -98,7 +98,16 @@ def list_plans(_: CurrentSession = Depends(current_session)):
         if p.name == "free":
             available = True
         else:
-            available = stripe_ok and bool(_price_id_for_plan(p.name))
+            # Sales-led mode: until BILLING_SELF_SERVE=true is set, paid
+            # plans always render as "Contact us" in the UI regardless
+            # of Stripe config. Lets us launch the trial without exposing
+            # half-finished Stripe self-serve.
+            import os as _os
+            self_serve = _os.getenv("BILLING_SELF_SERVE", "false").lower() in ("true", "1", "yes")
+            if not self_serve:
+                available = False
+            else:
+                available = stripe_ok and bool(_price_id_for_plan(p.name))
         out.append(PlanResponse(
             name=p.name,
             display_name=p.display_name,
