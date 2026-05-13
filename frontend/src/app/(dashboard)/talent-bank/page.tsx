@@ -5,7 +5,7 @@ import {
   ArrowDownTrayIcon,
   MagnifyingGlassIcon,
 } from "@heroicons/react/24/outline";
-import { apiGet, apiPost, apiDelete } from "@/lib/api";
+import { apiGet, apiPost, apiDelete, apiUrl } from "@/lib/api";
 import { timeAgo } from "@/lib/constants";
 import TagChip from "@/components/tags/TagChip";
 import TagPicker from "@/components/tags/TagPicker";
@@ -33,6 +33,7 @@ interface TalentBankCandidate {
   email: string;
   phone: string;
   resume_filename: string;
+  resume_blob_available?: boolean;
   cv_version?: number;
   application_count: number;
   // Most-recent application id, when the candidate has at least one.
@@ -450,15 +451,31 @@ export default function TalentBankPage() {
                                 tenant. */}
                             <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-slate-500">
                               {c.resume_filename && (
-                                <span
-                                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-100 text-slate-600"
-                                  title={c.resume_filename}
-                                >
-                                  📄 {c.resume_filename}
-                                  {c.cv_version && c.cv_version > 1
-                                    ? ` · v${c.cv_version}`
-                                    : ""}
-                                </span>
+                                c.resume_blob_available ? (
+                                  <a
+                                    href={apiUrl(`/candidates/${c.id}/resume/file`)}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 hover:bg-indigo-100 hover:text-indigo-700"
+                                    title={`Open original — ${c.resume_filename}`}
+                                  >
+                                    📄 {c.resume_filename}
+                                    {c.cv_version && c.cv_version > 1
+                                      ? ` · v${c.cv_version}`
+                                      : ""}
+                                  </a>
+                                ) : (
+                                  <span
+                                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-100 text-slate-600"
+                                    title={c.resume_filename}
+                                  >
+                                    📄 {c.resume_filename}
+                                    {c.cv_version && c.cv_version > 1
+                                      ? ` · v${c.cv_version}`
+                                      : ""}
+                                  </span>
+                                )
                               )}
                               {c.phone && (
                                 <span className="inline-flex items-center gap-1 text-slate-500">
@@ -552,8 +569,17 @@ export default function TalentBankPage() {
                         )}
 
                         <div className="mt-3 flex items-center gap-2 text-[11px] text-slate-500">
-                          {c.resume_filename && (
-                            <span className="truncate">{c.resume_filename}</span>
+                          {c.resume_blob_available && (
+                            <a
+                              href={apiUrl(`/candidates/${c.id}/resume/file`)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 hover:bg-indigo-100 font-medium"
+                              title="Open the original CV file"
+                            >
+                              ⤓ Download CV
+                            </a>
                           )}
                           {(c.cv_version ?? 1) > 1 && (
                             <span className="px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 font-medium">
