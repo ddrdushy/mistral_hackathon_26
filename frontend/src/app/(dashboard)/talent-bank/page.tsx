@@ -580,20 +580,6 @@ export default function TalentBankPage() {
                                   ⏳ Profile pending
                                 </span>
                               )}
-                              {!c.profile?.extracted_at && (
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    void reExtractProfile(c.id);
-                                  }}
-                                  disabled={reExtractingId === c.id}
-                                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 hover:bg-indigo-100 disabled:opacity-60"
-                                  title="Re-run AI extraction for this resume"
-                                >
-                                  {reExtractingId === c.id ? "Re-extracting…" : "↻ Re-extract"}
-                                </button>
-                              )}
                             </div>
                           </div>
                           <div className="flex-shrink-0 flex flex-col items-end gap-1">
@@ -698,6 +684,26 @@ export default function TalentBankPage() {
                               ⤓ Download CV
                             </a>
                           )}
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void reExtractProfile(c.id);
+                            }}
+                            disabled={reExtractingId === c.id}
+                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded font-medium disabled:opacity-60 ${
+                              c.profile?.extracted_at
+                                ? "bg-slate-100 text-slate-700 hover:bg-indigo-100 hover:text-indigo-700"
+                                : "bg-amber-100 text-amber-800 hover:bg-amber-200"
+                            }`}
+                            title={
+                              c.profile?.extracted_at
+                                ? "Re-run AI extraction (e.g. after editing contact info, or if the existing tags look wrong)"
+                                : "Run AI extraction — fills in role, skills, summary, key points"
+                            }
+                          >
+                            {reExtractingId === c.id ? "Re-extracting…" : "↻ Re-extract"}
+                          </button>
                           {(c.cv_version ?? 1) > 1 && (
                             <span className="px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 font-medium">
                               v{c.cv_version}
@@ -768,6 +774,19 @@ export default function TalentBankPage() {
                   ⤓ Download original
                 </a>
               )}
+              <button
+                type="button"
+                onClick={() => {
+                  if (resumeView) void reExtractProfile(resumeView.candidate_id);
+                }}
+                disabled={reExtractingId === resumeView.candidate_id}
+                className="inline-flex items-center gap-1 px-3 py-1 rounded-md bg-slate-100 text-slate-700 hover:bg-indigo-100 hover:text-indigo-700 text-xs font-medium disabled:opacity-60"
+                title="Re-run AI extraction on this CV"
+              >
+                {reExtractingId === resumeView.candidate_id
+                  ? "Re-extracting…"
+                  : "↻ Re-extract"}
+              </button>
               <button
                 onClick={() => setResumeView(null)}
                 className="text-slate-500 hover:text-slate-800 text-xl leading-none"
