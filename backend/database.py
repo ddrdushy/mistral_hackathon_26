@@ -628,10 +628,47 @@ def _seed_default_pipeline_templates():
         db.close()
 
 
+def _dedupe_testimonials():
+    """One-time cleanup — collapse rows that share (author_name, quote).
+
+    The seed once ran when the table was empty, then the same defaults
+    got re-added via the admin UI, so prod rendered every quote twice.
+    Keep the lowest id per pair, delete the rest. Idempotent.
+    """
+    from models import Testimonial
+    db = SessionLocal()
+    try:
+        seen: dict[tuple[str, str], int] = {}
+        to_delete: list[int] = []
+        for t in db.query(Testimonial).order_by(Testimonial.id.asc()).all():
+            key = (
+                (t.author_name or "").strip().lower(),
+                (t.quote or "").strip().lower(),
+            )
+            if key in seen:
+                to_delete.append(t.id)
+            else:
+                seen[key] = t.id
+        if to_delete:
+            db.query(Testimonial).filter(Testimonial.id.in_(to_delete)).delete(
+                synchronize_session=False,
+            )
+            db.commit()
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()
+
+
 def _seed_default_testimonials():
     """Insert the 4 default testimonials on first boot. Idempotent — only
-    seeds when the table is empty so superadmin edits aren't overwritten."""
+    seeds when the table is empty so superadmin edits aren't overwritten.
+
+    Also runs a defensive dedupe on every boot in case the same defaults
+    were added more than once (one user-visible bug we already hit).
+    """
     from models import Testimonial
+    _dedupe_testimonials()
     db = SessionLocal()
     try:
         if db.query(Testimonial).count() > 0:

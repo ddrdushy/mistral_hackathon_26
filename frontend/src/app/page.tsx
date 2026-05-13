@@ -44,7 +44,19 @@ async function fetchTestimonials(): Promise<ApiTestimonial[]> {
     const res = await fetch(`${base}/testimonials`, { next: { revalidate: 60 } });
     if (!res.ok) return FALLBACK_TESTIMONIALS;
     const data = (await res.json()) as { testimonials: ApiTestimonial[] };
-    return data.testimonials.length > 0 ? data.testimonials : FALLBACK_TESTIMONIALS;
+    const rows = data.testimonials.length > 0 ? data.testimonials : FALLBACK_TESTIMONIALS;
+    // Defensive dedupe — same author + quote means the same testimonial.
+    // The DB was seeded once and then the same defaults got re-added via
+    // the admin UI, so prod was rendering each quote twice. Keep the
+    // first occurrence (lowest display_order ➔ lowest id) so admin edits
+    // stick.
+    const seen = new Set<string>();
+    return rows.filter((t) => {
+      const key = `${t.author_name.trim().toLowerCase()}|${t.quote.trim().toLowerCase()}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
   } catch {
     return FALLBACK_TESTIMONIALS;
   }
