@@ -69,6 +69,31 @@ if [ ! -d "${STANDALONE}/node_modules/@img/sharp-linux-x64" ]; then
   npm install --no-audit --no-fund sharp >/dev/null 2>&1 || true
 fi
 
+echo "=== 6.5/7  resume-binary storage dir ==="
+# Direct CV uploads now persist the original file under a per-tenant
+# tree at HIREOPS_UPLOAD_DIR. Ensure the dir exists and is owned by the
+# hireops service user. Also seed the .env var if missing, in case the
+# systemd unit on this host hasn't been refreshed yet.
+UPLOAD_DIR="/var/lib/hireops/uploads"
+mkdir -p "${UPLOAD_DIR}"
+if id -u hireops >/dev/null 2>&1; then
+  chown -R hireops:hireops "${UPLOAD_DIR}" 2>/dev/null || true
+fi
+ENV_FILE="${APP_DIR}/backend/.env"
+if [ -f "${ENV_FILE}" ] && ! grep -q '^HIREOPS_UPLOAD_DIR=' "${ENV_FILE}"; then
+  echo "HIREOPS_UPLOAD_DIR=${UPLOAD_DIR}" >> "${ENV_FILE}"
+  echo "  seeded HIREOPS_UPLOAD_DIR into .env"
+fi
+
+# Re-sync the systemd unit so the new Environment= line lands.
+if [ -f "${APP_DIR}/deploy/hireops-backend.service" ]; then
+  if ! cmp -s "${APP_DIR}/deploy/hireops-backend.service" /etc/systemd/system/hireops-backend.service 2>/dev/null; then
+    cp "${APP_DIR}/deploy/hireops-backend.service" /etc/systemd/system/hireops-backend.service
+    systemctl daemon-reload
+    echo "  refreshed hireops-backend.service unit"
+  fi
+fi
+
 echo "=== 7/7  restart services (only hireops) ==="
 systemctl restart "${BACKEND_SERVICE}"
 sleep 2

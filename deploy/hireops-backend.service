@@ -9,6 +9,10 @@ User=hireops
 Group=hireops
 WorkingDirectory=/opt/hireops/backend
 EnvironmentFile=/opt/hireops/backend/.env
+# Original CV binaries (direct uploads) live here, namespaced per
+# tenant (tenant_<id>/candidate_<id>/...). Path is inside the
+# ReadWritePaths set above so the sandboxed unit can write to it.
+Environment=HIREOPS_UPLOAD_DIR=/var/lib/hireops/uploads
 # Single worker on purpose: the mailbox auto-pickup listener is an in-process
 # asyncio task. With multiple workers each one spawns its own listener and they
 # race on the same IMAP inbox, doubling LLM classifier costs.
