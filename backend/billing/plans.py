@@ -54,12 +54,13 @@ class Plan:
     max_jobs: int  # -1 for unlimited
     max_candidates: int
     max_interviews_per_month: int
+    daily_llm_budget_usd: float  # hard cap on Mistral spend per UTC day; -1 = unlimited
     # On-disk original-CV storage per tenant, in megabytes. Counts both
     # the live candidate resume_blob_path and every archived CV version's
     # blob_path. -1 = unlimited. Free plans get a tight cap so a single
-    # tenant can't fill the host.
+    # tenant can't fill the host. Default lives in the trailing-defaults
+    # block so the Plan dataclass field order stays valid.
     max_disk_mb: int = 500
-    daily_llm_budget_usd: float  # hard cap on Mistral spend per UTC day; -1 = unlimited
     # Multiplier applied to raw Mistral / ElevenLabs cost when billing
     # tenants. We pay Mistral $1, we charge the tenant $1 * markup. 1.0
     # = pass-through (no profit), 2.5 = standard 250% markup. Admin can
