@@ -108,6 +108,11 @@ export default function CandidateDetailPage({
   const isOwner = me?.user?.role === "owner";
 
   const [app, setApp] = useState<Application | null>(null);
+
+  // Application id resolved after fetch. Used by every action handler
+  // below — keeps us from accidentally routing /applications/{candidate_id}
+  // calls into the API again.
+  const appId = app?.id ?? Number(id);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -129,19 +134,56 @@ export default function CandidateDetailPage({
   const [hiringReport, setHiringReport] = useState<HiringReport | null>(null);
   const [reportLoading, setReportLoading] = useState(false);
 
+  // Once the application has loaded, every action endpoint (stage,
+  // rescore, screening, etc.) keys off this id — NOT the URL id, which
+  // is a candidate id. We default to Number(id) only as a safety net
+  // for the brief render before `app` arrives; in practice handlers
+  // only fire after the user has interacted with the loaded page.
+
   // ── Fetch application data ───────────────────────────────────────────────
 
   const fetchApplication = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
-      const data = await apiGet<Application>(`/applications/${id}`);
+
+      // The URL is /candidates/{id} where {id} is the CANDIDATE id, not
+      // an application id — but historically this page was hitting
+      // /applications/{id} which only worked when the two ids happened
+      // to line up. Fix: look up the candidate's most recent app first;
+      // fall back to the legacy app-id path so any deep-links from old
+      // emails still resolve.
+      let data: Application | null = null;
+      try {
+        const list = await apiGet<{ applications: Application[] }>(
+          "/applications",
+          {
+            candidate_id: String(id),
+            per_page: "1",
+            sort_by: "updated_at",
+            order: "desc",
+          },
+        );
+        if (list.applications && list.applications.length > 0) {
+          data = list.applications[0];
+        }
+      } catch {
+        // fall through to legacy app-id lookup
+      }
+      if (!data) {
+        // Either no app for this candidate yet, or the URL really IS an
+        // app id (old deep-link). Try the legacy path.
+        data = await apiGet<Application>(`/applications/${id}`);
+      }
       setApp(data);
 
-      // Fetch existing interview links if link status exists
+      // Fetch existing interview links if link status exists. Use the
+      // app id we just resolved, NOT the URL id, since /screening/{id}/links
+      // also expects an application id.
+      const appId = data.id;
       if (data.interview_link_status && !["expired"].includes(data.interview_link_status)) {
         try {
-          const links = await apiGet<{ links: InterviewLink[] }>(`/screening/${id}/links`);
+          const links = await apiGet<{ links: InterviewLink[] }>(`/screening/${appId}/links`);
           if (links.links && links.links.length > 0) {
             // Get the most recent active link
             const activeLink = links.links.find(
@@ -170,7 +212,7 @@ export default function CandidateDetailPage({
   useEffect(() => {
     if (app && app.resume_score && !hiringReport && !reportLoading) {
       setReportLoading(true);
-      apiGet<HiringReport>(`/screening/${id}/hiring-report`)
+      apiGet<HiringReport>(`/screening/${appId}/hiring-report`)
         .then(setHiringReport)
         .catch(() => {/* silently fail */})
         .finally(() => setReportLoading(false));
@@ -185,7 +227,7 @@ export default function CandidateDetailPage({
     setApp((prev) => (prev ? { ...prev, stage: newStage } : prev));
     setStageLoading(true);
     try {
-      await apiPatch(`/applications/${id}/stage`, { stage: newStage });
+      await apiPatch(`/applications/${appId}/stage`, { stage: newStage });
       await fetchApplication();
     } catch {
       setApp((prev) => (prev ? { ...prev, stage: prevStage } : prev));
@@ -205,12 +247,44 @@ export default function CandidateDetailPage({
     setLinkLoading(true);
     try {
       const result = await apiPost<InterviewLink>("/screening/generate-link", {
-        app_id: Number(id),
+        app_id: appId,
       });
       setInterviewLink(result);
       await fetchApplication();
     } catch {
       alert("Failed to generate interview link.");
+    } finally {
+      setLinkLoading(false);
+    }
+  };
+
+  // "Regenerate" buttons fire after a previous link expired — in that
+  // flow HR has already decided the candidate should interview, so it's
+  // surprising when clicking Regenerate quietly produces a new link
+  // that the candidate never receives. This combined handler generates
+  // AND immediately sends the email, then refreshes state.
+  const handleRegenerateAndSend = async () => {
+    setLinkLoading(true);
+    try {
+      const result = await apiPost<InterviewLink>("/screening/generate-link", {
+        app_id: appId,
+      });
+      setInterviewLink(result);
+      try {
+        await apiPost("/screening/send-link", { token: result.token });
+        setInterviewLink((prev) => prev ? { ...prev, status: "sent" } : prev);
+      } catch (sendErr) {
+        // Generate succeeded, send failed — surface the partial state so
+        // the user can hit Send manually.
+        alert(
+          sendErr instanceof Error
+            ? `New link generated, but the email failed to send: ${sendErr.message}`
+            : "New link generated, but the email failed to send. Use Send to retry.",
+        );
+      }
+      await fetchApplication();
+    } catch {
+      alert("Failed to regenerate interview link.");
     } finally {
       setLinkLoading(false);
     }
@@ -246,7 +320,7 @@ export default function CandidateDetailPage({
   const handleEvaluate = async () => {
     setEvaluateLoading(true);
     try {
-      await apiPost("/screening/evaluate", { app_id: Number(id) });
+      await apiPost("/screening/evaluate", { app_id: appId });
       await fetchApplication();
     } catch {
       alert("Failed to evaluate screening. Please try again.");
@@ -274,7 +348,7 @@ export default function CandidateDetailPage({
   const handleBookSlot = async (slot: string) => {
     setBookingSlot(slot);
     try {
-      await apiPost(`/screening/${id}/book-slot`, { slot });
+      await apiPost(`/screening/${appId}/book-slot`, { slot });
       await fetchApplication();
     } catch {
       alert("Failed to book interview slot.");
@@ -286,7 +360,7 @@ export default function CandidateDetailPage({
   const handleSendDraft = async () => {
     setSendDraftLoading(true);
     try {
-      await apiPost(`/screening/${id}/send-draft`, {});
+      await apiPost(`/screening/${appId}/send-draft`, {});
       await fetchApplication();
     } catch {
       alert("Failed to send email draft.");
@@ -298,7 +372,7 @@ export default function CandidateDetailPage({
   const handleCalculateFinalScore = async () => {
     setFinalScoreLoading(true);
     try {
-      await apiPost(`/screening/${id}/calculate-final-score`, {});
+      await apiPost(`/screening/${appId}/calculate-final-score`, {});
       await fetchApplication();
     } catch {
       alert("Failed to calculate final score.");
@@ -1116,7 +1190,7 @@ export default function CandidateDetailPage({
                   type="button"
                   onClick={async () => {
                     try {
-                      await apiPost(`/applications/${id}/rescore`, {});
+                      await apiPost(`/applications/${appId}/rescore`, {});
                       await fetchApplication();
                     } catch (err) {
                       alert(err instanceof Error ? err.message : "Re-score failed");
@@ -1534,11 +1608,11 @@ export default function CandidateDetailPage({
                         Resend Email
                       </Button>
                     )}
-                    {/* Expired → Regenerate */}
+                    {/* Expired → Regenerate AND auto-send the email */}
                     {interviewLink.status === "expired" && (
-                      <Button size="sm" onClick={handleGenerateLink} loading={linkLoading}>
+                      <Button size="sm" onClick={handleRegenerateAndSend} loading={linkLoading}>
                         <ArrowPathIcon className="h-4 w-4" />
-                        Regenerate Link
+                        Regenerate &amp; send
                       </Button>
                     )}
                   </div>
@@ -1562,9 +1636,9 @@ export default function CandidateDetailPage({
                   </span>
                 </div>
                 {app.interview_link_status === "expired" && (
-                  <Button size="sm" onClick={handleGenerateLink} loading={linkLoading} className="w-full justify-center">
+                  <Button size="sm" onClick={handleRegenerateAndSend} loading={linkLoading} className="w-full justify-center">
                     <ArrowPathIcon className="h-4 w-4" />
-                    Regenerate Link
+                    Regenerate &amp; send
                   </Button>
                 )}
               </div>
@@ -1589,7 +1663,7 @@ export default function CandidateDetailPage({
             {app.interview_mode === "hr_video" && (
               <div className="mb-4">
                 <HrVideoPanel
-                  applicationId={Number(id)}
+                  applicationId={appId}
                   interviewToken={interviewLink?.token || null}
                   hasExistingScore={!!interview}
                   onScored={fetchApplication}
@@ -1635,7 +1709,7 @@ export default function CandidateDetailPage({
                     <div className="mt-3 flex flex-wrap gap-2">
                       <Button
                         size="sm"
-                        onClick={handleGenerateLink}
+                        onClick={handleRegenerateAndSend}
                         loading={linkLoading}
                       >
                         <ArrowPathIcon className="h-4 w-4" />
@@ -1670,11 +1744,11 @@ export default function CandidateDetailPage({
                     <div className="mt-3">
                       <Button
                         size="sm"
-                        onClick={handleGenerateLink}
+                        onClick={handleRegenerateAndSend}
                         loading={linkLoading}
                       >
                         <ArrowPathIcon className="h-4 w-4" />
-                        Generate new interview link
+                        Generate &amp; resend link
                       </Button>
                     </div>
                   </div>
@@ -1832,7 +1906,7 @@ export default function CandidateDetailPage({
           {app && (
             <div id="offer-card" className="scroll-mt-20">
               <OfferCard
-                applicationId={Number(id)}
+                applicationId={appId}
                 candidateName={app.candidate_name}
                 jobTitle={app.job_title}
                 candidateEmail={app.candidate_email}
@@ -1850,9 +1924,9 @@ export default function CandidateDetailPage({
           {/* ── Resume fraud check ─────────────────────────────────────────── */}
           {app && (
             <div id="fraud-card" className="scroll-mt-20 space-y-4">
-              <FraudHighlights applicationId={Number(id)} />
+              <FraudHighlights applicationId={appId} />
               <FraudSignalsCard
-                appId={Number(id)}
+                appId={appId}
                 isOwner={isOwner}
                 onChanged={fetchApplication}
               />

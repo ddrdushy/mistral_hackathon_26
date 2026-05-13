@@ -227,6 +227,7 @@ async def match_candidate_to_job(
 @router.get("")
 async def list_applications(
     job_id: Optional[int] = None,
+    candidate_id: Optional[int] = None,
     stage: Optional[str] = None,
     min_score: Optional[float] = None,
     max_score: Optional[float] = None,
@@ -242,6 +243,11 @@ async def list_applications(
 
     if job_id:
         query = query.filter(Application.job_id == job_id)
+    if candidate_id:
+        # Powers the candidate-detail page's "find the latest app for this
+        # candidate" lookup. Combined with sort_by=updated_at&per_page=1
+        # the FE gets back the most recent application in a single call.
+        query = query.filter(Application.candidate_id == candidate_id)
     if stage:
         stages = stage.split(",")
         query = query.filter(Application.stage.in_(stages))
