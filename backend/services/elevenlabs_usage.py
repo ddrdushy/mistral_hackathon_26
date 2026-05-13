@@ -179,6 +179,111 @@ def record_voice_call(
 # ─── Tenant-scoped aggregate (last N days) ──────────────────────────────────
 
 
+def backfill_voice_from_links(
+    db: Session, tenant_id: int, *, lookback_days: int = 180
+) -> dict:
+    """Walk every completed InterviewLink for this tenant and write a
+    matching LlmUsage row for any that don't already have one.
+
+    Needed because per-tenant voice tracking only started writing rows
+    after a recent fix — past interviews ran successfully on the
+    platform's ElevenLabs subscription but never landed in llm_usage,
+    so the tenant card showed 0 calls / 0 minutes / $0.
+
+    Returns ``{"scanned", "added", "skipped"}``. Best-effort — any per-
+    link failure (e.g. ElevenLabs returns 404 for an old conversation
+    id) just skips that row.
+    """
+    from datetime import timedelta
+    from sqlalchemy import and_
+    from models import InterviewLink, Application
+
+    cutoff = datetime.utcnow() - timedelta(days=max(1, lookback_days))
+
+    # Only consider tenant's completed interview links that have an
+    # ElevenLabs conversation id attached. Lifting tenant_id from the
+    # joined Application keeps this cheap on Postgres' indexes.
+    links = (
+        db.query(InterviewLink, Application)
+        .join(Application, Application.id == InterviewLink.app_id)
+        .filter(
+            Application.tenant_id == tenant_id,
+            InterviewLink.elevenlabs_conversation_id.isnot(None),
+            InterviewLink.elevenlabs_conversation_id != "",
+            InterviewLink.interview_completed_at.isnot(None),
+            InterviewLink.interview_completed_at >= cutoff,
+        )
+        .all()
+    )
+
+    scanned = len(links)
+    added = 0
+    skipped = 0
+
+    for link, app in links:
+        # Skip if we already wrote a usage row for this conversation.
+        # Use the same "approximate match" heuristic the webhook uses:
+        # tenant + agent + duration as a proxy for conversation id.
+        if link.interview_completed_at and link.interview_started_at:
+            local_dur = int(
+                (link.interview_completed_at - link.interview_started_at).total_seconds()
+            )
+        else:
+            local_dur = 0
+        existing = (
+            db.query(LlmUsage)
+            .filter(
+                and_(
+                    LlmUsage.tenant_id == tenant_id,
+                    LlmUsage.agent_name == AGENT_NAME,
+                    LlmUsage.output_tokens == local_dur,
+                    LlmUsage.created_at >= link.interview_completed_at - timedelta(hours=2),
+                    LlmUsage.created_at <= link.interview_completed_at + timedelta(hours=2),
+                )
+            )
+            .first()
+        )
+        if existing:
+            skipped += 1
+            continue
+
+        # Fetch authoritative duration + chars from ElevenLabs. Falls
+        # back to the locally-computed duration if the API is unreachable.
+        duration = local_dur
+        chars = 0
+        try:
+            meta = fetch_conversation_metadata(link.elevenlabs_conversation_id)
+            if meta:
+                md = meta.get("metadata") or {}
+                duration = int(
+                    md.get("call_duration_secs")
+                    or meta.get("call_duration_secs")
+                    or local_dur
+                )
+                chars = int(
+                    md.get("character_count")
+                    or meta.get("character_count")
+                    or 0
+                )
+        except Exception:
+            pass
+
+        try:
+            record_voice_call(
+                db,
+                tenant_id=tenant_id,
+                conversation_id=link.elevenlabs_conversation_id,
+                duration_seconds=max(0, duration),
+                character_count=chars,
+                app_id=app.id,
+            )
+            added += 1
+        except Exception:
+            skipped += 1
+
+    return {"scanned": scanned, "added": added, "skipped": skipped}
+
+
 def tenant_voice_summary(db: Session, tenant_id: int, days: int = 30) -> dict:
     """Sum the tenant's voice rows over the last `days`. Used by the
     Settings → Voice usage card so HR sees their own ElevenLabs spend

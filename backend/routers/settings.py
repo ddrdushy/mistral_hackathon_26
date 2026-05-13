@@ -391,6 +391,30 @@ async def voice_usage_report(
     }
 
 
+@router.post("/voice/backfill")
+async def backfill_voice_usage(
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(current_session),
+):
+    """Re-import this tenant's past voice calls from ElevenLabs.
+
+    Needed for tenants whose interviews completed before per-tenant
+    usage tracking was wired into the ElevenLabs webhook — those calls
+    ran on the platform subscription but didn't write a per-tenant
+    LlmUsage row, so the tenant card shows 0/0/0 even though the
+    platform's character counter has moved.
+
+    Idempotent: rows already present are left alone.
+    """
+    from services import elevenlabs_usage
+    result = elevenlabs_usage.backfill_voice_from_links(db, session.tenant.id)
+    return {
+        "ok": True,
+        "result": result,
+        "tenant": elevenlabs_usage.tenant_voice_summary(db, session.tenant.id, days=30),
+    }
+
+
 # ═══════════════════════════════════════
 # SYSTEM CONFIGURATION
 # ═══════════════════════════════════════

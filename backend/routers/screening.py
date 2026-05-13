@@ -1979,6 +1979,51 @@ async def elevenlabs_webhook(request: Request, db: Session = Depends(get_db)):
                     "duration_secs": duration_secs,
                 })
 
+                # Record per-tenant ElevenLabs voice usage straight from
+                # the webhook — this is the most reliable signal we have
+                # (the candidate's browser may close before the client
+                # /link/{token}/status hook fires, so relying on that
+                # path alone leaves the tenant usage card stuck at 0).
+                #
+                # Idempotency: check whether a usage row already exists
+                # for this conversation by reusing the duration as a
+                # proxy key (per-tenant, per-agent, identical output_
+                # tokens=duration in the last hour). Coarse but enough
+                # to dedupe webhook retries against client-side double-
+                # writes.
+                try:
+                    if app.tenant_id and conversation_id:
+                        from services import elevenlabs_usage
+                        from models import LlmUsage as _LlmUsage
+                        from datetime import timedelta as _td
+                        dur = int(duration_secs or 0)
+                        recent = (
+                            db.query(_LlmUsage)
+                            .filter(
+                                _LlmUsage.tenant_id == app.tenant_id,
+                                _LlmUsage.agent_name == elevenlabs_usage.AGENT_NAME,
+                                _LlmUsage.output_tokens == dur,
+                                _LlmUsage.created_at >= datetime.utcnow() - _td(hours=1),
+                            )
+                            .first()
+                        )
+                        if not recent:
+                            char_count = int(metadata.get("character_count", 0) or 0)
+                            elevenlabs_usage.record_voice_call(
+                                db,
+                                tenant_id=app.tenant_id,
+                                conversation_id=conversation_id,
+                                duration_seconds=dur,
+                                character_count=char_count,
+                                app_id=app.id,
+                            )
+                except Exception as e:
+                    import logging as _log
+                    _log.getLogger("hireops.screening").warning(
+                        "Voice usage logging from webhook failed for %s: %s",
+                        conversation_id, e,
+                    )
+
                 # Auto-trigger evaluation if not already done
                 if not app.interview_score_json:
                     try:
