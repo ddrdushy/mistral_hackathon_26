@@ -1,10 +1,12 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter, useParams } from "next/navigation";
-import { apiGet, apiPut } from "@/lib/api";
+import { apiGet, apiPost, apiPut } from "@/lib/api";
 import { SENIORITY_OPTIONS } from "@/lib/constants";
 import type { Job, JobCreate } from "@/types/index";
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "/api/v1";
 
 export default function EditJobPage() {
   const router = useRouter();
@@ -34,6 +36,15 @@ export default function EditJobPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [titleError, setTitleError] = useState(false);
+
+  // AI assist state — same shape as the create page so HR sees a
+  // consistent experience between drafting and editing a JD.
+  const [aiPanelOpen, setAiPanelOpen] = useState(false);
+  const [pasteText, setPasteText] = useState("");
+  const [refining, setRefining] = useState(false);
+  const [refineFile, setRefineFile] = useState<File | null>(null);
+  const refineFileRef = useRef<HTMLInputElement | null>(null);
+  const [aiMessage, setAiMessage] = useState<string | null>(null);
 
   const fetchJob = useCallback(async () => {
     try {
@@ -110,6 +121,118 @@ export default function EditJobPage() {
       [field]: prev[field].filter((_, i) => i !== idx),
     }));
 
+  // Merge a /jobs/refine response onto the form. Only overwrites
+  // fields the AI actually returned content for, so a partial refine
+  // (e.g. user only wanted a description rewrite) keeps the rest.
+  const applyAiResult = (
+    result: Partial<JobCreate> & { title?: string; description?: string },
+  ) => {
+    setForm((prev) => ({
+      ...prev,
+      title: (result.title || prev.title || "").trim() || prev.title,
+      department: result.department || prev.department,
+      location: result.location || prev.location,
+      seniority: result.seniority || prev.seniority,
+      skills: result.skills && result.skills.length > 0 ? result.skills : prev.skills,
+      responsibilities:
+        result.responsibilities && result.responsibilities.length > 0
+          ? result.responsibilities
+          : prev.responsibilities,
+      qualifications:
+        result.qualifications && result.qualifications.length > 0
+          ? result.qualifications
+          : prev.qualifications,
+      description: result.description || prev.description,
+    }));
+  };
+
+  // Polish-in-place: serialises the current form into plain text and
+  // sends it back through /jobs/refine, which re-structures + tightens
+  // the wording. HR's wording stays, just gets organised.
+  const handlePolishCurrent = async () => {
+    setRefining(true);
+    setAiMessage(null);
+    setError(null);
+    try {
+      const blob = [
+        form.title && `Title: ${form.title}`,
+        form.department && `Department: ${form.department}`,
+        form.location && `Location: ${form.location}`,
+        form.seniority && `Seniority: ${form.seniority}`,
+        form.skills.length > 0 && `Required skills: ${form.skills.join(", ")}`,
+        form.responsibilities.length > 0 &&
+          `Responsibilities:\n- ${form.responsibilities.join("\n- ")}`,
+        form.qualifications.length > 0 &&
+          `Qualifications:\n- ${form.qualifications.join("\n- ")}`,
+        form.description && `Description:\n${form.description}`,
+      ]
+        .filter(Boolean)
+        .join("\n\n");
+      if (blob.length < 30) {
+        throw new Error(
+          "Not enough content to polish yet — fill in a few fields first or paste a JD below.",
+        );
+      }
+      const result = await apiPost<Partial<JobCreate>>("/jobs/refine", {
+        text: blob,
+      });
+      applyAiResult(result);
+      setAiMessage("AI polished the JD in place — review the changes before saving.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Polish failed");
+    } finally {
+      setRefining(false);
+    }
+  };
+
+  const handleRefineText = async () => {
+    const text = pasteText.trim();
+    if (!text) return;
+    setRefining(true);
+    setAiMessage(null);
+    setError(null);
+    try {
+      const result = await apiPost<Partial<JobCreate>>("/jobs/refine", { text });
+      applyAiResult(result);
+      setAiMessage("Imported the pasted JD — review and save.");
+      setPasteText("");
+      setAiPanelOpen(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Refine failed");
+    } finally {
+      setRefining(false);
+    }
+  };
+
+  const handleRefineFile = async (file: File) => {
+    setRefining(true);
+    setAiMessage(null);
+    setError(null);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch(`${API_BASE}/jobs/refine-file`, {
+        method: "POST",
+        credentials: "include",
+        body: fd,
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.detail || `Refine failed (HTTP ${res.status})`);
+      }
+      const result = (await res.json()) as Partial<JobCreate>;
+      applyAiResult(result);
+      setAiMessage(`Imported "${file.name}" — review and save.`);
+      setRefineFile(null);
+      setAiPanelOpen(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Refine failed");
+    } finally {
+      setRefining(false);
+      if (refineFileRef.current) refineFileRef.current.value = "";
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -167,6 +290,88 @@ export default function EditJobPage() {
         <h1 className="text-2xl font-semibold text-slate-900">Edit Job</h1>
         {originalJobId && (
           <p className="text-sm text-slate-500 mt-0.5 font-mono">{originalJobId}</p>
+        )}
+      </div>
+
+      {/* AI assist — same flow as Create Job, adapted for editing. Lets HR
+          polish an existing draft in place, or paste/upload a revised JD
+          and have it re-structured into the form fields. */}
+      <div className="mb-4 rounded-xl border border-indigo-200 bg-gradient-to-br from-indigo-50/70 via-white to-white p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex-1 min-w-[220px]">
+            <h2 className="text-sm font-semibold text-slate-900 inline-flex items-center gap-1.5">
+              <svg className="w-4 h-4 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+              </svg>
+              AI assist
+            </h2>
+            <p className="text-xs text-slate-600 mt-0.5">
+              Polish the current draft, or paste / upload a revised JD and
+              let AI re-structure it into the fields below.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={handlePolishCurrent}
+              disabled={refining}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md text-white bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 disabled:opacity-50"
+            >
+              {refining ? "Polishing…" : "✨ Polish current draft"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setAiPanelOpen((o) => !o)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md text-indigo-700 bg-white border border-indigo-200 hover:bg-indigo-50"
+            >
+              {aiPanelOpen ? "Hide" : "Paste / upload a new JD →"}
+            </button>
+          </div>
+        </div>
+        {aiPanelOpen && (
+          <div className="mt-3 space-y-2">
+            <textarea
+              value={pasteText}
+              onChange={(e) => setPasteText(e.target.value)}
+              rows={6}
+              placeholder="Paste the revised JD here…"
+              className="w-full px-3 py-2 rounded-md border border-slate-300 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-y"
+            />
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={handleRefineText}
+                disabled={refining || !pasteText.trim()}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {refining ? "Refining…" : "Refine pasted text"}
+              </button>
+              <span className="text-xs text-slate-400">or</span>
+              <input
+                ref={refineFileRef}
+                type="file"
+                accept=".pdf,.docx,.doc,.txt,.tex"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  setRefineFile(f || null);
+                  if (f) void handleRefineFile(f);
+                }}
+                className="text-xs text-slate-600 file:mr-2 file:px-3 file:py-1.5 file:rounded-md file:border-0 file:bg-white file:text-indigo-700 file:font-semibold file:hover:bg-indigo-50 file:cursor-pointer"
+              />
+              {refining && refineFile && (
+                <span className="text-xs text-slate-500">Parsing {refineFile.name}…</span>
+              )}
+            </div>
+            <p className="text-[11px] text-slate-500">
+              Your existing content stays — AI just re-structures and tightens
+              wording. Review every section before saving.
+            </p>
+          </div>
+        )}
+        {aiMessage && (
+          <p className="mt-3 text-xs rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200 px-3 py-2">
+            {aiMessage}
+          </p>
         )}
       </div>
 
