@@ -1382,18 +1382,39 @@ async def submit_face_tracking(token: str, req: FaceTrackingDataRequest, db: Ses
         "avg_attention_score": 0,
         "face_present_count": 0,
         "total_snapshots": 0,
+        "multi_face_count": 0,    # snapshots with >1 face detected
+        "max_face_count": 0,       # peak face count seen
+        "multi_face_events": [],   # last few timestamps where >1 face was visible
     }
+    # Backfill new fields for old rows that started before this rev.
+    tracking.setdefault("multi_face_count", 0)
+    tracking.setdefault("max_face_count", 0)
+    tracking.setdefault("multi_face_events", [])
+
+    fc = int(req.face_count or 0)
 
     # Add snapshot
     tracking["snapshots"].append({
         "face_present": req.face_present,
         "attention_score": req.attention_score,
         "timestamp": req.timestamp,
-        "face_count": req.face_count,
+        "face_count": fc,
     })
     tracking["total_snapshots"] += 1
     if req.face_present:
         tracking["face_present_count"] += 1
+    if fc > tracking["max_face_count"]:
+        tracking["max_face_count"] = fc
+    if fc > 1:
+        tracking["multi_face_count"] += 1
+        # Keep last 20 multi-face timestamps so HR can scrub to those
+        # moments in the recording. Trim eagerly to bound size.
+        tracking["multi_face_events"].append({
+            "timestamp": req.timestamp,
+            "face_count": fc,
+        })
+        if len(tracking["multi_face_events"]) > 20:
+            tracking["multi_face_events"] = tracking["multi_face_events"][-20:]
 
     # Compute running averages
     total = tracking["total_snapshots"]
@@ -1402,6 +1423,9 @@ async def submit_face_tracking(token: str, req: FaceTrackingDataRequest, db: Ses
     )
     tracking["face_present_percentage"] = round(
         tracking["face_present_count"] / total * 100, 1
+    )
+    tracking["multi_face_percentage"] = round(
+        tracking["multi_face_count"] / total * 100, 1
     )
 
     # Keep only last 100 snapshots to limit storage
@@ -1416,6 +1440,9 @@ async def submit_face_tracking(token: str, req: FaceTrackingDataRequest, db: Ses
         app.interview_face_tracking_json = json.dumps({
             "avg_attention_score": tracking["avg_attention_score"],
             "face_present_percentage": tracking["face_present_percentage"],
+            "multi_face_percentage": tracking["multi_face_percentage"],
+            "max_face_count": tracking["max_face_count"],
+            "multi_face_count": tracking["multi_face_count"],
             "total_snapshots": tracking["total_snapshots"],
         })
 
@@ -2225,6 +2252,7 @@ def _compute_fraud_risk(signals_map: dict, face_tracking: dict | None) -> tuple[
 
     face_penalty = 0
     attention_penalty = 0
+    multi_face_penalty = 0
     if face_tracking:
         face_present_pct = float(face_tracking.get("face_present_percentage") or 100)
         if face_present_pct < 80:
@@ -2232,8 +2260,18 @@ def _compute_fraud_risk(signals_map: dict, face_tracking: dict | None) -> tuple[
         attention = float(face_tracking.get("avg_attention_score") or 1.0)
         if attention < 0.6:
             attention_penalty = min(15, (0.6 - attention) * 30)
+        # Multi-face is the strongest cheating signal — someone else in
+        # the room, or the candidate has a second device on screen. Any
+        # snapshot with >1 face costs points; sustained presence costs
+        # a lot more.
+        multi_face_pct = float(face_tracking.get("multi_face_percentage") or 0)
+        max_face_count = int(face_tracking.get("max_face_count") or 0)
+        if max_face_count > 1:
+            # Base 8 for any sighting, plus up to 32 more scaled by how
+            # much of the interview had multiple faces. Caps at 40.
+            multi_face_penalty = min(40, 8 + multi_face_pct * 0.8)
 
-    score = round(min(100, focus_penalty + paste_penalty + face_penalty + attention_penalty), 1)
+    score = round(min(100, focus_penalty + paste_penalty + face_penalty + attention_penalty + multi_face_penalty), 1)
 
     summary = {
         "focus_loss_count": focus_loss_count,
@@ -2241,11 +2279,14 @@ def _compute_fraud_risk(signals_map: dict, face_tracking: dict | None) -> tuple[
         "paste_chars": paste_chars,
         "face_present_percentage": float(face_tracking.get("face_present_percentage")) if face_tracking else None,
         "avg_attention_score": float(face_tracking.get("avg_attention_score")) if face_tracking else None,
+        "multi_face_percentage": float(face_tracking.get("multi_face_percentage")) if face_tracking else None,
+        "max_face_count": int(face_tracking.get("max_face_count") or 0) if face_tracking else None,
         "components": {
             "focus": focus_penalty,
             "paste": paste_penalty,
             "face": face_penalty,
             "attention": attention_penalty,
+            "multi_face": multi_face_penalty,
         },
     }
     return score, summary

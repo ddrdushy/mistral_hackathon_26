@@ -78,6 +78,15 @@ export default function InterviewPage({
 
   // Face detection
   const [faceDetected, setFaceDetected] = useState(false);
+  // Number of faces currently visible — drives the "multiple faces"
+  // warning banner during the call. Distinct from faceDetected so the
+  // present/missing chip stays correct when multi-face is true.
+  const [faceCount, setFaceCount] = useState(0);
+  // Sticky warning state: once we've seen multi-face for ≥2 consecutive
+  // snapshots we keep the banner up for ~5s after it clears so a brief
+  // pan doesn't make it flicker on/off.
+  const [multiFaceWarn, setMultiFaceWarn] = useState(false);
+  const multiFaceClearRef = useRef<number | null>(null);
   const [attentionScore, setAttentionScore] = useState(0);
   const faceDetectorRef = useRef<unknown>(null);
   const detectionLoopRef = useRef<number | null>(null);
@@ -239,7 +248,22 @@ export default function InterviewPage({
         performance.now()
       );
       const present = result.detections.length > 0;
+      const count = result.detections.length;
       setFaceDetected(present);
+      setFaceCount(count);
+
+      // Banner logic: show once we see >=2 faces; keep it visible for a
+      // few seconds after the last sighting so it doesn't strobe.
+      if (count > 1) {
+        setMultiFaceWarn(true);
+        if (multiFaceClearRef.current) {
+          window.clearTimeout(multiFaceClearRef.current);
+        }
+        multiFaceClearRef.current = window.setTimeout(() => {
+          setMultiFaceWarn(false);
+          multiFaceClearRef.current = null;
+        }, 5000);
+      }
 
       let score = 0;
       if (present && result.detections[0].boundingBox) {
@@ -254,7 +278,7 @@ export default function InterviewPage({
       latestFaceDataRef.current = {
         face_present: present,
         attention_score: score,
-        face_count: result.detections.length,
+        face_count: count,
       };
     } catch {
       // Skip frame on error
@@ -761,6 +785,29 @@ export default function InterviewPage({
                 ref={canvasRef}
                 className="absolute inset-0 w-full h-full pointer-events-none"
               />
+
+              {/* Multi-face warning — fires when MediaPipe sees more
+                  than one face on camera. Strong cheating signal that
+                  also gets recorded in the fraud_risk_score the
+                  recruiter sees after the interview. */}
+              {multiFaceWarn && phase === "interviewing" && (
+                <div className="absolute top-3 left-3 right-3 z-10">
+                  <div className="bg-rose-600 text-white rounded-lg px-3 py-2 shadow-lg flex items-center gap-2 animate-pulse">
+                    <svg className="w-5 h-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                    </svg>
+                    <div className="flex-1">
+                      <p className="text-sm font-semibold leading-tight">
+                        Multiple people detected on camera
+                      </p>
+                      <p className="text-[11px] text-rose-100 leading-tight mt-0.5">
+                        Only the candidate should be visible. This is being
+                        flagged for the recruiter.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
               {!cameraReady && (
                 <div className="absolute inset-0 flex items-center justify-center">
                   <div className="text-center">
