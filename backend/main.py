@@ -25,6 +25,7 @@ from routers import inbox, jobs, candidates, applications, screening, reports, s
 from routers import calendar as calendar_router
 from routers import notifications as notifications_router
 from routers import email_templates as email_templates_router
+from routers import onboarding as onboarding_router
 
 logger = logging.getLogger("hireops")
 logger.info("Global secrets sources: %s", _secret_sources)
@@ -147,6 +148,7 @@ app.include_router(support.feedback_router)
 app.include_router(support.admin_router)
 app.include_router(job_boards.router)
 app.include_router(job_boards.jobs_router)
+app.include_router(onboarding_router.router)
 app.include_router(whatsapp_webhook.router)
 app.include_router(calendar_router.router)
 app.include_router(notifications_router.router)

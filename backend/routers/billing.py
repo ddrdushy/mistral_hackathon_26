@@ -149,6 +149,98 @@ def get_usage(
     return summary
 
 
+@router.get("/llm-trend")
+def llm_spend_trend(
+    days: int = 30,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(current_session),
+):
+    """Per-day LLM spend for the tenant, for the dashboard spend widget.
+
+    Returns days of {date, spent_usd, calls}, oldest first. We bill the
+    tenant at their plan's markup, so spend reflects the *billable*
+    cost, not the platform's raw provider cost — keeps the number HR
+    sees aligned with what they'd be invoiced.
+    """
+    from datetime import datetime, timedelta, date as _date
+    from sqlalchemy import func, case
+    from models import LlmUsage
+    from billing.plans import get_plan
+
+    days = max(1, min(int(days or 30), 90))
+    end = datetime.utcnow()
+    start = end - timedelta(days=days)
+
+    markup = 1.0
+    try:
+        markup = float(get_plan(session.tenant.plan).llm_markup_multiplier or 1.0)
+    except Exception:
+        pass
+
+    # Group by UTC date.
+    rows = (
+        db.query(
+            func.date(LlmUsage.created_at).label("d"),
+            func.count(LlmUsage.id).label("n"),
+            func.coalesce(func.sum(LlmUsage.cost_usd), 0.0).label("raw"),
+        )
+        .filter(
+            LlmUsage.tenant_id == session.tenant.id,
+            LlmUsage.created_at >= start,
+        )
+        .group_by(func.date(LlmUsage.created_at))
+        .all()
+    )
+
+    # Fill every day so the sparkline doesn't have gaps.
+    by_date: dict[str, dict] = {}
+    for r in rows:
+        d = r.d.isoformat() if hasattr(r.d, "isoformat") else str(r.d)
+        by_date[d] = {
+            "date": d,
+            "calls": int(r.n or 0),
+            "spent_usd": round(float(r.raw or 0.0) * markup, 4),
+        }
+    out: list[dict] = []
+    cursor = (end - timedelta(days=days - 1)).date()
+    end_date = end.date()
+    while cursor <= end_date:
+        key = cursor.isoformat()
+        out.append(
+            by_date.get(key, {"date": key, "calls": 0, "spent_usd": 0.0})
+        )
+        cursor = cursor + timedelta(days=1)
+
+    # Month-to-date for the headline number on the widget.
+    first_of_month = end.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    month_raw = (
+        db.query(func.coalesce(func.sum(LlmUsage.cost_usd), 0.0))
+        .filter(
+            LlmUsage.tenant_id == session.tenant.id,
+            LlmUsage.created_at >= first_of_month,
+        )
+        .scalar()
+        or 0.0
+    )
+    month_calls = (
+        db.query(func.count(LlmUsage.id))
+        .filter(
+            LlmUsage.tenant_id == session.tenant.id,
+            LlmUsage.created_at >= first_of_month,
+        )
+        .scalar()
+        or 0
+    )
+
+    return {
+        "days": days,
+        "trend": out,
+        "month_to_date_usd": round(float(month_raw) * markup, 4),
+        "month_calls": int(month_calls),
+        "markup_multiplier": markup,
+    }
+
+
 # ── Checkout + portal (owner-only mutations) ──────────────────────────────
 
 

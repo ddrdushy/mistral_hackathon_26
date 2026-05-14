@@ -48,6 +48,8 @@ import Card from "@/components/ui/Card";
 import EmptyState from "@/components/ui/EmptyState";
 import LoadingSpinner from "@/components/ui/LoadingSpinner";
 import MetricCard from "@/components/ui/MetricCard";
+import OnboardingChecklist from "@/components/dashboard/OnboardingChecklist";
+import AiSpendWidget from "@/components/dashboard/AiSpendWidget";
 
 const STAGE_BAR_COLORS: Record<string, string> = {
   new: "#3b82f6",
@@ -211,6 +213,9 @@ export default function DashboardPage() {
         </button>
       </div>
 
+      {/* Onboarding checklist — auto-hides once every step is done. */}
+      <OnboardingChecklist />
+
       {/* Quick Actions — kept above-the-fold so HR's first reflex
           (Sync inbox / Create job / View candidates) is one click away
           instead of buried at the bottom of the dashboard. */}
@@ -270,8 +275,13 @@ export default function DashboardPage() {
         />
       </div>
 
-      {/* Row 1.5: Hiring forecast (Feature 8) */}
-      <PipelineForecastCard title="Hiring forecast" />
+      {/* Row 1.5: Hiring forecast + AI spend widget side-by-side. */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div className="lg:col-span-2">
+          <PipelineForecastCard title="Hiring forecast" />
+        </div>
+        <AiSpendWidget />
+      </div>
 
       {/* Row 2: Pipeline funnel + Decisions donut */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
