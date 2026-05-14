@@ -90,6 +90,32 @@ export default function TalentBankPage() {
   const [uploadOpen, setUploadOpen] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
 
+  // Pagination + view mode. Both prefs survive reloads via
+  // localStorage — recruiters tend to stick with one view.
+  const [page, setPage] = useState(1);
+  const [perPage, setPerPage] = useState<number>(() => {
+    if (typeof window === "undefined") return 24;
+    const v = parseInt(window.localStorage.getItem("hireops.talent.per_page") || "");
+    return v === 12 || v === 24 || v === 48 || v === 96 ? v : 24;
+  });
+  const [total, setTotal] = useState(0);
+  const [view, setView] = useState<"tiles" | "list">(() => {
+    if (typeof window === "undefined") return "tiles";
+    const v = window.localStorage.getItem("hireops.talent.view");
+    return v === "list" ? "list" : "tiles";
+  });
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem("hireops.talent.per_page", String(perPage));
+    }
+  }, [perPage]);
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem("hireops.talent.view", view);
+    }
+  }, [view]);
+
   // Click-to-open detail drawer. We open it for ANY candidate row, not
   // just talent-bank-only ones, so HR can edit/delete without
   // round-tripping through the application page.
@@ -98,6 +124,12 @@ export default function TalentBankPage() {
   // Tag filter state
   const [tags, setTags] = useState<TenantTag[]>([]);
   const [activeTagIds, setActiveTagIds] = useState<number[]>([]);
+
+  // When filters change, jump back to page 1 — otherwise switching
+  // from a 5-page set to a filtered 1-page set lands on empty page 4.
+  useEffect(() => {
+    setPage(1);
+  }, [search, showOnlyUnassigned, activeTagIds]);
 
   // Multi-select for bulk-tagging / bulk-enroll
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
@@ -129,21 +161,26 @@ export default function TalentBankPage() {
   const fetchData = useCallback(async () => {
     try {
       setLoading(true);
-      const params: Record<string, string> = { per_page: "100" };
+      const params: Record<string, string> = {
+        per_page: String(perPage),
+        page: String(page),
+      };
       if (search.trim()) params.search = search.trim();
       if (showOnlyUnassigned) params.talent_bank_only = "true";
       if (activeTagIds.length > 0) params.tag_ids = activeTagIds.join(",");
-      const res = await apiGet<{ candidates: TalentBankCandidate[] }>(
-        "/candidates",
-        params,
-      );
+      const res = await apiGet<{
+        candidates: TalentBankCandidate[];
+        total?: number;
+      }>("/candidates", params);
       setItems(res.candidates ?? []);
+      setTotal(res.total ?? (res.candidates?.length ?? 0));
     } catch {
       setItems([]);
+      setTotal(0);
     } finally {
       setLoading(false);
     }
-  }, [search, showOnlyUnassigned, activeTagIds]);
+  }, [search, showOnlyUnassigned, activeTagIds, page, perPage]);
 
   useEffect(() => {
     fetchTags();
@@ -280,7 +317,7 @@ export default function TalentBankPage() {
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">Talent Bank</h1>
           <p className="text-sm text-slate-500 mt-0.5">
-            {items.length} candidate{items.length === 1 ? "" : "s"} ·{" "}
+            {total} candidate{total === 1 ? "" : "s"} ·{" "}
             {totalProfiled} with AI profile · {unassignedCount} unassigned
           </p>
         </div>
@@ -313,6 +350,60 @@ export default function TalentBankPage() {
           />
           Unassigned only
         </label>
+
+        {/* Page size — recruiters scanning a large bank pick 48/96;
+            anyone reviewing a small batch sticks with 12/24. Persists
+            to localStorage. */}
+        <select
+          value={perPage}
+          onChange={(e) => {
+            setPerPage(parseInt(e.target.value, 10));
+            setPage(1);
+          }}
+          className="text-xs border border-slate-300 rounded-md px-2 py-1 bg-white"
+          aria-label="Candidates per page"
+        >
+          {[12, 24, 48, 96].map((n) => (
+            <option key={n} value={n}>
+              {n} / page
+            </option>
+          ))}
+        </select>
+
+        {/* Tiles ↔ list toggle. Tiles = rich cards (default), List =
+            one-line rows for fast skimming. */}
+        <div
+          className="inline-flex rounded-md border border-slate-300 overflow-hidden text-xs"
+          role="tablist"
+          aria-label="View mode"
+        >
+          <button
+            type="button"
+            onClick={() => setView("tiles")}
+            className={`px-2 py-1 ${
+              view === "tiles"
+                ? "bg-indigo-600 text-white"
+                : "bg-white text-slate-600 hover:bg-slate-50"
+            }`}
+            aria-pressed={view === "tiles"}
+            title="Tiles view"
+          >
+            ▦ Tiles
+          </button>
+          <button
+            type="button"
+            onClick={() => setView("list")}
+            className={`px-2 py-1 ${
+              view === "list"
+                ? "bg-indigo-600 text-white"
+                : "bg-white text-slate-600 hover:bg-slate-50"
+            }`}
+            aria-pressed={view === "list"}
+            title="List view"
+          >
+            ☰ List
+          </button>
+        </div>
       </div>
 
       {selectedIds.size > 0 && (
@@ -477,12 +568,99 @@ export default function TalentBankPage() {
               )}
             </div>
           ) : (
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+            <div
+              className={
+                view === "tiles"
+                  ? "grid grid-cols-1 xl:grid-cols-2 gap-3"
+                  : "flex flex-col gap-1.5"
+              }
+            >
               {items.map((c) => {
                 const isSelected = selectedIds.has(c.id);
                 const status: TalentBankStatus = c.talent_bank_status || "available";
                 const unavailable = status !== "available";
                 const statusBadge = TALENT_STATUS_BADGE[status];
+                if (view === "list") {
+                  // Compact list row — name, role, missing-field badges,
+                  // checkbox, click opens the drawer. Skips the rich
+                  // tile content so HR can skim 50 candidates per screen.
+                  return (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => setDrawerCand(c)}
+                      className={`text-left bg-white border rounded-lg px-3 py-2 flex items-center gap-3 hover:border-indigo-300 hover:shadow-sm transition ${
+                        isSelected
+                          ? "border-indigo-400 ring-1 ring-indigo-200"
+                          : "border-slate-200"
+                      } ${unavailable ? "opacity-75" : ""}`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={(e) => {
+                          e.stopPropagation();
+                          toggleSelected(c.id);
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                        className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                        aria-label={`Select ${c.name}`}
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-sm font-semibold text-slate-900 truncate">
+                            {c.name}
+                          </span>
+                          {c.profile?.role && (
+                            <span className="text-xs text-slate-500">
+                              · {c.profile.role}
+                            </span>
+                          )}
+                          {c.profile?.seniority &&
+                            c.profile.seniority !== "unknown" && (
+                              <span className="text-[10px] uppercase tracking-wider text-slate-400">
+                                · {c.profile.seniority}
+                              </span>
+                            )}
+                          {(c.missing_fields ?? []).length > 0 && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-rose-50 text-rose-700 border border-rose-200">
+                              ⚠ Missing {(c.missing_fields ?? []).join(" + ")}
+                            </span>
+                          )}
+                          {unavailable && (
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded border ${statusBadge.cls}`}>
+                              {statusBadge.label}
+                            </span>
+                          )}
+                        </div>
+                        {c.profile?.summary && (
+                          <p className="text-xs text-slate-500 mt-0.5 truncate">
+                            {c.profile.summary}
+                          </p>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        {c.resume_blob_available && (
+                          <a
+                            href={apiUrl(`/candidates/${c.id}/resume/file`)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            className="text-[11px] font-medium text-indigo-700 hover:text-indigo-900"
+                            title="Download CV"
+                          >
+                            ⤓
+                          </a>
+                        )}
+                        {c.created_at && (
+                          <span className="text-[10px] text-slate-400">
+                            {timeAgo(c.created_at)}
+                          </span>
+                        )}
+                      </div>
+                    </button>
+                  );
+                }
                 return (
                   <div
                     key={c.id}
@@ -720,6 +898,41 @@ export default function TalentBankPage() {
                   </div>
                 );
               })}
+            </div>
+          )}
+
+          {/* Pagination footer — only when there's more than one page. */}
+          {total > perPage && (
+            <div className="mt-4 flex items-center justify-between text-xs text-slate-500">
+              <span>
+                Showing {(page - 1) * perPage + 1}–
+                {Math.min(page * perPage, total)} of {total}
+              </span>
+              <div className="inline-flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  disabled={page <= 1 || loading}
+                  className="px-2.5 py-1 rounded border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  ← Prev
+                </button>
+                <span className="px-2 font-mono">
+                  Page {page} / {Math.max(1, Math.ceil(total / perPage))}
+                </span>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setPage((p) =>
+                      Math.min(Math.max(1, Math.ceil(total / perPage)), p + 1),
+                    )
+                  }
+                  disabled={page >= Math.ceil(total / perPage) || loading}
+                  className="px-2.5 py-1 rounded border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Next →
+                </button>
+              </div>
             </div>
           )}
         </div>
