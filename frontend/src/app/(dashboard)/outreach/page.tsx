@@ -97,19 +97,41 @@ export default function OutreachListPage() {
           ))}
         </div>
       ) : sequences.length === 0 ? (
-        <div className="bg-white border border-slate-200 rounded-xl p-12 text-center">
-          <ChatBubbleLeftRightIcon className="h-10 w-10 text-slate-300 mx-auto mb-3" />
-          <p className="text-sm text-slate-500 mb-4">
-            No sequences yet. Create one to start automating outreach.
-          </p>
-          <button
-            type="button"
-            onClick={() => setCreateOpen(true)}
-            className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-md"
-          >
-            <PlusIcon className="h-4 w-4" />
-            New sequence
-          </button>
+        <div className="bg-white border border-slate-200 rounded-xl p-10 sm:p-12">
+          <div className="max-w-xl mx-auto text-center">
+            <ChatBubbleLeftRightIcon className="h-10 w-10 text-slate-300 mx-auto mb-3" />
+            <h2 className="text-base font-semibold text-slate-900">
+              No outreach sequences yet
+            </h2>
+            <p className="text-sm text-slate-500 mt-2">
+              Sequences automate a series of touchpoints (email + WhatsApp +
+              SMS) to a list of candidates with built-in reply detection.
+              Pause on reply, pause on meeting booked, retry after N days —
+              configured once, runs in the background.
+            </p>
+            <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
+              <button
+                type="button"
+                onClick={() => setCreateOpen(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-md"
+              >
+                <PlusIcon className="h-4 w-4" />
+                New sequence
+              </button>
+              <Link
+                href="/jobs"
+                className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 hover:bg-slate-50 rounded-md"
+              >
+                Or one-off &quot;Reach out&quot; from a job →
+              </Link>
+            </div>
+            <p className="mt-5 text-xs text-slate-400">
+              Looking for ad-hoc reach-out activity? Open any job and use the
+              <span className="font-semibold"> From your talent bank </span>
+              panel to send a single batch of emails + WhatsApps without a
+              sequence.
+            </p>
+          </div>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">

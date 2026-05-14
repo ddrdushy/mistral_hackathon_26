@@ -274,8 +274,16 @@ export default function CandidateDetailPage({
       });
       setInterviewLink(result);
       await fetchApplication();
-    } catch {
-      alert("Failed to generate interview link.");
+    } catch (err) {
+      // Surface the actual API error — was previously swallowed as
+      // "Failed to generate interview link." which hid plan-gate
+      // failures (402), missing-job 404s, and ElevenLabs config
+      // problems alike.
+      alert(
+        err instanceof Error
+          ? `Failed to generate interview link: ${err.message}`
+          : "Failed to generate interview link.",
+      );
     } finally {
       setLinkLoading(false);
     }
