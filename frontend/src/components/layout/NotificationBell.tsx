@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { BellIcon } from "@heroicons/react/24/outline";
-import { apiGet } from "@/lib/api";
+import { apiGet, apiUrl } from "@/lib/api";
 import { timeAgo } from "@/lib/constants";
 
 interface Notification {
@@ -44,12 +44,77 @@ export default function NotificationBell() {
     }
   }, []);
 
-  // Poll every 60s so the unread dot keeps up with new events without
-  // a websocket. Cheap query — bounded by surfaced event types.
+  // Initial catch-up: full /notifications fetch so the dropdown is
+  // populated with up to 20 most-recent items immediately.
   useEffect(() => {
     load();
-    const i = setInterval(load, 60_000);
-    return () => clearInterval(i);
+  }, [load]);
+
+  // Live updates via Server-Sent Events. Replaces the previous 60s
+  // poll — new events appear in the dropdown within ~4 seconds of
+  // landing in the database. Falls back to a 60s poll automatically
+  // when the stream dies (mobile sleep, server restart, etc.) until
+  // the next reconnect.
+  const [flash, setFlash] = useState(false);
+  useEffect(() => {
+    let es: EventSource | null = null;
+    let pollFallback: ReturnType<typeof setInterval> | null = null;
+
+    const startPollFallback = () => {
+      if (pollFallback) return;
+      pollFallback = setInterval(load, 60_000);
+    };
+    const stopPollFallback = () => {
+      if (pollFallback) {
+        clearInterval(pollFallback);
+        pollFallback = null;
+      }
+    };
+
+    const connect = () => {
+      try {
+        // EventSource sends cookies by default for same-origin requests
+        // (we run frontend + backend behind the same hostname). On
+        // cross-origin builds, set withCredentials via the {withCredentials}
+        // option below.
+        es = new EventSource(apiUrl("/notifications/stream"), {
+          withCredentials: true,
+        });
+        es.addEventListener("notification", (e) => {
+          try {
+            const data = JSON.parse((e as MessageEvent).data);
+            setItems((prev) => {
+              // Dedupe by id (server might re-send after a reconnect).
+              if (prev.some((n) => n.id === data.id)) return prev;
+              return [data as Notification, ...prev].slice(0, 50);
+            });
+            // Brief flash on the bell to draw attention.
+            setFlash(true);
+            setTimeout(() => setFlash(false), 1500);
+          } catch {
+            /* ignore malformed event */
+          }
+        });
+        es.addEventListener("hello", () => {
+          // Connection established — kill any active fallback poll.
+          stopPollFallback();
+        });
+        es.onerror = () => {
+          // The browser will retry automatically; until it does, fall
+          // back to plain polling so the user isn't blind.
+          startPollFallback();
+        };
+      } catch {
+        startPollFallback();
+      }
+    };
+
+    connect();
+
+    return () => {
+      if (es) es.close();
+      stopPollFallback();
+    };
   }, [load]);
 
   useEffect(() => {
@@ -89,10 +154,14 @@ export default function NotificationBell() {
       <button
         type="button"
         onClick={handleOpen}
-        className="relative p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors"
+        className={`relative p-2 rounded-lg transition-colors ${
+          flash
+            ? "text-indigo-700 bg-indigo-50"
+            : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"
+        }`}
         aria-label={`Notifications (${unreadCount} unread)`}
       >
-        <BellIcon className="w-5 h-5" />
+        <BellIcon className={`w-5 h-5 ${flash ? "animate-soft-pulse" : ""}`} />
         {unreadCount > 0 && (
           <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-blue-600 rounded-full" />
         )}
