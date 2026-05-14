@@ -497,7 +497,40 @@ async def upload_candidate(
     extract text from the file, parse name+email+phone if not provided,
     save the candidate, and kick off profile extraction in the background
     so the candidate is searchable for future jobs immediately.
+
+    Wrapped in a catch-all so anything unexpected (DB error, LLM
+    timeout, blob-save failure) returns 500 WITH a `detail` string the
+    UI can show — instead of FastAPI's opaque HTML 500 that left HR
+    staring at the literal text "HTTP 500" in the bulk-upload dialog.
     """
+    try:
+        return await _upload_candidate_impl(
+            file, name, email, phone, notes, db, session,
+        )
+    except HTTPException:
+        # Pass through our own deliberate 4xxs.
+        raise
+    except Exception as e:
+        import logging as _log
+        _log.getLogger("hireops.candidates").exception(
+            "upload_candidate crashed for file=%s tenant=%s",
+            file.filename, session.tenant.id,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Couldn't process this CV: {type(e).__name__}: {e}",
+        )
+
+
+async def _upload_candidate_impl(
+    file: UploadFile,
+    name: Optional[str],
+    email: Optional[str],
+    phone: Optional[str],
+    notes: Optional[str],
+    db: Session,
+    session: CurrentSession,
+):
     check_quota(db, session.tenant, "candidates")
 
     file_bytes = await file.read()

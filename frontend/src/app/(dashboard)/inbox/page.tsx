@@ -635,13 +635,20 @@ export default function InboxPage() {
                         )}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
+                        {/* Candidate creation is automatic when an
+                            email gets classified as an application —
+                            this button only appears when the auto-
+                            workflow didn't run / failed for this row,
+                            so HR can manually retry without re-classifying
+                            the whole inbox. */}
                         {classification === "candidate_application" && processed < 2 && (
                           <button
                             onClick={() => handleCreateCandidate(email.id)}
                             disabled={creatingCandidate === email.id}
-                            className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-md text-indigo-700 bg-indigo-50 hover:bg-indigo-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                            className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-md text-amber-700 bg-amber-50 hover:bg-amber-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                            title="Auto-workflow didn't complete for this email. Click to retry candidate creation."
                           >
-                            {creatingCandidate === email.id ? "Creating..." : "Create Candidate"}
+                            {creatingCandidate === email.id ? "Creating…" : "↻ Retry"}
                           </button>
                         )}
                       </td>

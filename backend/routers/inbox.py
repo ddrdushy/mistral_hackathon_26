@@ -259,6 +259,7 @@ async def classify_emails(
         Email.classified_as.is_(None),
     ).all()
     results = []
+    application_email_ids: list[int] = []
     for em in unclassified:
         attachments = json.loads(em.attachments) if em.attachments else []
         attachment_names = [a.get("filename", "") for a in attachments]
@@ -271,6 +272,26 @@ async def classify_emails(
             body_text=em.body_snippet,
         )
         output = await classify_email(input_data)
+
+        # Local override: when an email carries 2+ resume-shaped
+        # attachments the LLM has been observed to label it "general"
+        # (e.g. a recruiter forwarding a batch of profiles with subject
+        # "FW: Profiles"). Multiple PDFs/DOCXs that look like CVs are
+        # an extremely strong application signal — promote it.
+        resume_like = [
+            n for n in attachment_names
+            if n and n.lower().endswith((".pdf", ".docx", ".doc"))
+        ]
+        if (
+            len(resume_like) >= 2
+            and output.category != "candidate_application"
+        ):
+            output.category = "candidate_application"
+            output.confidence = max(output.confidence or 0.0, 0.9)
+            output.reasoning = (
+                (output.reasoning or "")
+                + " [override: 2+ resume-shaped attachments]"
+            )
 
         em.classified_as = output.category
         em.confidence = output.confidence
@@ -291,7 +312,31 @@ async def classify_emails(
             "detected_name": output.detected_name,
         })
 
+        # Auto-create candidates for anything classified as an
+        # application. HR was clicking "Create Candidate" by hand on
+        # every row anyway; this just folds that step into classify.
+        if output.category == "candidate_application":
+            application_email_ids.append(em.id)
+
     db.commit()
+
+    # Run the full workflow (CV extract → dedup → candidate row →
+    # match → score) for every email we just classified as an
+    # application. Best-effort: per-email failures don't break the
+    # batch; the row stays at processed=1 so the existing manual
+    # "Create Candidate" button is still a fallback if HR wants it.
+    if application_email_ids:
+        from services.workflow_service import run_email_workflow
+        for eid in application_email_ids:
+            try:
+                await run_email_workflow(eid, db)
+            except Exception as e:
+                import logging as _log
+                _log.getLogger("hireops.inbox").warning(
+                    "Auto-workflow failed for email %s after classify: %s",
+                    eid, e,
+                )
+
     return InboxClassifyResponse(classified_count=len(results), results=results)
 
 
