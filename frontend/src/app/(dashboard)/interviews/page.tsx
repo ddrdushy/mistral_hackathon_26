@@ -10,6 +10,7 @@ import {
   PaperAirplaneIcon,
   ExclamationCircleIcon,
 } from "@heroicons/react/24/outline";
+import FeatureLockBanner from "@/components/entitlements/FeatureLockBanner";
 
 type Status =
   | "generated"
@@ -135,6 +136,11 @@ export default function InterviewsPage() {
 
   return (
     <div className="space-y-5">
+      <FeatureLockBanner
+        agent="voice_screener"
+        featureLabel="AI interviews"
+        description="Voice and Q&A interview agents (ElevenLabs voice + Mistral Q&A scorer) aren't included in your current plan. Past interview history is read-only — new interview links can't be generated until enabled."
+      />
       <div>
         <div className="flex items-center gap-2 mb-1">
           <VideoCameraIcon className="w-6 h-6 text-indigo-600" />

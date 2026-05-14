@@ -9,6 +9,7 @@ import {
 } from "@heroicons/react/24/outline";
 import { apiGet, apiPost } from "@/lib/api";
 import { timeAgo } from "@/lib/constants";
+import FeatureLockBanner from "@/components/entitlements/FeatureLockBanner";
 
 interface CallRow {
   id: number;
@@ -126,6 +127,11 @@ export default function CallQueuePage() {
 
   return (
     <div className="space-y-4">
+      <FeatureLockBanner
+        agent="voice_screener"
+        featureLabel="Voice screening"
+        description="Outbound AI voice calls (powered by ElevenLabs) are part of the Business plan. The call queue still surfaces past calls for tenants that get added later — but new calls can't be placed until the feature is enabled."
+      />
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">Call Queue</h1>

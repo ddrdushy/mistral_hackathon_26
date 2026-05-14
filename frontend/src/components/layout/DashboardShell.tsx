@@ -8,6 +8,7 @@ import VerificationBanner from "@/components/auth/VerificationBanner";
 import OrganizationProfileBanner from "@/components/auth/OrganizationProfileBanner";
 import { HelpProvider } from "@/components/help/HelpContext";
 import FloatingHelpButton from "@/components/help/FloatingHelpButton";
+import { EntitlementsProvider } from "@/components/entitlements/EntitlementsProvider";
 import CommandPalette from "./CommandPalette";
 
 interface DashboardShellProps {
@@ -41,6 +42,7 @@ export default function DashboardShell({ children }: DashboardShellProps) {
   }, []);
 
   return (
+    <EntitlementsProvider>
     <HelpProvider>
       <div className="min-h-screen bg-slate-50">
         {/* Sidebar */}
@@ -79,5 +81,6 @@ export default function DashboardShell({ children }: DashboardShellProps) {
         <CommandPalette />
       </div>
     </HelpProvider>
+    </EntitlementsProvider>
   );
 }

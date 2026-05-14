@@ -3,6 +3,7 @@
 import { use, useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { apiGet, apiPost, apiPatch, apiDelete, apiUrl } from "@/lib/api";
+import { useGate } from "@/components/entitlements/EntitlementsProvider";
 import FraudSignalsCard from "@/components/candidates/FraudSignalsCard";
 import FraudHighlights from "@/components/candidates/FraudHighlights";
 import HrVideoPanel from "@/components/candidates/HrVideoPanel";
@@ -113,6 +114,12 @@ export default function CandidateDetailPage({
   // candidate exists but has no Application yet — the common case for
   // anyone uploaded directly to the talent bank.
   const [candidate, setCandidate] = useState<Candidate | null>(null);
+
+  // Plan gating for interview-link generation. Surfaced as a friendly
+  // alert that includes a Contact-us link rather than letting the API
+  // 402 the user with raw plan-gate text.
+  const voiceGate = useGate("voice_screener");
+  const qaGate = useGate("qa_interview_generate");
 
   // Application id resolved after fetch. Used by every action handler
   // below — keeps us from accidentally routing /applications/{candidate_id}
@@ -267,6 +274,22 @@ export default function CandidateDetailPage({
   const handleReject = () => handleStageChange("rejected");
 
   const handleGenerateLink = async () => {
+    // Pre-flight plan gate. Decide which agent is needed from the
+    // job's interview_mode; default to voice if we can't tell yet.
+    const isQa = (app as unknown as { interview_mode?: string } | null)
+      ?.interview_mode === "qa";
+    const gate = isQa ? qaGate : voiceGate;
+    if (!gate.allowed) {
+      const proceed = confirm(
+        `${isQa ? "Q&A" : "Voice"} screening isn't enabled on ` +
+          `${gate.planLabel}. Click OK to email us about enabling it for your tenant.`,
+      );
+      if (proceed) {
+        window.location.href = gate.contactHref;
+      }
+      return;
+    }
+
     setLinkLoading(true);
     try {
       const result = await apiPost<InterviewLink>("/screening/generate-link", {
