@@ -5,6 +5,7 @@ import { useRouter, useParams } from "next/navigation";
 import { apiGet, apiPost, apiPut } from "@/lib/api";
 import { SENIORITY_OPTIONS } from "@/lib/constants";
 import type { Job, JobCreate } from "@/types/index";
+import { useGate } from "@/components/entitlements/EntitlementsProvider";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "/api/v1";
 
@@ -146,10 +147,21 @@ export default function EditJobPage() {
     }));
   };
 
+  const jobGenGate = useGate("job_generator");
+  const requireJobGen = (): boolean => {
+    if (jobGenGate.allowed) return true;
+    const proceed = confirm(
+      `AI JD refinement isn't enabled on ${jobGenGate.planLabel}. Click OK to email us about enabling it.`,
+    );
+    if (proceed) window.location.href = jobGenGate.contactHref;
+    return false;
+  };
+
   // Polish-in-place: serialises the current form into plain text and
   // sends it back through /jobs/refine, which re-structures + tightens
   // the wording. HR's wording stays, just gets organised.
   const handlePolishCurrent = async () => {
+    if (!requireJobGen()) return;
     setRefining(true);
     setAiMessage(null);
     setError(null);
@@ -188,6 +200,7 @@ export default function EditJobPage() {
   const handleRefineText = async () => {
     const text = pasteText.trim();
     if (!text) return;
+    if (!requireJobGen()) return;
     setRefining(true);
     setAiMessage(null);
     setError(null);
@@ -205,6 +218,7 @@ export default function EditJobPage() {
   };
 
   const handleRefineFile = async (file: File) => {
+    if (!requireJobGen()) return;
     setRefining(true);
     setAiMessage(null);
     setError(null);

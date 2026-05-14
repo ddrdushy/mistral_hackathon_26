@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { apiPost } from "@/lib/api";
 import { SENIORITY_OPTIONS } from "@/lib/constants";
 import type { Job, JobCreate } from "@/types/index";
+import { useGate } from "@/components/entitlements/EntitlementsProvider";
 
 export default function CreateJobPage() {
   const router = useRouter();
@@ -139,9 +140,19 @@ export default function CreateJobPage() {
     setRefinePanelOpen(false);
   };
 
+  const requireJobGen = (): boolean => {
+    if (jobGenGate.allowed) return true;
+    const proceed = confirm(
+      `AI JD refinement isn't enabled on ${jobGenGate.planLabel}. Click OK to email us about enabling it.`,
+    );
+    if (proceed) window.location.href = jobGenGate.contactHref;
+    return false;
+  };
+
   const handleRefineText = async () => {
     const text = refineText.trim();
     if (!text) return;
+    if (!requireJobGen()) return;
     setRefining(true);
     setError(null);
     try {
@@ -155,6 +166,7 @@ export default function CreateJobPage() {
   };
 
   const handleRefineFile = async (file: File) => {
+    if (!requireJobGen()) return;
     setRefining(true);
     setError(null);
     try {
@@ -181,9 +193,18 @@ export default function CreateJobPage() {
     }
   };
 
+  const jobGenGate = useGate("job_generator");
+
   const handleGenerate = async () => {
     if (!form.title.trim()) {
       setTitleError(true);
+      return;
+    }
+    if (!jobGenGate.allowed) {
+      const proceed = confirm(
+        `AI job drafting isn't enabled on ${jobGenGate.planLabel}. Click OK to email us about enabling it.`,
+      );
+      if (proceed) window.location.href = jobGenGate.contactHref;
       return;
     }
 

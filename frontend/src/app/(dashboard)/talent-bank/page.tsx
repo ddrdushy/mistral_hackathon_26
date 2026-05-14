@@ -6,6 +6,7 @@ import {
   MagnifyingGlassIcon,
 } from "@heroicons/react/24/outline";
 import { apiGet, apiPost, apiDelete, apiUrl } from "@/lib/api";
+import { useGate } from "@/components/entitlements/EntitlementsProvider";
 import { timeAgo } from "@/lib/constants";
 import TagChip from "@/components/tags/TagChip";
 import TagPicker from "@/components/tags/TagPicker";
@@ -292,7 +293,16 @@ export default function TalentBankPage() {
     }
   };
 
+  const profileGate = useGate("profile_extractor");
+
   const reExtractProfile = async (candidateId: number) => {
+    if (!profileGate.allowed) {
+      const proceed = confirm(
+        `AI profile tagging isn't enabled on ${profileGate.planLabel}. Click OK to email us about enabling it.`,
+      );
+      if (proceed) window.location.href = profileGate.contactHref;
+      return;
+    }
     setReExtractingId(candidateId);
     try {
       await apiPost(`/candidates/${candidateId}/re-extract`);

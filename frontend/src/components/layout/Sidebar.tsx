@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEntitlements } from "@/components/entitlements/EntitlementsProvider";
 import {
   HomeIcon,
   InboxIcon,
@@ -22,6 +23,11 @@ interface NavItem {
   label: string;
   href: string;
   icon: React.ComponentType<React.SVGProps<SVGSVGElement>>;
+  /** When set, the item dims + shows a small 🔒 when this agent is
+   * locked on the tenant's plan. The link still works (so HR sees the
+   * page's own FeatureLockBanner explaining what's missing) — we don't
+   * disable navigation, just signal "this won't fully work yet". */
+  gatedAgent?: string;
 }
 
 const navItems: NavItem[] = [
@@ -30,10 +36,10 @@ const navItems: NavItem[] = [
   { label: "Jobs", href: "/jobs", icon: BriefcaseIcon },
   { label: "Candidates", href: "/candidates", icon: UsersIcon },
   { label: "Talent Bank", href: "/talent-bank", icon: BookmarkSquareIcon },
-  { label: "Call Queue", href: "/calls", icon: PhoneIcon },
-  { label: "Interviews", href: "/interviews", icon: VideoCameraIcon },
-  { label: "Outreach", href: "/outreach", icon: ChatBubbleLeftRightIcon },
-  { label: "Reports", href: "/reports", icon: ChartBarIcon },
+  { label: "Call Queue", href: "/calls", icon: PhoneIcon, gatedAgent: "voice_screener" },
+  { label: "Interviews", href: "/interviews", icon: VideoCameraIcon, gatedAgent: "voice_screener" },
+  { label: "Outreach", href: "/outreach", icon: ChatBubbleLeftRightIcon, gatedAgent: "talent_search" },
+  { label: "Reports", href: "/reports", icon: ChartBarIcon, gatedAgent: "hiring_report" },
   { label: "Docs", href: "/docs", icon: BookOpenIcon },
   { label: "Settings", href: "/settings", icon: Cog6ToothIcon },
 ];
@@ -47,6 +53,7 @@ interface SidebarProps {
 
 export default function Sidebar({ isOpen, collapsed, onClose, onToggleCollapse }: SidebarProps) {
   const pathname = usePathname();
+  const { isAllowed } = useEntitlements();
   const visibleNav = navItems;
 
   const isActive = (href: string): boolean => {
@@ -94,25 +101,46 @@ export default function Sidebar({ isOpen, collapsed, onClose, onToggleCollapse }
           {visibleNav.map((item) => {
             const active = isActive(item.href);
             const Icon = item.icon;
+            const locked = !!item.gatedAgent && !isAllowed(item.gatedAgent);
 
             return (
               <Link
                 key={item.href}
                 href={item.href}
                 onClick={() => onClose()}
-                title={collapsed ? item.label : undefined}
+                title={
+                  collapsed
+                    ? `${item.label}${locked ? " — locked on your plan" : ""}`
+                    : locked
+                    ? "Locked on your plan — click for details"
+                    : undefined
+                }
                 className={`
                   flex items-center ${collapsed ? "justify-center" : "gap-3"} ${collapsed ? "px-0 py-2.5" : "px-3 py-2.5"} rounded-lg text-sm font-medium
                   transition-colors duration-150
                   ${
                     active
                       ? `bg-slate-800 text-white ${collapsed ? "" : "border-l-4 border-blue-500 pl-2"}`
+                      : locked
+                      ? "text-slate-500 hover:text-slate-300 hover:bg-slate-800/40"
                       : "text-slate-400 hover:text-white hover:bg-slate-800/50"
                   }
                 `}
               >
-                <Icon className="w-5 h-5 flex-shrink-0" />
-                {!collapsed && <span>{item.label}</span>}
+                <Icon className={`w-5 h-5 flex-shrink-0 ${locked ? "opacity-70" : ""}`} />
+                {!collapsed && (
+                  <span className="flex-1 inline-flex items-center justify-between">
+                    <span>{item.label}</span>
+                    {locked && (
+                      <span
+                        className="text-[10px] leading-none ml-2 opacity-80"
+                        aria-label="Locked on plan"
+                      >
+                        🔒
+                      </span>
+                    )}
+                  </span>
+                )}
               </Link>
             );
           })}

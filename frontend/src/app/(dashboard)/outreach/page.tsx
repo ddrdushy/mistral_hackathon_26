@@ -9,6 +9,7 @@ import {
   PhoneIcon,
 } from "@heroicons/react/24/outline";
 import { apiGet, apiPost } from "@/lib/api";
+import FeatureLockBanner from "@/components/entitlements/FeatureLockBanner";
 
 interface SequenceCard {
   id: number;
@@ -66,6 +67,11 @@ export default function OutreachListPage() {
 
   return (
     <div className="space-y-4">
+      <FeatureLockBanner
+        agent="talent_search"
+        featureLabel="Automated outreach sequences"
+        description="Multi-step outreach sequences (auto email + WhatsApp + SMS with reply detection) are part of the Business plan. You can still do ad-hoc 'Reach out' from a job page even without this enabled — see the link below."
+      />
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">Outreach</h1>
