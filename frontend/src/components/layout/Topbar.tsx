@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import { usePathname } from "next/navigation";
 import {
   Bars3Icon,
+  MagnifyingGlassIcon,
   QuestionMarkCircleIcon,
   ArrowRightOnRectangleIcon,
   UsersIcon,
@@ -98,9 +99,25 @@ export default function Topbar({ onMenuToggle }: TopbarProps) {
       </h1>
 
       {/* Right section */}
-      <div className="ml-auto flex items-center gap-3">
-        {/* Live candidate search with dropdown of top matches. */}
+      <div className="ml-auto flex items-center gap-1.5 sm:gap-3">
+        {/* Live candidate search with dropdown of top matches (desktop). */}
         <TopbarSearch />
+
+        {/* Mobile-only search trigger — opens the global command
+            palette, which on a touch device acts as the search surface
+            since the desktop input is hidden. */}
+        <button
+          type="button"
+          onClick={() => {
+            if (typeof window !== "undefined") {
+              window.dispatchEvent(new CustomEvent("commandpalette:open"));
+            }
+          }}
+          className="md:hidden p-2 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+          aria-label="Search"
+        >
+          <MagnifyingGlassIcon className="w-5 h-5" />
+        </button>
 
         {/* Help — opens the contextual drawer for the current page. */}
         <button

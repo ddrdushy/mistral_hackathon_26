@@ -110,6 +110,9 @@ export default function CommandPalette() {
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   // Global keyboard shortcut: Cmd-K / Ctrl-K. Also Esc to close.
+  // Also responds to a `commandpalette:open` window event so any
+  // component (e.g. the mobile-only search button in Topbar) can pop
+  // the palette without needing a shared context.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       const isOpenCombo =
@@ -123,8 +126,13 @@ export default function CommandPalette() {
         setOpen(false);
       }
     };
+    const openEvent = () => setOpen(true);
     window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
+    window.addEventListener("commandpalette:open", openEvent);
+    return () => {
+      window.removeEventListener("keydown", handler);
+      window.removeEventListener("commandpalette:open", openEvent);
+    };
   }, [open]);
 
   // Focus the input every time we open, reset state.
