@@ -64,6 +64,12 @@ export default function InterviewPage({
 
   // Phase state machine
   const [phase, setPhase] = useState<InterviewPhase>("loading");
+  // Phase mirrored into a ref so async callbacks (onDisconnect) can
+  // read the current value without stale-closure surprises.
+  const phaseRef = useRef<InterviewPhase>("loading");
+  useEffect(() => {
+    phaseRef.current = phase;
+  }, [phase]);
   const [interviewData, setInterviewData] = useState<InterviewData | null>(
     null
   );
@@ -75,6 +81,21 @@ export default function InterviewPage({
   const streamRef = useRef<MediaStream | null>(null);
   const [cameraReady, setCameraReady] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
+
+  // Pre-flight mic meter — drives a visible "your mic IS capturing"
+  // bar on the setup screen. Candidates routinely click Start with a
+  // muted system mic and discover it only when the AI doesn't react.
+  const [micLevel, setMicLevel] = useState(0);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const micFrameRef = useRef<number | null>(null);
+
+  // Auto-reconnect bookkeeping. `userEndingRef` flips when the user
+  // clicks End — that way onDisconnect can tell "they ended it" from
+  // "the WebSocket dropped". Reconnect attempts cap at 3.
+  const userEndingRef = useRef(false);
+  const reconnectAttemptsRef = useRef(0);
+  const [reconnecting, setReconnecting] = useState(false);
 
   // Face detection
   const [faceDetected, setFaceDetected] = useState(false);
@@ -112,8 +133,35 @@ export default function InterviewPage({
   const conversation = useConversation({
     onConnect: () => {
       updateStatus("interview_started");
+      // Each successful (re)connect clears the retry counter so a long
+      // session can still recover from a later blip.
+      reconnectAttemptsRef.current = 0;
+      setReconnecting(false);
     },
     onDisconnect: () => {
+      // Distinguish user-initiated end from a dropped WebSocket: only
+      // attempt to reconnect when (a) the candidate didn't click End,
+      // (b) we were genuinely in-call, and (c) we haven't burnt 3
+      // retries already.
+      const droppedDuringCall =
+        !userEndingRef.current &&
+        phaseRef.current === "interviewing" &&
+        reconnectAttemptsRef.current < 3;
+      if (droppedDuringCall) {
+        reconnectAttemptsRef.current += 1;
+        setReconnecting(true);
+        // Exponential-ish backoff so a flaky network has a chance.
+        const delay = 500 * Math.pow(2, reconnectAttemptsRef.current);
+        setTimeout(() => {
+          // Retry — the ElevenLabs SDK will re-open the WS. If
+          // startSession throws (e.g. permission revoked) we fall
+          // through to handleInterviewEnd on the next disconnect.
+          startInterviewSession().catch(() => {
+            handleInterviewEnd();
+          });
+        }, delay);
+        return;
+      }
       handleInterviewEnd();
     },
     onMessage: (message: { source: string; message: string }) => {
@@ -179,9 +227,16 @@ export default function InterviewPage({
 
   const startCamera = async () => {
     try {
+      // Request video + audio together so we can run a pre-flight mic
+      // meter on the setup screen. The audio track is torn down before
+      // the ElevenLabs SDK starts so it can grab a clean mic itself.
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: "user", width: 640, height: 480 },
-        audio: false,
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
       });
       streamRef.current = stream;
       if (videoRef.current) {
@@ -191,12 +246,85 @@ export default function InterviewPage({
         setCameraError(null);
         // Init face detection after camera is ready
         initFaceDetection();
+        // Init mic-level meter so candidate sees their voice register
+        // before clicking Start.
+        initMicMeter(stream);
       }
     } catch {
       setCameraError(
         "Camera access is required for the interview. Please enable your webcam and reload."
       );
     }
+  };
+
+  // ── Pre-flight mic meter ────────────────────────────────────────────────
+
+  const initMicMeter = (stream: MediaStream) => {
+    try {
+      const audioTracks = stream.getAudioTracks();
+      if (audioTracks.length === 0) return;
+      const Ctx =
+        (window as unknown as { AudioContext?: typeof AudioContext })
+          .AudioContext ||
+        (window as unknown as { webkitAudioContext?: typeof AudioContext })
+          .webkitAudioContext;
+      if (!Ctx) return;
+      const ctx = new Ctx();
+      const source = ctx.createMediaStreamSource(stream);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 256;
+      analyser.smoothingTimeConstant = 0.7;
+      source.connect(analyser);
+      audioCtxRef.current = ctx;
+      analyserRef.current = analyser;
+
+      const data = new Uint8Array(analyser.frequencyBinCount);
+      const tick = () => {
+        if (!analyserRef.current) return;
+        analyserRef.current.getByteTimeDomainData(data);
+        // Convert PCM bytes to a 0-1 RMS-style level.
+        let sum = 0;
+        for (let i = 0; i < data.length; i++) {
+          const v = (data[i] - 128) / 128;
+          sum += v * v;
+        }
+        const rms = Math.sqrt(sum / data.length);
+        // Normalise — typical conversational speech hits 0.05-0.15.
+        const level = Math.min(1, rms * 6);
+        setMicLevel(level);
+        micFrameRef.current = requestAnimationFrame(tick);
+      };
+      tick();
+    } catch (err) {
+      console.warn("Mic meter init failed:", err);
+    }
+  };
+
+  // Tear the meter down when the ElevenLabs SDK is about to grab the
+  // mic, otherwise both compete for the same input on some browsers.
+  const teardownMicMeter = () => {
+    if (micFrameRef.current) {
+      cancelAnimationFrame(micFrameRef.current);
+      micFrameRef.current = null;
+    }
+    if (analyserRef.current) {
+      try {
+        analyserRef.current.disconnect();
+      } catch {}
+      analyserRef.current = null;
+    }
+    if (audioCtxRef.current) {
+      try {
+        audioCtxRef.current.close();
+      } catch {}
+      audioCtxRef.current = null;
+    }
+    // Drop the audio track from the camera stream so ElevenLabs grabs
+    // a fresh one. Keeping the video track alive for the face frame.
+    if (streamRef.current) {
+      streamRef.current.getAudioTracks().forEach((t) => t.stop());
+    }
+    setMicLevel(0);
   };
 
   // ── Face Detection (MediaPipe) ──────────────────────────────────────────
@@ -321,61 +449,60 @@ export default function InterviewPage({
 
   // ── Start Interview ─────────────────────────────────────────────────────
 
+  // Pure session-open — used by both the initial Start click and the
+  // auto-reconnect path. Doesn't tear down audio (the meter is already
+  // torn down on first call; the reconnect path has no meter to kill).
+  const startInterviewSession = async () => {
+    if (!interviewData?.elevenlabs_agent_id) {
+      throw new Error("Interview agent not configured");
+    }
+    const curated = interviewData.custom_questions || [];
+    const sourceList =
+      curated.length > 0
+        ? curated.map((q) => q.text)
+        : interviewData.screening_questions || [];
+    const questionsText = sourceList
+      .map((q, i) => `${i + 1}. ${q}`)
+      .join("\n");
+    const requiredText = curated
+      .filter((q) => q.is_required)
+      .map((q, i) => `${i + 1}. ${q.text}`)
+      .join("\n");
+    const timezone =
+      Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Singapore";
+    const conversationId = await conversation.startSession({
+      agentId: interviewData.elevenlabs_agent_id,
+      connectionType: "websocket",
+      dynamicVariables: {
+        candidate_name: interviewData.candidate_first_name,
+        job_title: interviewData.job_title,
+        job_id: interviewData.job_code,
+        company_name: interviewData.company_name,
+        screening_questions: questionsText,
+        required_questions: requiredText,
+        language: "English",
+        timezone: timezone,
+      },
+    });
+    if (conversationId) {
+      updateStatus("interview_started", conversationId);
+    }
+    return conversationId;
+  };
+
   const startInterview = async () => {
     if (!interviewData?.elevenlabs_agent_id) {
       setErrorMsg("Interview agent not configured. Please contact the recruiter.");
       return;
     }
 
+    // Release our pre-flight audio analyser so the ElevenLabs SDK has
+    // a clean mic to grab. Camera (video track) stays alive for face
+    // tracking through the call.
+    teardownMicMeter();
+
     try {
-      // Prefer HR-curated questions when the job has them — those are
-      // what the recruiter actually wants asked verbatim. Fall back to
-      // the resume-score-generated screening_questions when no custom
-      // list exists (e.g. a Free-plan tenant that hasn't curated yet).
-      // Either way, format as a numbered list so the agent surfaces
-      // them in order.
-      const curated = interviewData.custom_questions || [];
-      const sourceList =
-        curated.length > 0
-          ? curated.map((q) => q.text)
-          : interviewData.screening_questions || [];
-      const questionsText = sourceList
-        .map((q, i) => `${i + 1}. ${q}`)
-        .join("\n");
-      // Required questions get a separate variable so the agent's prompt
-      // can prioritise them. Empty string when none.
-      const requiredText = curated
-        .filter((q) => q.is_required)
-        .map((q, i) => `${i + 1}. ${q.text}`)
-        .join("\n");
-
-      // Detect candidate timezone
-      const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Singapore";
-
-      const conversationId = await conversation.startSession({
-        agentId: interviewData.elevenlabs_agent_id,
-        connectionType: "websocket",
-        dynamicVariables: {
-          candidate_name: interviewData.candidate_first_name,
-          job_title: interviewData.job_title,
-          job_id: interviewData.job_code,
-          company_name: interviewData.company_name,
-          // `screening_questions` is the variable the ElevenLabs agent
-          // is already wired to read — we keep that name so the agent
-          // prompt doesn't need an update, but the content now comes
-          // from the curated list first.
-          screening_questions: questionsText,
-          required_questions: requiredText,
-          language: "English",
-          timezone: timezone,
-        },
-      });
-
-      // Notify backend of conversation ID so it can fetch audio later
-      if (conversationId) {
-        updateStatus("interview_started", conversationId);
-      }
-
+      await startInterviewSession();
       setPhase("interviewing");
       startFaceTracking();
 
@@ -444,6 +571,7 @@ export default function InterviewPage({
   };
 
   const endInterview = async () => {
+    userEndingRef.current = true;
     try {
       await conversation.endSession();
     } catch {
@@ -451,6 +579,21 @@ export default function InterviewPage({
       handleInterviewEnd();
     }
   };
+
+  // Warn the candidate before they accidentally close/refresh during a
+  // live call. The browser shows its generic "Leave site?" prompt — we
+  // just have to set returnValue.
+  useEffect(() => {
+    if (phase !== "interviewing") return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue =
+        "Your interview is in progress. If you leave, it will end and may not be retakable.";
+      return e.returnValue;
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [phase]);
 
   // ── Auto-advance from setup to ready when camera is enabled ────────────
 
@@ -650,45 +793,98 @@ export default function InterviewPage({
 
   if (phase === "completed") {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50">
-        <div className="max-w-md w-full mx-4">
-          <div className="bg-white rounded-2xl shadow-lg border border-slate-200 p-8 text-center">
-            <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-              <svg
-                className="w-8 h-8 text-green-500"
-                fill="none"
-                viewBox="0 0 24 24"
-                strokeWidth={1.5}
-                stroke="currentColor"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"
-                />
-              </svg>
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 via-white to-indigo-50/40 px-4 py-10">
+        <div className="max-w-lg w-full">
+          <div className="bg-white rounded-2xl shadow-lg border border-slate-200 p-6 sm:p-8">
+            <div className="text-center">
+              <div className="w-16 h-16 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <svg
+                  className="w-8 h-8 text-emerald-600"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  strokeWidth={1.5}
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"
+                  />
+                </svg>
+              </div>
+              <h1 className="text-xl sm:text-2xl font-bold text-slate-900 mb-2">
+                You&apos;re all done, {interviewData?.candidate_first_name}.
+              </h1>
+              <p className="text-sm text-slate-500 leading-relaxed">
+                Your interview for{" "}
+                <span className="font-medium text-slate-700">
+                  {interviewData?.job_title}
+                </span>{" "}
+                at{" "}
+                <span className="font-medium text-slate-700">
+                  {interviewData?.company_name}
+                </span>{" "}
+                has been recorded and submitted.
+              </p>
+              <div className="mt-3 inline-flex items-center gap-2 text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-full px-3 py-1">
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                Duration {formatTime(elapsedSeconds)}
+              </div>
             </div>
-            <h1 className="text-xl font-bold text-slate-900 mb-2">
-              Interview Complete!
-            </h1>
-            <p className="text-sm text-slate-500 leading-relaxed">
-              Thank you, {interviewData?.candidate_first_name}! Your interview
-              for the{" "}
-              <span className="font-medium text-slate-700">
-                {interviewData?.job_title}
-              </span>{" "}
-              position has been recorded.
-            </p>
-            <p className="text-xs text-slate-400 mt-3">
-              Duration: {formatTime(elapsedSeconds)}
-            </p>
-            <div className="mt-6 bg-slate-50 rounded-lg p-4 border border-slate-100">
-              <p className="text-sm text-slate-600">
-                Our team will review your interview and get back to you soon.
-                You can close this page.
+
+            {/* What happens next — a short, honest list. Setting
+                expectations here drastically cuts the "did my interview
+                go through?" follow-up emails. */}
+            <div className="mt-7 border-t border-slate-100 pt-5">
+              <h2 className="text-xs font-bold tracking-wider text-slate-500 uppercase mb-3">
+                What happens next
+              </h2>
+              <ol className="space-y-3">
+                {[
+                  {
+                    title: "Recording uploads",
+                    body: "We're saving your transcript and audio. Usually under a minute.",
+                  },
+                  {
+                    title: "Recruiter review",
+                    body:
+                      "The HR team will review the recording and your scores within a few business days.",
+                  },
+                  {
+                    title: "You'll hear back by email",
+                    body:
+                      "Successful next-round slots, or polite feedback — we don't leave candidates hanging.",
+                  },
+                ].map((s, i) => (
+                  <li key={i} className="flex items-start gap-3">
+                    <span className="flex-shrink-0 w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 text-xs font-bold flex items-center justify-center">
+                      {i + 1}
+                    </span>
+                    <div>
+                      <p className="text-sm font-semibold text-slate-900">
+                        {s.title}
+                      </p>
+                      <p className="text-xs text-slate-500 leading-relaxed">
+                        {s.body}
+                      </p>
+                    </div>
+                  </li>
+                ))}
+              </ol>
+            </div>
+
+            <div className="mt-6 text-center">
+              <p className="text-xs text-slate-400">
+                You can close this tab now. No further action needed from you.
               </p>
             </div>
           </div>
+          <p className="text-center text-[11px] text-slate-400 mt-4">
+            Powered by{" "}
+            <span className="font-semibold text-slate-500">HireOps AI</span>
+          </p>
         </div>
       </div>
     );
@@ -699,19 +895,19 @@ export default function InterviewPage({
   return (
     <div className="min-h-screen bg-slate-50">
       {/* Header */}
-      <header className="bg-white border-b border-slate-200 px-6 py-4">
-        <div className="max-w-6xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 bg-gradient-to-br from-indigo-600 to-violet-600 rounded-lg flex items-center justify-center">
-              <span className="text-white font-bold text-sm">H</span>
+      <header className="bg-white border-b border-slate-200 px-4 sm:px-6 py-3 sm:py-4">
+        <div className="max-w-6xl mx-auto flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+            <div className="w-7 h-7 sm:w-8 sm:h-8 bg-gradient-to-br from-indigo-600 to-violet-600 rounded-lg flex items-center justify-center flex-shrink-0">
+              <span className="text-white font-bold text-xs sm:text-sm">H</span>
             </div>
-            <span className="font-semibold text-slate-900">
+            <span className="font-semibold text-slate-900 text-sm sm:text-base truncate">
               {interviewData?.company_name || "HireOps AI"}
             </span>
           </div>
-          <div className="text-right">
-            <p className="text-sm font-medium text-slate-700">
-              Interview for {interviewData?.job_title}
+          <div className="text-right min-w-0">
+            <p className="text-xs sm:text-sm font-medium text-slate-700 truncate">
+              {interviewData?.job_title}
             </p>
             {phase === "interviewing" && (
               <p className="text-xs text-slate-500 tabular-nums">
@@ -723,7 +919,7 @@ export default function InterviewPage({
       </header>
 
       {/* Main content */}
-      <main className="max-w-6xl mx-auto px-6 py-8">
+      <main className="max-w-6xl mx-auto px-4 sm:px-6 py-5 sm:py-8">
         {/* Welcome message in setup phase */}
         {(phase === "setup" || phase === "ready") && (
           <div className="mb-8 text-center">
@@ -735,6 +931,39 @@ export default function InterviewPage({
                 ? "Please enable your webcam to proceed with the interview."
                 : "Your camera is ready. Click Start Interview when you're ready to begin."}
             </p>
+          </div>
+        )}
+
+        {/* Recording banner — shown only during the live interview.
+            Combined with the beforeunload handler this stops most
+            "I refreshed and now the call's gone" support tickets. */}
+        {phase === "interviewing" && (
+          <div className="mb-4 rounded-lg border border-rose-200 bg-rose-50 px-4 py-2.5 flex items-center gap-3 text-sm text-rose-800">
+            <span className="relative flex h-2.5 w-2.5">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75" />
+              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-rose-600" />
+            </span>
+            <span className="flex-1 font-medium leading-tight">
+              Interview is recording — please don&apos;t refresh, close the
+              tab, or leave the page.
+            </span>
+            <span className="text-xs text-rose-600 tabular-nums hidden sm:inline">
+              {formatTime(elapsedSeconds)}
+            </span>
+          </div>
+        )}
+
+        {/* Reconnecting overlay — shown when the WebSocket dropped and
+            we're trying to recover. Three attempts max. */}
+        {reconnecting && phase === "interviewing" && (
+          <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 flex items-center gap-3 text-sm text-amber-800">
+            <svg className="animate-spin h-4 w-4 text-amber-700" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+            </svg>
+            <span className="font-medium">
+              Reconnecting to the AI interviewer… stay on this page.
+            </span>
           </div>
         )}
 
@@ -859,6 +1088,40 @@ export default function InterviewPage({
             {cameraError && (
               <div className="px-5 py-3 bg-red-50 text-sm text-red-600">
                 {cameraError}
+              </div>
+            )}
+
+            {/* Pre-flight mic meter — only on setup/ready. Tells the
+                candidate their mic is actually capturing BEFORE they
+                click Start. */}
+            {cameraReady && (phase === "setup" || phase === "ready") && (
+              <div className="px-5 py-3 border-t border-slate-100">
+                <div className="flex items-center gap-2 text-xs text-slate-600 mb-1.5">
+                  <svg className="w-4 h-4 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 11a7 7 0 01-14 0m7 7v4m0 0H8m4 0h4m-4-4a3 3 0 003-3V5a3 3 0 00-6 0v10a3 3 0 003 3z" />
+                  </svg>
+                  <span>
+                    {micLevel < 0.02
+                      ? "Say something — we'll show your mic level"
+                      : micLevel < 0.1
+                      ? "Mic detected · speak a little louder"
+                      : "Mic level looks good"}
+                  </span>
+                </div>
+                <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full transition-all ${
+                      micLevel > 0.6
+                        ? "bg-rose-500"
+                        : micLevel > 0.15
+                        ? "bg-emerald-500"
+                        : micLevel > 0.02
+                        ? "bg-amber-500"
+                        : "bg-slate-300"
+                    }`}
+                    style={{ width: `${Math.min(100, micLevel * 100)}%` }}
+                  />
+                </div>
               </div>
             )}
           </div>
