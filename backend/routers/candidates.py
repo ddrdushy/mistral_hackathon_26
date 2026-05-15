@@ -925,6 +925,9 @@ async def list_candidates(
     search: Optional[str] = None,
     talent_bank_only: bool = False,
     tag_ids: Optional[str] = None,
+    skills: Optional[str] = None,
+    seniority: Optional[str] = None,
+    min_years: Optional[float] = None,
     page: int = 1,
     per_page: int = 20,
     db: Session = Depends(get_db),
@@ -932,7 +935,15 @@ async def list_candidates(
 ):
     """List candidates. talent_bank_only=true filters to candidates with no
     Application rows. tag_ids is a comma-separated list with AND semantics —
-    a candidate must have EVERY listed tag to match (Feature 2)."""
+    a candidate must have EVERY listed tag to match (Feature 2).
+
+    Filters added for the Talent Bank UI:
+      - skills: comma-separated list. ALL must appear in the extracted
+        profile_skills (case-insensitive substring on the JSON-stringified
+        column — fine since each candidate has at most ~20 skills).
+      - seniority: exact match against profile_seniority
+        (junior/mid/senior/lead/principal).
+      - min_years: profile_years_experience >= this floor."""
     from models import Application
     query = db.query(Candidate).filter(Candidate.tenant_id == session.tenant.id)
     if search:
@@ -959,6 +970,22 @@ async def list_candidates(
             Application.tenant_id == session.tenant.id
         ).distinct().subquery()
         query = query.filter(~Candidate.id.in_(applied_ids))
+
+    if skills:
+        # AND across requested skills, case-insensitive substring inside
+        # the JSON-encoded profile_skills column. Cheap and works without
+        # a JSON1 extension; SQLite + Postgres both support ilike.
+        wanted_skills = [s.strip() for s in skills.split(",") if s.strip()]
+        for skill in wanted_skills:
+            query = query.filter(Candidate.profile_skills.ilike(f"%{skill}%"))
+
+    if seniority:
+        wanted_seniority = seniority.strip().lower()
+        if wanted_seniority:
+            query = query.filter(Candidate.profile_seniority == wanted_seniority)
+
+    if min_years is not None and min_years > 0:
+        query = query.filter(Candidate.profile_years_experience >= min_years)
 
     if tag_ids:
         try:

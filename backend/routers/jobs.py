@@ -553,16 +553,65 @@ async def reach_out_to_candidates(
             twilio_err = str(e)
             twilio_cfg = None
 
+    # Build JD detail context once per job — same render is reused for every
+    # candidate in the batch. Pre-format the list-shaped fields so the
+    # template can drop them in without re-running JSON / HTML logic.
+    from services.email_templates import render as render_email
+    import html as _html_mod
+
+    def _job_list(raw: str, limit: int = 6) -> list[str]:
+        try:
+            arr = json.loads(raw or "[]")
+            return [str(x).strip() for x in arr if str(x).strip()][:limit]
+        except Exception:
+            return []
+
+    def _as_html_ul(items: list[str]) -> str:
+        if not items:
+            return "<p style='color:#64748b;'>—</p>"
+        rows = "".join(
+            f"<li style='margin:4px 0;'>{_html_mod.escape(x)}</li>" for x in items
+        )
+        return f"<ul style='padding-left:20px;margin:6px 0;'>{rows}</ul>"
+
+    def _as_html_chips(items: list[str]) -> str:
+        if not items:
+            return "<p style='color:#64748b;'>—</p>"
+        chips = "".join(
+            (
+                "<span style='display:inline-block;background:#eef2ff;color:#4338ca;"
+                "padding:4px 10px;border-radius:999px;font-size:13px;margin:3px 4px 3px 0;"
+                f"'>{_html_mod.escape(x)}</span>"
+            )
+            for x in items
+        )
+        return f"<div style='margin:6px 0;'>{chips}</div>"
+
+    responsibilities_html = _as_html_ul(_job_list(job.responsibilities or "[]"))
+    skills_html = _as_html_chips(_job_list(job.skills or "[]", limit=12))
+    job_summary = (job.description or "").strip()
+    if len(job_summary) > 600:
+        job_summary = job_summary[:600].rsplit(" ", 1)[0] + "…"
+    if not job_summary:
+        job_summary = (
+            f"We&rsquo;re hiring a {job.title}"
+            + (f" in {job.location}" if (job.location or "").strip() else "")
+            + "."
+        )
+
     results: list[dict] = []
     for cand in candidates:
         first_name = (cand.name or "there").split()[0] if cand.name else "there"
-        default_msg = (
+
+        # Short plain-text body — used by WhatsApp/SMS where the full HTML
+        # template would be unreadable, and for Communication.body when we
+        # don't have a richer rendered text version.
+        short_body = (req.custom_message or (
             f"Hi {first_name}, this is {company}. We have an opening for "
             f"{job.title} that looks like a strong match for your background. "
             f"Are you available for a short screening interview this week? "
             f"Reply with the days that work for you and we'll set it up."
-        )
-        body = (req.custom_message or default_msg).replace("{name}", first_name)
+        )).replace("{name}", first_name)
 
         per_result: dict = {
             "candidate_id": cand.id,
@@ -579,21 +628,59 @@ async def reach_out_to_candidates(
         cand_email = (cand.email or "").strip()
         has_real_email = bool(cand_email) and not cand_email.lower().endswith("@uploaded.local")
         if "email" in channels_wanted and has_real_email:
-            subject = f"Re: {job.title} at {company}"
-            body_html = (
-                f"<div style='font-family:Arial,sans-serif;max-width:560px;"
-                f"line-height:1.6;color:#334155;'>"
-                f"<p>{body.replace(chr(10), '<br>')}</p>"
-                f"<p style='margin-top:24px;color:#94a3b8;font-size:12px;'>"
-                f"Sent from {company} via HireOps AI.</p>"
-                f"</div>"
-            )
+            # Custom message (when the recruiter overrode wording in the
+            # modal) takes precedence over the JD-rich default template.
+            if req.custom_message:
+                custom_body = req.custom_message.replace("{name}", first_name)
+                from services.email_templates import render as _render_generic
+                rendered = _render_generic(
+                    session.tenant,
+                    "generic_email",
+                    db=db,
+                    candidate_first_name=first_name,
+                    candidate_name=cand.name or first_name,
+                    job_title=job.title,
+                    recruiter_name=(session.user.name or "").strip() or "the team",
+                )
+                # generic_email's body is a placeholder — replace with custom.
+                custom_html = "<p>" + custom_body.replace("\n", "<br>") + "</p>"
+                rendered["body_html"] = rendered["body_html"].replace(
+                    "[Your message here. Use the variables on the right to pull in candidate\nand job details. The branding wrapper and signature are added automatically.]",
+                    custom_body,
+                )
+                # Fallback: if marker not found (template was edited), wrap
+                # plainly so the candidate still sees the message.
+                if custom_body not in rendered["body_html"]:
+                    rendered["body_html"] = custom_html
+                subject = rendered["subject"]
+                body_html = rendered["body_html"]
+                body_text = custom_body
+            else:
+                rendered = render_email(
+                    session.tenant,
+                    "availability_check",
+                    db=db,
+                    candidate_first_name=first_name,
+                    candidate_name=cand.name or first_name,
+                    job_title=job.title,
+                    job_location=(job.location or "").strip() or "Flexible",
+                    job_seniority=(job.seniority or "").strip().title() or "Open",
+                    job_employment_type="Full-time",
+                    job_summary=job_summary,
+                    key_responsibilities_html=responsibilities_html,
+                    key_skills_html=skills_html,
+                    recruiter_name=(session.user.name or "").strip() or "the team",
+                )
+                subject = rendered["subject"]
+                body_html = rendered["body_html"]
+                body_text = rendered["body_text"]
+
             email_outcome = send_via_tenant_mailbox(
                 tenant_id=session.tenant.id,
                 to_email=cand.email,
                 subject=subject,
                 body_html=body_html,
-                body_text=body,
+                body_text=body_text,
                 db=db,
             )
             per_result["channels"]["email"] = email_outcome
@@ -611,7 +698,7 @@ async def reach_out_to_candidates(
                     to_address=cand.email,
                     from_address=email_outcome.get("from") or "",
                     subject=subject,
-                    body=body,
+                    body=body_text or short_body,
                     error=None if email_outcome.get("success") else email_outcome.get("message"),
                     sent_by_user_id=session.user.id,
                     sent_at=datetime.utcnow(),
@@ -630,7 +717,7 @@ async def reach_out_to_candidates(
             else:
                 try:
                     from services.twilio_service import send_whatsapp
-                    send_whatsapp(twilio_cfg, cand.phone, body)
+                    send_whatsapp(twilio_cfg, cand.phone, short_body)
                     per_result["channels"]["whatsapp"] = {"success": True}
                     wa_status = "sent"
                     wa_err = None
@@ -652,7 +739,7 @@ async def reach_out_to_candidates(
                         to_address=cand.phone,
                         from_address=getattr(twilio_cfg, "whatsapp_from", "") or "",
                         subject="Availability check",
-                        body=body,
+                        body=short_body,
                         error=wa_err,
                         sent_by_user_id=session.user.id,
                         sent_at=datetime.utcnow(),

@@ -193,6 +193,23 @@ export function Dashboard() {
         </li>
       </ul>
 
+      <h2>Onboarding checklist</h2>
+      <p>
+        Fresh tenants see a 6-step checklist under Quick actions: org
+        profile, inbox connection, first job, first candidate, Twilio
+        (optional), teammate invite. The card auto-hides once every
+        step is done; the ✕ in the corner dismisses it manually
+        (re-appears if any step regresses on next reload).
+      </p>
+
+      <h2>AI spend widget</h2>
+      <p>
+        Sits in the Row 1.5 area alongside the hiring forecast. Shows
+        month-to-date billable cost (raw provider cost × plan markup),
+        a 30-day sparkline, and today&apos;s number. &quot;Detailed
+        report →&quot; opens Settings → Billing for the full breakdown.
+      </p>
+
       <h2>Top stat tiles</h2>
       <ul>
         <li>
@@ -242,6 +259,12 @@ export function Dashboard() {
         Bottom-left chevron collapses to icon-only. Mobile: hamburger
         opens it as an overlay.
       </p>
+      <p>
+        Items that depend on a plan-gated feature show a small 🔒 when
+        the agent isn&apos;t enabled on your plan (Call Queue,
+        Interviews, Outreach, Reports). The link still works — the page
+        explains what&apos;s missing with a one-click Contact us button.
+      </p>
     </>
   );
 }
@@ -255,10 +278,37 @@ export function SearchAndNotifications() {
         lose context as you navigate.
       </p>
 
+      <h2>Command palette (⌘K / Ctrl-K)</h2>
+      <p>
+        Hit <K>⌘K</K> (or <K>Ctrl-K</K> on Windows / Linux) anywhere in
+        the dashboard to open the command palette. Three sections,
+        keyboard-only:
+      </p>
+      <ul>
+        <li>
+          <strong>Candidates</strong> — live search by name / email,
+          top 5 matches.
+        </li>
+        <li>
+          <strong>Navigate</strong> — every dashboard route (Dashboard,
+          Inbox, Jobs, Talent Bank, etc.).
+        </li>
+        <li>
+          <strong>Actions</strong> — Create job, Sync inbox, Upload CV,
+          Edit email templates, Billing &amp; usage.
+        </li>
+      </ul>
+      <p>
+        <K>↑</K> / <K>↓</K> to move, <K>↵</K> to select, <K>Esc</K> to
+        close. The same palette opens on mobile via the magnifying-glass
+        icon in the top bar (the desktop input is hidden below md).
+      </p>
+
       <h2>Live candidate search</h2>
       <p>
-        Type two or more characters into the search box — a dropdown of
-        the top 8 matches appears. The query is matched against:
+        On desktop the top bar also has a dedicated search input. Type
+        two or more characters and a dropdown of the top 8 matches
+        appears. The query is matched against:
       </p>
       <ul>
         <li>Full name</li>
@@ -278,10 +328,13 @@ export function SearchAndNotifications() {
         the full-page list view.
       </p>
 
-      <h2>Notification bell</h2>
+      <h2>Notification bell (real-time)</h2>
       <p>
         Click the bell to open a dropdown of the last 20 actionable
-        events for this tenant. Two sources merged into one feed:
+        events for this tenant. The feed is <strong>live</strong> — a
+        Server-Sent Events stream at <code>/notifications/stream</code>
+        pushes new events without a page refresh. Two sources merged
+        into one feed:
       </p>
       <ul>
         <li>
@@ -356,6 +409,43 @@ export function Jobs() {
           Drives question difficulty.
         </li>
       </ul>
+
+      <h3>Already have a JD? Paste or upload it</h3>
+      <p>
+        If a hiring manager dropped a Word doc or pasted a long
+        description in Slack, you don&apos;t need to retype anything.
+        The new-job form has a collapsible <strong>&quot;Already have
+        a JD?&quot;</strong> panel:
+      </p>
+      <ul>
+        <li>
+          <strong>Paste</strong> — drop the raw text into the textarea.
+          Hit <strong>Refine with AI</strong> and we&apos;ll structure
+          it into title, summary, responsibilities, skills,
+          qualifications. The form fields populate; you can still edit.
+        </li>
+        <li>
+          <strong>Upload</strong> — attach a <K>.pdf</K> / <K>.docx</K> /{" "}
+          <K>.txt</K> file. We extract the text server-side and feed it
+          through the same refiner. 15 MB cap.
+        </li>
+      </ul>
+      <Tip>
+        Refining doesn&apos;t commit anything — it just pre-fills the
+        form. You still need to click <strong>Save</strong>. Run refine
+        multiple times if the first pass missed nuance.
+      </Tip>
+
+      <h3>Editing an existing JD</h3>
+      <p>
+        On <K>/jobs/{"{id}"}/edit</K> the same paste/upload affordance is
+        available, plus a <strong>✨ Polish current draft</strong>{" "}
+        button. Polish reads whatever&apos;s already in the form, asks the
+        LLM to tighten the language, expand bullet lists, and normalise
+        capitalisation — without inventing requirements that
+        weren&apos;t in your source text. You can also click any
+        bullet in responsibilities/qualifications to inline-edit it.
+      </p>
 
       <h3>Interview mode</h3>
       <p>
@@ -432,8 +522,26 @@ export function Jobs() {
           date, edit/duplicate/close in the top-right kebab.
         </li>
         <li>
-          <strong>From your talent bank</strong> — top 10 past candidates
-          ranked by skill overlap. Tick a few and click{" "}
+          <strong>From your talent bank</strong> — past candidates
+          ranked by skill overlap with the JD. Two controls at the top
+          of the list let you tune what shows up:
+          <ul>
+            <li>
+              <strong>Min match</strong> slider (0-100, default 35) —
+              hides anyone below the bar. We deliberately default low so
+              you don&apos;t miss adjacent talent; ratchet up if the list
+              is too noisy.
+            </li>
+            <li>
+              <strong>Min skill overlap</strong> chip (1+ / 2+ / 3+,
+              default 2+) — minimum number of JD skills that have to
+              appear on the CV.
+            </li>
+          </ul>
+          Both settings persist per browser (localStorage). When no
+          candidates clear the threshold we automatically retry with
+          overlap=1 and surface a &quot;weak matches&quot; chip so the
+          list isn&apos;t empty. Tick a few rows and click{" "}
           <strong>Reach out (N)</strong> for bulk WhatsApp + email
           availability check.
         </li>
@@ -486,6 +594,38 @@ export function Candidates() {
           same engine as the global search.
         </li>
       </ul>
+
+      <h2>Missing fields, not fake fields</h2>
+      <p>
+        When a CV came in without a clear email, phone, or name we now
+        flag the row instead of fabricating placeholders like{" "}
+        <K>candidate@uploaded.local</K>. Aggregated missing fields
+        surface as amber chips on the row and in the detail header.
+        Outreach buttons that require the missing value (Send email,
+        Send WhatsApp) auto-disable with a tooltip explaining why. Fix
+        by inline-editing the contact block, or hit{" "}
+        <strong>Re-extract</strong> on the CV history block to run the
+        LLM profile extractor again — most missed fields are recovered
+        on the second pass.
+      </p>
+
+      <h2>If the URL points to a candidate with no application</h2>
+      <p>
+        Older links and bookmarks may target a candidate that no longer
+        has an active application. The detail page now falls back to a
+        candidate-only view (CV history, profile, notes, edit) instead
+        of throwing &quot;Application not found.&quot; You can still
+        create a new application from the action column.
+      </p>
+
+      <h2>Job descriptions uploaded by mistake</h2>
+      <p>
+        We detect when an uploaded file is really a job description
+        (Responsibilities/Qualifications/Salary/Apply Now patterns) and
+        reject it at the upload boundary rather than letting it land in
+        the talent bank as a candidate. The error message tells you
+        what was detected and where to upload JDs instead.
+      </p>
 
       <h2>Pipeline stages</h2>
       <ol>
@@ -631,6 +771,68 @@ export function TalentBank() {
         </li>
       </ul>
 
+      <h2>Views &amp; pagination</h2>
+      <p>
+        Top-right of the list:
+      </p>
+      <ul>
+        <li>
+          <strong>View toggle</strong> — switch between dense{" "}
+          <strong>list</strong> rows (default, table-style) and{" "}
+          <strong>tiles</strong> (card grid with avatar + skill chips).
+          Tiles are nicer for skimming when you have a few hundred
+          candidates; list is better for power triage.
+        </li>
+        <li>
+          <strong>Page size</strong> — 25 / 50 / 100 per page. The
+          server-side cursor paginates so even 10k-row tenants render
+          instantly. Your last view + page size choice persist per
+          browser.
+        </li>
+      </ul>
+
+      <h2>Missing-field flags</h2>
+      <p>
+        When a CV came in without a clear email, phone, or name, we
+        flag the row with an amber chip instead of inventing a
+        placeholder. Examples:
+      </p>
+      <ul>
+        <li><strong>Email missing</strong> — outreach via email disabled until you add one.</li>
+        <li><strong>Phone missing</strong> — WhatsApp/SMS outreach disabled.</li>
+        <li><strong>Name missing</strong> — usually means the resume was image-only or very unusual; re-extraction often fixes it.</li>
+      </ul>
+      <p>
+        Click the row → drawer → pencil-edit the field directly. Or
+        click <strong>Re-extract</strong> in the CV history block to run
+        the LLM profile extractor again — useful for resumes that
+        previously failed parsing.
+      </p>
+
+      <h2>CV download &amp; view</h2>
+      <p>
+        On every row and in the drawer:
+      </p>
+      <ul>
+        <li>
+          <strong>Download CV</strong> — original PDF/DOCX exactly as
+          uploaded. Persisted per-tenant on disk (max 10 versions
+          retained per candidate; older ones are pruned). Every
+          download is audit-logged with the user, candidate, and
+          timestamp.
+        </li>
+        <li>
+          <strong>View resume text</strong> — opens a modal with the
+          extracted plain text, scrollable. Use this to spot-check
+          parser output before believing the profile fields.
+        </li>
+        <li>
+          <strong>Re-extract</strong> — visible when extraction failed
+          (empty skills / role). Runs the LLM profile extractor and
+          contact parser fresh.
+        </li>
+      </ul>
+
       <h2>The detail drawer</h2>
       <DocImage src="/docs/screenshots/talent-bank-drawer.png" alt="Candidate drawer" />
       <p>Clicking any candidate&apos;s name opens a right-side slide-over:</p>
@@ -750,6 +952,85 @@ export function Interviews() {
         3rd reschedule escalates to HR via a rose banner on the candidate
         page.
       </Tip>
+
+      <h2>Candidate experience (AI Voice)</h2>
+      <p>
+        The interview page itself ships with a number of trust-and-fraud
+        features that you should know about, because candidates ask:
+      </p>
+      <ul>
+        <li>
+          <strong>Mic pre-flight</strong> — before connecting, we show a
+          live mic-level meter. Candidates can speak into their mic and
+          see a green bar move; if it doesn&apos;t, they fix the device
+          or grant permission. Eliminates the &quot;the AI didn&apos;t
+          hear me&quot; class of bug.
+        </li>
+        <li>
+          <strong>Auto-reconnect</strong> — if the WebSocket to
+          ElevenLabs drops mid-interview, we transparently retry up to 3
+          times with exponential backoff. An overlay tells the candidate
+          we&apos;re reconnecting; the session resumes without losing
+          context.
+        </li>
+        <li>
+          <strong>Recording banner</strong> — a pulsing red &quot;
+          Recording — please don&apos;t refresh&quot; bar sits at the
+          top during the call. Plus a <K>beforeunload</K> &quot;Are you
+          sure?&quot; prompt to stop accidental tab closes.
+        </li>
+        <li>
+          <strong>End-of-call summary</strong> — instead of dropping
+          candidates onto a blank thank-you, they see a 3-step
+          &quot;what happens next&quot; explanation: we&apos;re scoring
+          the interview, you&apos;ll hear back via email, here&apos;s
+          our HR contact if you need it.
+        </li>
+        <li>
+          <strong>Mobile responsive</strong> — the page collapses to a
+          single column on phones. All buttons and the mic meter are
+          tap-sized; padding adjusts at sm: breakpoints. Candidates can
+          legitimately interview from their phone.
+        </li>
+      </ul>
+
+      <h2>Fraud signals (AI Voice)</h2>
+      <p>
+        Throughout the interview the candidate&apos;s camera (with their
+        consent) feeds MediaPipe FaceDetector. We log:
+      </p>
+      <ul>
+        <li>
+          <strong>Focus loss</strong> — tab switches away from the
+          interview window.
+        </li>
+        <li>
+          <strong>Paste detection</strong> — any paste event inside the
+          page.
+        </li>
+        <li>
+          <strong>Face absence</strong> — % of snapshots with no face
+          detected.
+        </li>
+        <li>
+          <strong>Average attention</strong> — derived from gaze /
+          face-pose stability over the call.
+        </li>
+        <li>
+          <strong>Multi-face detection</strong> <em>(heaviest signal)</em>{" "}
+          — if a second person appears in frame, we count snapshots and
+          % of the call duration with &gt;1 face. A multi-face warning
+          banner pops up live on the candidate&apos;s screen (&quot;Only
+          one person should be on camera&quot;). Heavily weighted in the
+          fraud risk score on the candidate detail page.
+        </li>
+      </ul>
+      <p>
+        All of these roll up into the <strong>fraud risk %</strong> on
+        the Interview Score panel. Owner accounts can override the
+        score if context warrants (paste was a calculator, second face
+        was a toddler walking past, etc.).
+      </p>
 
       <h2>When sending fails</h2>
       <ul>
@@ -871,10 +1152,13 @@ export function Inbox() {
 
       <h2>Auto-pipeline trigger</h2>
       <p>
-        When an email is classified as <em>candidate application</em>:
+        When an email is classified as <em>candidate application</em>{" "}
+        the full workflow now fires automatically — you no longer need
+        to click <strong>Create candidate</strong> on the email row.
+        The steps:
       </p>
       <ol>
-        <li>CV extracted from PDF/DOCX attachment.</li>
+        <li>CV extracted from PDF/DOCX attachment(s).</li>
         <li>Candidate row created (or versioned via dedup).</li>
         <li>Candidate matched against open jobs.</li>
         <li>Resume scored against the best match.</li>
@@ -884,6 +1168,16 @@ export function Inbox() {
           Send).
         </li>
       </ol>
+      <p>
+        <strong>Multi-resume emails:</strong> a forwarder pasting
+        &quot;here are 5 profiles for the SDE role&quot; with five
+        attachments used to get classified as <em>general</em>. We now
+        local-override the classifier when an email has 2+
+        resume-shaped attachments and force <em>candidate_application</em>{" "}
+        — each attachment becomes its own candidate row via dedup.
+        Attachment filenames are also passed to the classifier so
+        &quot;resume_jane_doe.pdf&quot; is a positive signal.
+      </p>
 
       <h2>Quick actions toolbar</h2>
       <p>
@@ -1664,47 +1958,53 @@ export function Billing() {
     <>
       <h1>Billing &amp; plan</h1>
       <p className="lead">
-        Three plans — Free, Starter, Pro. Pricing configured per platform
-        deployment.
+        Two plans — <strong>Trial</strong> and{" "}
+        <strong>Business</strong>. Trial is self-serve; Business is
+        sales-led. Pricing is bespoke per tenant.
       </p>
       <DocImage src="/docs/screenshots/billing.png" alt="Billing page" />
 
       <h2>Plan tiers</h2>
       <ul>
         <li>
-          <strong>Free</strong> — 5 jobs, 25 candidates, inbox triage
-          only. Other AI features locked.
+          <strong>Trial</strong> — 5 jobs, 25 candidates, inbox triage
+          only. Other AI features locked. Good for kicking the tires
+          and seeing if the platform fits your hiring workflow.
         </li>
         <li>
-          <strong>Starter</strong> — 25 jobs, 250 candidates, 100
-          interviews/month. Full auto-pipeline (classify → score → match
-          → tag → talent-bank). Stops short of voice/Q&amp;A agents.
-        </li>
-        <li>
-          <strong>Pro</strong> — unlimited jobs / candidates /
-          interviews plus voice screening (ElevenLabs), Q&amp;A rounds,
-          team seats, (coming) SSO + audit-log.
+          <strong>Business</strong> — unlimited jobs / candidates /
+          interviews, voice screening (ElevenLabs), Q&amp;A rounds,
+          team seats, fraud detection, outreach campaigns. Enabled per
+          tenant after a sales conversation; we tune the markup and
+          quotas to your volume.
         </li>
       </ul>
 
-      <h2>Upgrading</h2>
+      <h2>Upgrading (Trial → Business)</h2>
       <p>
-        Click <strong>Upgrade</strong> on any plan card → Stripe
-        Checkout. After payment, you bounce back with the new plan
-        active. Free never upgrades automatically.
+        The Business plan card shows <strong>Contact us</strong>{" "}
+        instead of a self-serve Upgrade button. Clicking it opens a
+        prefilled email to{" "}
+        <K>contact@symprio.com</K> — give us a sense of headcount,
+        roles, and current ATS and we&apos;ll come back with a quote
+        within one business day.
       </p>
+      <Tip kind="info">
+        We deliberately don&apos;t do self-serve credit-card upgrades
+        right now. Sales-led keeps the markup conversation honest and
+        means every Business tenant gets onboarding help.
+      </Tip>
 
-      <h2>Managing your subscription</h2>
+      <h2>Feature locks while on Trial</h2>
       <p>
-        <strong>Manage subscription</strong> opens Stripe&apos;s customer
-        portal:
+        Premium features are <strong>visible</strong> in the UI but
+        locked: sidebar items show a 🔒 lock badge, and any action
+        button (e.g. &quot;Send WhatsApp&quot;, &quot;Run resume
+        scorer&quot;) renders as a greyed button with a popover
+        offering <strong>Contact us to enable</strong>. The popover&apos;s
+        mailto is prefilled with the feature name so we know what you
+        want unlocked.
       </p>
-      <ul>
-        <li>Update card / payment method</li>
-        <li>Download invoices</li>
-        <li>Switch billing email</li>
-        <li>Cancel (effective at period end)</li>
-      </ul>
 
       <h2>AI usage</h2>
       <p>The Your AI Usage panel below the plan cards shows:</p>

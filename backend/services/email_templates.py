@@ -87,6 +87,9 @@ CATEGORIES: dict[str, TemplateCategory] = {
         description="Sent during talent-bank bulk outreach to confirm a candidate is open to a role.",
         variables=[
             "candidate_first_name", "candidate_name", "job_title", "company_name",
+            "job_location", "job_seniority", "job_employment_type",
+            "job_summary", "key_responsibilities_html", "key_skills_html",
+            "recruiter_name",
         ],
     ),
     "shortlist_congrats": TemplateCategory(
@@ -186,10 +189,47 @@ You can join whenever it suits you in the next 72 hours.</p>
 
 _DEFAULT_AVAILABILITY_HTML = """
 <p>Hi {candidate_first_name},</p>
-<p>This is {company_name}. We have an opening for <strong>{job_title}</strong> that
-looks like a strong match for your background. Are you available for a short
-screening interview this week?</p>
-<p>Reply with the days that work for you and we'll set it up.</p>
+<p>This is {company_name}. We have an opening for <strong>{job_title}</strong>
+that looks like a strong match for your background, and I&rsquo;d love to
+explore whether the timing works for you.</p>
+
+<table role="presentation" style="width:100%;border-collapse:collapse;
+       background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;
+       margin:18px 0;">
+  <tr><td style="padding:10px 14px;color:#64748b;width:38%;">Role</td>
+      <td style="padding:10px 14px;font-weight:600;color:#0f172a;">{job_title}</td></tr>
+  <tr><td style="padding:10px 14px;color:#64748b;">Location</td>
+      <td style="padding:10px 14px;color:#0f172a;">{job_location}</td></tr>
+  <tr><td style="padding:10px 14px;color:#64748b;">Seniority</td>
+      <td style="padding:10px 14px;color:#0f172a;">{job_seniority}</td></tr>
+  <tr><td style="padding:10px 14px;color:#64748b;">Employment type</td>
+      <td style="padding:10px 14px;color:#0f172a;">{job_employment_type}</td></tr>
+</table>
+
+<p style="margin-top:18px;"><strong>About the role</strong></p>
+<p>{job_summary}</p>
+
+<p style="margin-top:18px;"><strong>What you&rsquo;d do</strong></p>
+{key_responsibilities_html}
+
+<p style="margin-top:18px;"><strong>Skills we&rsquo;re looking for</strong></p>
+{key_skills_html}
+
+<p style="margin-top:22px;">If this looks interesting, just reply to this
+email with:</p>
+<ul>
+  <li>A few <strong>days &amp; time windows</strong> that work for a short
+      screening conversation this week or next,</li>
+  <li>Your <strong>current notice period</strong> and earliest start date,</li>
+  <li>Your <strong>compensation expectations</strong> (ballpark is fine),</li>
+  <li>Any <strong>questions</strong> about the role, team, or work mode.</li>
+</ul>
+
+<p>If you&rsquo;re not currently looking, no worries — a one-line reply with
+&ldquo;not right now&rdquo; and we&rsquo;ll close the loop. We&rsquo;ll
+also keep your profile on file for future roles that fit better.</p>
+
+<p>Looking forward to hearing from you.</p>
 """
 
 _DEFAULT_REJECTION_HTML = """
@@ -312,7 +352,7 @@ _DEFAULTS: dict[str, dict[str, str]] = {
         "body_html": _DEFAULT_REMINDER_HTML,
     },
     "availability_check": {
-        "subject": "Quick question about {job_title} at {company_name}",
+        "subject": "{job_title} at {company_name} — are you open to chat?",
         "body_html": _DEFAULT_AVAILABILITY_HTML,
     },
     "shortlist_congrats": {

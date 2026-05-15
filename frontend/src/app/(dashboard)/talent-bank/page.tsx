@@ -126,11 +126,20 @@ export default function TalentBankPage() {
   const [tags, setTags] = useState<TenantTag[]>([]);
   const [activeTagIds, setActiveTagIds] = useState<number[]>([]);
 
+  // Skill + seniority + experience filters. Skills is a comma-separated
+  // input with AND semantics (candidate must have all of them in the
+  // extracted profile). All three persist via URL-encoded params on the
+  // /candidates request — same shape the backend already validates.
+  const [skillsFilter, setSkillsFilter] = useState<string>("");
+  const [skillsInput, setSkillsInput] = useState<string>("");
+  const [seniorityFilter, setSeniorityFilter] = useState<string>("");
+  const [minYearsFilter, setMinYearsFilter] = useState<string>("");
+
   // When filters change, jump back to page 1 — otherwise switching
   // from a 5-page set to a filtered 1-page set lands on empty page 4.
   useEffect(() => {
     setPage(1);
-  }, [search, showOnlyUnassigned, activeTagIds]);
+  }, [search, showOnlyUnassigned, activeTagIds, skillsFilter, seniorityFilter, minYearsFilter]);
 
   // Multi-select for bulk-tagging / bulk-enroll
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
@@ -169,6 +178,10 @@ export default function TalentBankPage() {
       if (search.trim()) params.search = search.trim();
       if (showOnlyUnassigned) params.talent_bank_only = "true";
       if (activeTagIds.length > 0) params.tag_ids = activeTagIds.join(",");
+      if (skillsFilter.trim()) params.skills = skillsFilter.trim();
+      if (seniorityFilter) params.seniority = seniorityFilter;
+      const yrs = parseFloat(minYearsFilter);
+      if (!Number.isNaN(yrs) && yrs > 0) params.min_years = String(yrs);
       const res = await apiGet<{
         candidates: TalentBankCandidate[];
         total?: number;
@@ -181,7 +194,7 @@ export default function TalentBankPage() {
     } finally {
       setLoading(false);
     }
-  }, [search, showOnlyUnassigned, activeTagIds, page, perPage]);
+  }, [search, showOnlyUnassigned, activeTagIds, page, perPage, skillsFilter, seniorityFilter, minYearsFilter]);
 
   useEffect(() => {
     fetchTags();
@@ -340,8 +353,8 @@ export default function TalentBankPage() {
         </button>
       </div>
 
-      <div className="flex items-center gap-3 bg-white rounded-xl border border-slate-200 p-3">
-        <div className="relative flex-1 max-w-md">
+      <div className="flex flex-wrap items-center gap-3 bg-white rounded-xl border border-slate-200 p-3">
+        <div className="relative flex-1 min-w-[220px] max-w-md">
           <MagnifyingGlassIcon className="absolute left-2.5 top-2.5 h-4 w-4 text-slate-400" />
           <input
             type="search"
@@ -351,6 +364,84 @@ export default function TalentBankPage() {
             className="w-full pl-8 pr-3 py-2 text-sm border border-slate-300 rounded-md focus:outline-none focus:ring-1 focus:ring-indigo-500"
           />
         </div>
+
+        {/* Skills filter — comma-separated, AND semantics. Commit on
+            blur or Enter so we don't query on every keystroke. */}
+        <div className="flex items-center gap-1.5">
+          <label className="text-xs font-medium text-slate-600 whitespace-nowrap">
+            Skills
+          </label>
+          <input
+            type="text"
+            placeholder="e.g. Python, AWS"
+            value={skillsInput}
+            onChange={(e) => setSkillsInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                setSkillsFilter(skillsInput);
+              }
+            }}
+            onBlur={() => {
+              if (skillsInput !== skillsFilter) setSkillsFilter(skillsInput);
+            }}
+            className="w-44 text-xs border border-slate-300 rounded-md px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+            title="Comma-separated. Candidate must have ALL listed skills on their extracted profile."
+          />
+        </div>
+
+        {/* Seniority filter — drives off profile_seniority. */}
+        <div className="flex items-center gap-1.5">
+          <label className="text-xs font-medium text-slate-600 whitespace-nowrap">
+            Seniority
+          </label>
+          <select
+            value={seniorityFilter}
+            onChange={(e) => setSeniorityFilter(e.target.value)}
+            className="text-xs border border-slate-300 rounded-md px-2 py-1.5 bg-white"
+            aria-label="Filter by seniority"
+          >
+            <option value="">Any</option>
+            <option value="junior">Junior</option>
+            <option value="mid">Mid</option>
+            <option value="senior">Senior</option>
+            <option value="lead">Lead</option>
+            <option value="principal">Principal</option>
+          </select>
+        </div>
+
+        {/* Minimum years experience floor. */}
+        <div className="flex items-center gap-1.5">
+          <label className="text-xs font-medium text-slate-600 whitespace-nowrap">
+            Min yrs
+          </label>
+          <input
+            type="number"
+            min={0}
+            max={50}
+            step={1}
+            placeholder="0"
+            value={minYearsFilter}
+            onChange={(e) => setMinYearsFilter(e.target.value)}
+            className="w-16 text-xs border border-slate-300 rounded-md px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+          />
+        </div>
+
+        {(skillsFilter || seniorityFilter || minYearsFilter) && (
+          <button
+            type="button"
+            onClick={() => {
+              setSkillsInput("");
+              setSkillsFilter("");
+              setSeniorityFilter("");
+              setMinYearsFilter("");
+            }}
+            className="text-[11px] font-medium text-slate-500 hover:text-slate-800 underline"
+          >
+            Clear filters
+          </button>
+        )}
+
         <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
           <input
             type="checkbox"
@@ -482,7 +573,7 @@ export default function TalentBankPage() {
         </p>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-[220px_1fr] gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-[220px_minmax(0,1fr)] gap-4">
         {/* Tag filter sidebar */}
         <aside className="bg-white border border-slate-200 rounded-xl p-3 self-start sticky top-4">
           <div className="flex items-center justify-between mb-2">
@@ -550,7 +641,7 @@ export default function TalentBankPage() {
         </aside>
 
         {/* Cards */}
-        <div>
+        <div className="min-w-0">
           {loading ? (
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
               {Array.from({ length: 4 }).map((_, i) => (
@@ -599,7 +690,7 @@ export default function TalentBankPage() {
                       key={c.id}
                       type="button"
                       onClick={() => setDrawerCand(c)}
-                      className={`text-left bg-white border rounded-lg px-3 py-2 flex items-center gap-3 hover:border-indigo-300 hover:shadow-sm transition ${
+                      className={`text-left bg-white border rounded-lg px-3 py-2 flex items-center gap-3 overflow-hidden w-full hover:border-indigo-300 hover:shadow-sm transition ${
                         isSelected
                           ? "border-indigo-400 ring-1 ring-indigo-200"
                           : "border-slate-200"

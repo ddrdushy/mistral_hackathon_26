@@ -144,18 +144,33 @@ def _apply_threshold_decision(app: Application, job: Job, db: Session) -> dict:
         result["decision"] = decision
         result["reason"] = f"Final score {final_score} below reject threshold {reject_below}"
 
-        # Auto-send rejection email
+        # Auto-send rejection email through the tenant's `rejection`
+        # template (with platform default fallback) so HR's wording
+        # overrides apply to the auto-reject flow as well.
         try:
             candidate = db.query(Candidate).filter(Candidate.id == app.candidate_id).first()
-            company = os.getenv("COMPANY_NAME", "HireOps AI")
-            from services.smtp_service import send_rejection_email
-            send_rejection_email(
-                to_email=candidate.email,
-                candidate_name=candidate.name.split()[0],
-                job_title=job.title,
-                company_name=company,
-            )
-            _log_event(db, app.id, "auto_rejection_email_sent", {"to": candidate.email})
+            if candidate and _has_real_email(candidate):
+                from models import Tenant
+                from services.email_templates import render as render_template
+                from services.tenant_outbound import send_via_tenant_mailbox
+
+                tenant = db.query(Tenant).filter(Tenant.id == app.tenant_id).first()
+                rendered = render_template(
+                    tenant,
+                    "rejection",
+                    db=db,
+                    candidate_name=candidate.name or "",
+                    job_title=job.title or "Open Position",
+                )
+                send_via_tenant_mailbox(
+                    tenant_id=app.tenant_id,
+                    to_email=candidate.email,
+                    subject=rendered["subject"],
+                    body_html=rendered["body_html"],
+                    body_text=rendered["body_text"],
+                    db=db,
+                )
+                _log_event(db, app.id, "auto_rejection_email_sent", {"to": candidate.email})
         except Exception:
             pass
 
@@ -527,54 +542,31 @@ def _send_reschedule_email(
 ) -> dict:
     """Email the candidate their new interview link. Different subject +
     intro than the first invite so they immediately recognise this is
-    the reschedule they asked for."""
+    the reschedule they asked for.
+
+    Goes through the tenant's `interview_reschedule` template (with the
+    platform default as fallback) so any wording / branding overrides
+    set in Settings → Templates take effect for the auto-reschedule
+    flow as well as the manual send-link path."""
+    from services.email_templates import render as render_template
     from services.tenant_outbound import send_via_tenant_mailbox
 
-    company = tenant.name if tenant else "the recruitment team"
-    first_name = (candidate.name or "there").split()[0] if candidate else "there"
     job_title = job.title if job else "Open Position"
-    subject = f"Your rescheduled interview — {job_title} at {company}"
-
-    body_html = f"""
-    <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
-      <div style="background:linear-gradient(135deg,#6366f1,#8b5cf6);padding:30px;border-radius:12px 12px 0 0;text-align:center;">
-        <h1 style="color:white;margin:0;font-size:24px;">{company}</h1>
-        <p style="color:rgba(255,255,255,0.9);margin:8px 0 0 0;">Interview rescheduled</p>
-      </div>
-      <div style="background:#fff;padding:30px;border:1px solid #e2e8f0;border-top:none;">
-        <p style="color:#334155;font-size:16px;line-height:1.6;">Hi {first_name},</p>
-        <p style="color:#334155;font-size:16px;line-height:1.6;">
-          No problem — here is a fresh link for your <strong>{job_title}</strong> screening interview.
-          You can join whenever it suits you in the next 72 hours.
-        </p>
-        <div style="text-align:center;margin:30px 0;">
-          <a href="{interview_url}" style="background:#6366f1;color:white;padding:14px 32px;
-             border-radius:8px;text-decoration:none;font-weight:600;">Start your interview</a>
-        </div>
-        <p style="color:#64748b;font-size:14px;line-height:1.6;">
-          The interview takes 8–10 minutes. You'll need a working microphone and camera
-          in a quiet environment.
-        </p>
-        <p style="color:#94a3b8;font-size:12px;line-height:1.6;">
-          If the button doesn't work, paste this into your browser:<br>
-          <span style="font-family:monospace;word-break:break-all;">{interview_url}</span>
-        </p>
-      </div>
-    </div>"""
-    body_text = (
-        f"Hi {first_name},\n\n"
-        f"No problem — here is a fresh link for your {job_title} screening interview.\n"
-        f"You can join whenever it suits you in the next 72 hours.\n\n"
-        f"Start here: {interview_url}\n\n"
-        f"Best regards,\n{company} Recruitment Team"
+    rendered = render_template(
+        tenant,
+        "interview_reschedule",
+        db=db,
+        candidate_name=(candidate.name if candidate else "") or "",
+        job_title=job_title,
+        interview_url=interview_url,
     )
 
     return send_via_tenant_mailbox(
         tenant_id=tenant.id if tenant else None,
         to_email=candidate.email if candidate else "",
-        subject=subject,
-        body_html=body_html,
-        body_text=body_text,
+        subject=rendered["subject"],
+        body_html=rendered["body_html"],
+        body_text=rendered["body_text"],
         db=db,
     )
 
@@ -714,14 +706,26 @@ async def send_rejection_email(app_id: int, db: Session = Depends(get_db), sessi
             ),
         )
 
-    company = os.getenv("COMPANY_NAME", "HireOps AI")
+    # Route through the per-tenant `rejection` template so HR's
+    # customisations in Settings → Templates apply here too. Falls
+    # back to the platform default when the tenant hasn't overridden.
+    from services.email_templates import render as render_template
+    from services.tenant_outbound import send_via_tenant_mailbox
 
-    from services.smtp_service import send_rejection_email as _send_rejection
-    result = _send_rejection(
-        to_email=candidate.email,
-        candidate_name=candidate.name.split()[0],
+    rendered = render_template(
+        session.tenant,
+        "rejection",
+        db=db,
+        candidate_name=candidate.name or "",
         job_title=job.title if job else "Open Position",
-        company_name=company,
+    )
+    result = send_via_tenant_mailbox(
+        tenant_id=session.tenant.id,
+        to_email=candidate.email,
+        subject=rendered["subject"],
+        body_html=rendered["body_html"],
+        body_text=rendered["body_text"],
+        db=db,
     )
 
     if result["success"]:
