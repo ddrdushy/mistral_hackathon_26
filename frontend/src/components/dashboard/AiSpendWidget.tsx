@@ -95,9 +95,8 @@ export default function AiSpendWidget() {
             {formatUsd(data.month_to_date_usd)}
           </p>
           <p className="text-[11px] text-slate-500 mt-0.5">
-            {data.month_calls.toLocaleString()} call
-            {data.month_calls === 1 ? "" : "s"} ·{" "}
-            billable cost at {data.markup_multiplier.toFixed(1)}× markup
+            {data.month_calls.toLocaleString()} AI call
+            {data.month_calls === 1 ? "" : "s"} this month
           </p>
         </div>
         <ChartBarIcon className="w-5 h-5 text-indigo-500 flex-shrink-0" />

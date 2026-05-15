@@ -232,12 +232,15 @@ def llm_spend_trend(
         or 0
     )
 
+    # NOTE: do NOT expose `markup_multiplier` in this response. The number
+    # is a commercial detail (raw provider cost × plan markup) and HR /
+    # tenant users should only see the final cost on their plan. Admins
+    # see the raw + margin via /admin/* endpoints, not this one.
     return {
         "days": days,
         "trend": out,
         "month_to_date_usd": round(float(month_raw) * markup, 4),
         "month_calls": int(month_calls),
-        "markup_multiplier": markup,
     }
 
 

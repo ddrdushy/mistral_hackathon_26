@@ -368,12 +368,7 @@ export default function TenantSettingsPage() {
           <div>
             <h2 className="text-lg font-semibold text-slate-900">Your AI Usage</h2>
             <p className="text-sm text-slate-500">
-              Billable AI cost on your current plan. Updated in real time.
-              {usage?.markup_multiplier && usage.markup_multiplier !== 1 && (
-                <span className="ml-1 text-slate-400">
-                  (priced at the {usage.markup_multiplier}× plan rate)
-                </span>
-              )}
+              Your AI cost on the current plan. Updated in real time.
             </p>
           </div>
           <div className="flex gap-1">

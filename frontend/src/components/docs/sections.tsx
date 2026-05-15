@@ -205,9 +205,9 @@ export function Dashboard() {
       <h2>AI spend widget</h2>
       <p>
         Sits in the Row 1.5 area alongside the hiring forecast. Shows
-        month-to-date billable cost (raw provider cost × plan markup),
-        a 30-day sparkline, and today&apos;s number. &quot;Detailed
-        report →&quot; opens Settings → Billing for the full breakdown.
+        month-to-date AI cost, a 30-day sparkline, and today&apos;s
+        number. &quot;Detailed report →&quot; opens Settings → Billing
+        for the full breakdown.
       </p>
 
       <h2>Top stat tiles</h2>
@@ -1975,8 +1975,8 @@ export function Billing() {
           <strong>Business</strong> — unlimited jobs / candidates /
           interviews, voice screening (ElevenLabs), Q&amp;A rounds,
           team seats, fraud detection, outreach campaigns. Enabled per
-          tenant after a sales conversation; we tune the markup and
-          quotas to your volume.
+          tenant after a sales conversation; pricing and quotas are
+          tuned to your volume.
         </li>
       </ul>
 
@@ -1991,8 +1991,8 @@ export function Billing() {
       </p>
       <Tip kind="info">
         We deliberately don&apos;t do self-serve credit-card upgrades
-        right now. Sales-led keeps the markup conversation honest and
-        means every Business tenant gets onboarding help.
+        right now. Sales-led means every Business tenant gets a real
+        onboarding conversation and pricing that fits their volume.
       </Tip>
 
       <h2>Feature locks while on Trial</h2>
@@ -2014,14 +2014,12 @@ export function Billing() {
           → 429 until midnight UTC.
         </li>
         <li><strong>Window selector</strong> — 24h / 7d / 30d.</li>
-        <li><strong>Total calls, tokens, billable cost</strong>.</li>
+        <li><strong>Total calls, tokens, cost</strong>.</li>
         <li><strong>Per-agent breakdown</strong>.</li>
       </ul>
 
       <Tip kind="info">
-        Cost shown is <strong>billable</strong> (what you&apos;d be
-        charged), not raw provider cost. Markup is configured per plan
-        by your platform admin.
+        Cost shown is what you&apos;d be charged on the current plan.
       </Tip>
     </>
   );

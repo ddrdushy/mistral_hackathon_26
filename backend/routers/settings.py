@@ -336,7 +336,13 @@ async def llm_usage_report(
             ag["cost_usd"] = round(ag["cost_usd"] * markup, 4)
         total_cost = billable_total
 
-    return {
+    # Build the response. Markup / billable / margin are commercial
+    # metrics that admins use to monitor per-tenant margin — we never
+    # leak them to tenant users. For tenant scope `cost_usd` has already
+    # been substituted with the billable amount above, so what they see
+    # is what they pay.
+    admin_view = bool(include_all and session.user.is_superadmin)
+    resp = {
         "scope": "global" if include_all else "tenant",
         "period_days": days,
         "days": days,
@@ -345,9 +351,6 @@ async def llm_usage_report(
         "total_output_tokens": total_out,
         "total_tokens": total_in + total_out,
         "total_cost_usd": round(total_cost, 4),
-        "billable_usd": billable_total,
-        "markup_multiplier": markup,
-        "margin_usd": margin_usd,
         "avg_latency_ms": avg_latency_overall,
         "error_count": total_errors,
         "error_rate": error_rate,
@@ -357,6 +360,11 @@ async def llm_usage_report(
         "hourly_trend": hourly_trend,
         "recent_calls": recent_calls,
     }
+    if admin_view:
+        resp["billable_usd"] = billable_total
+        resp["markup_multiplier"] = markup
+        resp["margin_usd"] = margin_usd
+    return resp
 
 
 @router.get("/llm/logs")
