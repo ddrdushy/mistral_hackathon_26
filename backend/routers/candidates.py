@@ -22,7 +22,7 @@ def _check_size(file_bytes: bytes) -> None:
 
 def _scan_and_persist_fraud(
     *,
-    db: Session,
+    db: "Session",
     tenant_id: int,
     candidate_id: int,
     filename: str,
