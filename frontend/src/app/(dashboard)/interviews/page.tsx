@@ -219,7 +219,7 @@ export default function InterviewsPage() {
                   <tr key={r.id} className="hover:bg-slate-50">
                     <td className="px-4 py-3">
                       <Link
-                        href={`/candidates/${r.app_id}`}
+                        href={`/candidates/${r.candidate_id ?? r.app_id}`}
                         className="font-medium text-indigo-600 hover:underline"
                       >
                         {r.candidate_name}

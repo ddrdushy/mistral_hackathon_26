@@ -234,7 +234,7 @@ export default function CallQueuePage() {
                 <div className="flex items-center gap-2 flex-wrap">
                   {c.candidate ? (
                     <Link
-                      href={`/candidates/${c.app_id ?? c.candidate.id}`}
+                      href={`/candidates/${c.candidate.id}`}
                       onClick={(e) => e.stopPropagation()}
                       className="text-sm font-semibold text-slate-900 hover:text-indigo-700 truncate"
                     >
@@ -515,9 +515,9 @@ function CallDetailModal({
         </div>
 
         <div className="px-6 py-3 border-t border-slate-200 flex items-center justify-end gap-2">
-          {call.app_id && (
+          {call.candidate_id && (
             <Link
-              href={`/candidates/${call.app_id}`}
+              href={`/candidates/${call.candidate_id}`}
               className="px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-100 rounded-md"
             >
               Open candidate

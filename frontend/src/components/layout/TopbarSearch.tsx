@@ -80,8 +80,12 @@ export default function TopbarSearch() {
   const pick = (hit: Hit) => {
     setOpen(false);
     setQ("");
-    if (hit.first_application_id) {
-      router.push(`/candidates/${hit.first_application_id}`);
+    if (hit.id) {
+      // The detail page resolves /candidates/{id} as a CANDIDATE id
+      // first. Sending the application id here used to land on a
+      // different candidate whenever the app_id space collided with
+      // another candidate's id.
+      router.push(`/candidates/${hit.id}`);
     } else {
       router.push(`/talent-bank?search=${encodeURIComponent(hit.name || hit.email)}`);
     }

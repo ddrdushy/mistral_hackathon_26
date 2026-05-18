@@ -386,7 +386,7 @@ export default function CandidateDetailDrawer({
           </button>
           {applicationId && (
             <a
-              href={`/candidates/${applicationId}`}
+              href={`/candidates/${candidateId}`}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold"
             >
               Open application
