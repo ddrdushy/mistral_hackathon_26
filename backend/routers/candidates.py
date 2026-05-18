@@ -397,7 +397,9 @@ def _is_same_person(
 ) -> bool:
     """Treat `existing` as the same person if all three hold:
       1. names match after normalisation,
-      2. at least one of email / phone also matches,
+      2. at least one of email / phone also matches — OR one side has
+         no contact info at all (the typical "first upload had no
+         email/phone, re-upload fills them in" flow),
       3. no field present on both sides contradicts.
 
     Placeholder emails (@uploaded.local) are never a real identity
@@ -423,7 +425,18 @@ def _is_same_person(
 
     email_match = real_existing_email and real_new_email and ee == ne
     phone_match = bool(ep) and bool(np) and ep == np
-    return email_match or phone_match
+    if email_match or phone_match:
+        return True
+
+    # No matching email or phone, but no contradiction either. Allow the
+    # merge when ONE side has no contact info at all — that's the
+    # "uploaded a CV with no contact details first, then re-uploaded
+    # the same person's CV with email/phone added" case. Without this,
+    # the re-upload creates a duplicate row instead of bumping the
+    # existing one's cv_version.
+    existing_has_no_contact = not real_existing_email and not bool(ep)
+    incoming_has_no_contact = not real_new_email and not bool(np)
+    return existing_has_no_contact or incoming_has_no_contact
 
 
 def _find_same_person(
@@ -676,6 +689,21 @@ async def _upload_candidate_impl(
         candidate.resume_text = resume_text
         candidate.resume_filename = filename
         candidate.cv_version = (candidate.cv_version or 1) + 1
+        # Upgrade contact info when the existing row had nothing real
+        # and the new CV does — without this, a candidate that first
+        # came in without email/phone stays "Missing email" forever
+        # even after a re-upload that includes both.
+        existing_email = (candidate.email or "").strip().lower()
+        existing_email_is_placeholder = (
+            not existing_email
+            or existing_email.endswith("@uploaded.local")
+        )
+        new_email_is_real = (
+            bool(final_email)
+            and not final_email.lower().endswith("@uploaded.local")
+        )
+        if new_email_is_real and existing_email_is_placeholder:
+            candidate.email = final_email
         if final_phone:
             candidate.phone = final_phone
         if name and name.strip():

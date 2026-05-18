@@ -610,7 +610,23 @@ def _create_candidate_from_email(em: Email, db: Session) -> Candidate:
         existing.resume_text = resume_text
         existing.resume_filename = resume_filename
         existing.cv_version = (existing.cv_version or 1) + 1
-        if phone and not existing.phone:
+
+        # Upgrade contact info when the existing row had nothing real and
+        # the new CV does. Covers the common flow where the first
+        # forwarded CV had no email/phone (placeholder forwarded+N
+        # synthesised), and a follow-up CV adds them. Without this the
+        # candidate row stayed on the placeholder email forever, so the
+        # talent-bank "Missing email" chip persisted even though the
+        # latest resume_text contained one.
+        def _existing_email_is_placeholder() -> bool:
+            v = (existing.email or "").strip().lower()
+            return (not v) or v.endswith("@uploaded.local")
+
+        new_email = (candidate_email or "").strip()
+        new_email_is_real = bool(new_email) and not new_email.lower().endswith("@uploaded.local")
+        if new_email_is_real and _existing_email_is_placeholder():
+            existing.email = new_email
+        if phone and not (existing.phone or "").strip():
             existing.phone = phone
         existing.source_email_id = em.id
         existing.profile_extracted_at = None  # re-extract tags on new CV

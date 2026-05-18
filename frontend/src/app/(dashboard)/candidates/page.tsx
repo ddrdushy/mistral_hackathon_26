@@ -638,7 +638,7 @@ function CandidatesTracker() {
                     {/* Name */}
                     <td className="px-4 py-3 whitespace-nowrap">
                       <Link
-                        href={`/candidates/${app.id}`}
+                        href={`/candidates/${app.candidate_id ?? app.id}`}
                         className="text-sm font-semibold text-indigo-600 hover:text-indigo-800 hover:underline transition-colors"
                       >
                         {app.candidate_name}
