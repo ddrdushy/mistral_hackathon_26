@@ -20,6 +20,76 @@ def _check_size(file_bytes: bytes) -> None:
         )
 
 
+def _scan_and_persist_fraud(
+    *,
+    db: Session,
+    tenant_id: int,
+    candidate_id: int,
+    filename: str,
+    file_bytes: bytes,
+) -> dict:
+    """Run the adversarial-content detector on a freshly uploaded CV
+    and persist any signals as ResumeFraudSignal rows.
+
+    Wired into both the single (/upload) and bulk (/upload-bulk) upload
+    paths so direct talent-bank drops get the same prompt-injection /
+    hidden-text scanning as inbox-forwarded resumes. Returns a small
+    summary dict the caller can attach to the response so the UI can
+    surface a "fraud detected" badge without a second round-trip.
+
+    Failures are swallowed — fraud detection is best-effort and a parser
+    quirk on one CV shouldn't 500 the upload.
+    """
+    summary = {
+        "fraud_score": 0,
+        "fraud_flags_count": 0,
+        "fraud_critical": False,
+        "fraud_signal_types": [],
+    }
+    try:
+        from services.fraud_detector import (
+            detect_fraud,
+            compute_fraud_score,
+            to_evidence_json,
+        )
+        from models import ResumeFraudSignal
+
+        signals = detect_fraud(filename, file_bytes)
+        if not signals:
+            return summary
+
+        # On re-upload (new cv_version) the OLD rows for this candidate
+        # describe a different file. Clear them so the UI only shows
+        # current signals — historical signals stay on the cv_version
+        # archive row implicitly via detected_at.
+        db.query(ResumeFraudSignal).filter(
+            ResumeFraudSignal.candidate_id == candidate_id,
+            ResumeFraudSignal.application_id.is_(None),
+        ).delete(synchronize_session=False)
+
+        for sig in signals:
+            db.add(ResumeFraudSignal(
+                tenant_id=tenant_id,
+                candidate_id=candidate_id,
+                application_id=None,
+                signal_type=sig.signal_type,
+                severity=sig.severity,
+                evidence_json=to_evidence_json(sig),
+            ))
+        db.commit()
+        summary["fraud_score"] = compute_fraud_score(signals)
+        summary["fraud_flags_count"] = len(signals)
+        summary["fraud_critical"] = any(s.severity == "critical" for s in signals)
+        summary["fraud_signal_types"] = sorted({s.signal_type for s in signals})
+    except Exception:
+        # Best-effort. Don't let a detector regression block uploads.
+        try:
+            db.rollback()
+        except Exception:
+            pass
+    return summary
+
+
 _FILENAME_SAFE = re.compile(r"[^A-Za-z0-9._\- ]+")
 
 
@@ -648,6 +718,17 @@ async def _upload_candidate_impl(
     except Exception:
         pass
 
+    # Adversarial-content scan on the raw bytes. We persist any signals
+    # so they're visible in the talent-bank UI and on any future
+    # application made from this candidate.
+    fraud_summary = _scan_and_persist_fraud(
+        db=db,
+        tenant_id=candidate.tenant_id,
+        candidate_id=candidate.id,
+        filename=filename,
+        file_bytes=file_bytes,
+    )
+
     # Apply the profile we already got from _extract_contact_and_profile
     # — same call extracted contact + skills + role + summary, so no
     # second LLM round-trip. If the call hadn't succeeded (plan gate
@@ -670,11 +751,18 @@ async def _upload_candidate_impl(
         except Exception:
             pass
 
+    resp_candidate = _candidate_to_response(candidate)
+    # Inject the fraud summary so the upload modal / talent-bank card
+    # can warn immediately without a second fetch.
+    resp_candidate["fraud_flags_count"] = fraud_summary["fraud_flags_count"]
+    resp_candidate["fraud_score"] = fraud_summary["fraud_score"]
+    resp_candidate["fraud_critical"] = fraud_summary["fraud_critical"]
     return {
-        "candidate": _candidate_to_response(candidate),
+        "candidate": resp_candidate,
         "resume_length": len(resume_text),
         "is_update": is_update,
         "cv_version": candidate.cv_version or 1,
+        "fraud": fraud_summary,
         "parsed": {
             "name_from_resume": contact.get("name", "") or "",
             "email_from_resume": contact.get("email", "") or "",
@@ -808,6 +896,17 @@ async def upload_candidates_bulk(
                 db.commit()
             except Exception:
                 pass
+
+            # Adversarial-content scan — persist signals on the candidate
+            # before any future Application picks them up.
+            fraud_summary = _scan_and_persist_fraud(
+                db=db,
+                tenant_id=candidate.tenant_id,
+                candidate_id=candidate.id,
+                filename=fname,
+                file_bytes=file_bytes,
+            )
+            item["fraud"] = fraud_summary
 
             # Reuse the profile we already extracted for contact info
             # so we don't pay for a second LLM round-trip per file.
@@ -1046,6 +1145,35 @@ async def list_candidates(
         for cid, tid, tname, tcolor in tag_rows:
             tag_map.setdefault(cid, []).append({"id": tid, "name": tname, "color": tcolor or "indigo"})
 
+    # Batch-load fraud signal counts so the list can show a 🚩 badge
+    # without a per-candidate round-trip. Critical signals (prompt
+    # injection / hidden text) get their own flag so the UI can paint
+    # them red instead of amber.
+    fraud_counts: dict[int, dict[str, int]] = {}
+    if cand_ids:
+        from sqlalchemy import func, case
+        from models import ResumeFraudSignal
+        fraud_rows = (
+            db.query(
+                ResumeFraudSignal.candidate_id,
+                func.count(ResumeFraudSignal.id),
+                func.sum(
+                    case(
+                        (ResumeFraudSignal.severity == "critical", 1),
+                        else_=0,
+                    )
+                ),
+            )
+            .filter(ResumeFraudSignal.candidate_id.in_(cand_ids))
+            .group_by(ResumeFraudSignal.candidate_id)
+            .all()
+        )
+        for cid, total_flags, crit_flags in fraud_rows:
+            fraud_counts[cid] = {
+                "fraud_flags_count": int(total_flags or 0),
+                "fraud_critical": bool((crit_flags or 0) > 0),
+            }
+
     out = []
     for c in candidates:
         # Pass db so _candidate_to_response can hydrate tags consistently —
@@ -1055,6 +1183,9 @@ async def list_candidates(
         row["application_count"] = app_counts.get(c.id, 0)
         row["first_application_id"] = first_app_id.get(c.id)
         row["tags"] = tag_map.get(c.id, [])
+        fc = fraud_counts.get(c.id, {"fraud_flags_count": 0, "fraud_critical": False})
+        row["fraud_flags_count"] = fc["fraud_flags_count"]
+        row["fraud_critical"] = fc["fraud_critical"]
         out.append(row)
 
     return {
@@ -1253,6 +1384,53 @@ async def list_cv_versions(
             "blob_available": bool((v.blob_path or "").strip()),
         })
     return {"versions": out}
+
+
+@router.post("/{candidate_id}/scan-fraud")
+async def scan_candidate_for_fraud(
+    candidate_id: int,
+    db: Session = Depends(get_db),
+    session: CurrentSession = Depends(current_session),
+):
+    """Re-run the adversarial-content scan on a candidate's current CV.
+
+    Used to backfill fraud signals on candidates uploaded before the
+    detector was wired into the direct upload path. Loads the saved
+    binary from per-tenant disk storage and feeds it through the same
+    detector that runs at upload time. Returns the fresh summary so
+    the UI can refresh the badge without a list reload.
+    """
+    c = db.query(Candidate).filter(
+        Candidate.id == candidate_id,
+        Candidate.tenant_id == session.tenant.id,
+    ).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+
+    blob_path = (c.resume_blob_path or "").strip()
+    if not blob_path:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "No saved CV binary for this candidate — re-upload the file "
+                "to enable the fraud scan."
+            ),
+        )
+    file_bytes = load_resume_blob(blob_path, c.tenant_id)
+    if not file_bytes:
+        raise HTTPException(
+            status_code=410,
+            detail="Saved CV binary couldn't be read from disk.",
+        )
+
+    summary = _scan_and_persist_fraud(
+        db=db,
+        tenant_id=c.tenant_id,
+        candidate_id=c.id,
+        filename=c.resume_filename or "resume.pdf",
+        file_bytes=file_bytes,
+    )
+    return {"candidate_id": c.id, "fraud": summary}
 
 
 @router.post("/{candidate_id}/re-extract")

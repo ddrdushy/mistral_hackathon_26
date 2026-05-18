@@ -41,6 +41,12 @@ interface TalentBankCandidate {
   resume_blob_available?: boolean;
   cv_version?: number;
   application_count: number;
+  // Counts from the resume fraud detector — populated server-side
+  // by the list endpoint. We badge anything with critical signals
+  // (prompt-injection / hidden text) in red so HR sees them at a
+  // glance, anything else with signals in amber.
+  fraud_flags_count?: number;
+  fraud_critical?: boolean;
   // Most-recent application id, when the candidate has at least one.
   // Used to link the card to that app's detail page.
   first_application_id?: number | null;
@@ -728,6 +734,22 @@ export default function TalentBankPage() {
                               ⚠ Missing {(c.missing_fields ?? []).join(" + ")}
                             </span>
                           )}
+                          {(c.fraud_flags_count ?? 0) > 0 && (
+                            <span
+                              className={`text-[10px] px-1.5 py-0.5 rounded border ${
+                                c.fraud_critical
+                                  ? "bg-rose-100 text-rose-800 border-rose-300"
+                                  : "bg-amber-50 text-amber-800 border-amber-200"
+                              }`}
+                              title={
+                                c.fraud_critical
+                                  ? "Critical fraud signal detected (prompt injection, hidden text). Open the candidate to review."
+                                  : `${c.fraud_flags_count} fraud signal${c.fraud_flags_count === 1 ? "" : "s"} detected on this CV.`
+                              }
+                            >
+                              🚩 {c.fraud_critical ? "Fraud" : `${c.fraud_flags_count} flag${c.fraud_flags_count === 1 ? "" : "s"}`}
+                            </span>
+                          )}
                           {unavailable && (
                             <span className={`text-[10px] px-1.5 py-0.5 rounded border ${statusBadge.cls}`}>
                               {statusBadge.label}
@@ -849,6 +871,24 @@ export default function TalentBankPage() {
                                   title={`The resume parser couldn't find the following on this CV: ${(c.missing_fields ?? []).join(", ")}. Open the candidate and add them — outbound channels (email, WhatsApp, voice) need real contact info.`}
                                 >
                                   ⚠ Missing: {(c.missing_fields ?? []).join(", ")}
+                                </span>
+                              )}
+                              {(c.fraud_flags_count ?? 0) > 0 && (
+                                <span
+                                  className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border ${
+                                    c.fraud_critical
+                                      ? "bg-rose-100 text-rose-800 border-rose-300"
+                                      : "bg-amber-50 text-amber-800 border-amber-200"
+                                  }`}
+                                  title={
+                                    c.fraud_critical
+                                      ? "Critical fraud signal detected (prompt injection, hidden text, invisible Unicode). Open the candidate to review."
+                                      : `${c.fraud_flags_count} fraud signal${c.fraud_flags_count === 1 ? "" : "s"} detected on this CV.`
+                                  }
+                                >
+                                  🚩 {c.fraud_critical
+                                    ? "Fraud detected"
+                                    : `${c.fraud_flags_count} flag${c.fraud_flags_count === 1 ? "" : "s"}`}
                                 </span>
                               )}
                               {!c.profile?.extracted_at && (
