@@ -1,7 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { ExclamationTriangleIcon, ShieldCheckIcon } from "@heroicons/react/24/outline";
+import {
+  ExclamationTriangleIcon,
+  ShieldCheckIcon,
+} from "@heroicons/react/24/outline";
 import Card from "@/components/ui/Card";
 import { apiGet, apiPost } from "@/lib/api";
 
@@ -39,14 +42,41 @@ const SIGNAL_LABEL: Record<string, string> = {
   duplicate_content_glyph: "Duplicate content via glyph",
 };
 
+// Risk strings the resume scorer emits that we want to surface in the
+// fraud card. Anything in this list gets a friendly label + explanation;
+// other risks render verbatim.
+const SCORER_RISK_LABELS: Record<string, { label: string; hint: string }> = {
+  not_a_resume: {
+    label: "Uploaded file isn't a résumé",
+    hint:
+      "The content didn't look like a CV (job description, blank page, marketing PDF, etc.). The scorer skipped grading and returned 0/100.",
+  },
+  no_cv_uploaded: {
+    label: "No CV uploaded",
+    hint:
+      "This candidate has no attached CV to score. Ask them to send one or upload manually before re-scoring.",
+  },
+  empty_resume_text: {
+    label: "Resume text couldn't be extracted",
+    hint:
+      "Likely an image-only PDF, scan, or corrupt file. Try uploading a text-selectable version or run OCR.",
+  },
+};
+
 export default function FraudSignalsCard({
   appId,
   isOwner,
   onChanged,
+  scorerRisks,
 }: {
   appId: number;
   isOwner: boolean;
   onChanged?: () => void;
+  /** Risk strings from `application.resume_score_json.risks`. Surfaced
+   *  here so the "Fraud signals" action link in the page header isn't
+   *  a dead link when the scorer rejected the upload for non-PDF reasons
+   *  (e.g. not_a_resume). */
+  scorerRisks?: string[];
 }) {
   const [data, setData] = useState<FraudResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -73,7 +103,70 @@ export default function FraudSignalsCard({
   }, [load]);
 
   if (loading || !data) return null;
-  if (data.fraud_flags_count === 0) return null; // clean — no card
+
+  // Filter scorer risks down to actionable ones — drop placeholder
+  // "no risks identified" strings the scorer pads its output with so
+  // we don't render misleading rows in the empty state.
+  const meaningfulRisks = (scorerRisks ?? []).filter((r) => {
+    const v = (r || "").toLowerCase().trim();
+    if (!v) return false;
+    if (v.includes("no significant")) return false;
+    if (v === "none" || v === "n/a") return false;
+    return true;
+  });
+
+  if (data.fraud_flags_count === 0) {
+    // Render a friendly empty state instead of swallowing the section.
+    // The "Fraud signals" anchor in the action bar is unconditional, so
+    // hiding entirely makes the click feel broken. We also surface any
+    // resume-scorer risks here so non-PDF rejections (not_a_resume,
+    // no_cv_uploaded, etc.) have a visible home.
+    return (
+      <Card title="Resume fraud check">
+        <div className="rounded-md border bg-emerald-50 border-emerald-200 px-4 py-3 mb-3 flex items-start gap-3">
+          <ShieldCheckIcon className="h-5 w-5 flex-shrink-0 mt-0.5 text-emerald-600" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-emerald-900">
+              No adversarial content detected
+            </p>
+            <p className="text-xs text-emerald-800/80 mt-0.5">
+              We didn&apos;t find hidden text, microtext, off-page text,
+              prompt-injection phrases, or invisible Unicode in this CV.
+            </p>
+          </div>
+        </div>
+
+        {meaningfulRisks.length > 0 && (
+          <>
+            <p className="text-xs font-semibold text-slate-600 uppercase tracking-wider mb-2">
+              Flagged by the résumé scorer
+            </p>
+            <ul className="divide-y divide-slate-100 text-sm">
+              {meaningfulRisks.map((r, i) => {
+                const key = (r || "").toLowerCase().trim();
+                const info = SCORER_RISK_LABELS[key];
+                return (
+                  <li key={`${key}-${i}`} className="py-2.5 flex items-start gap-3">
+                    <ExclamationTriangleIcon className="h-4 w-4 flex-shrink-0 mt-0.5 text-amber-600" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-slate-800">
+                        {info?.label || r}
+                      </p>
+                      {info?.hint && (
+                        <p className="text-xs text-slate-500 mt-0.5">
+                          {info.hint}
+                        </p>
+                      )}
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          </>
+        )}
+      </Card>
+    );
+  }
 
   const submitOverride = async () => {
     if (reason.trim().length < 10) {

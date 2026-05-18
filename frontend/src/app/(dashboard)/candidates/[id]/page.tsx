@@ -2082,6 +2082,7 @@ export default function CandidateDetailPage({
                 appId={appId}
                 isOwner={isOwner}
                 onChanged={fetchApplication}
+                scorerRisks={resume?.risks ?? []}
               />
             </div>
           )}
